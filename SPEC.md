@@ -130,6 +130,36 @@ The sidecars are the substrate; what we build is the **agent-facing layer that m
 
 This is the Reaching-my-engineer pattern, generalized to **Reaching-any-sibling** (with check + logs alongside the core message).
 
+### The tools — contracts (backend = forge's call, spec only the shape)
+
+Each tool takes a sibling agent as target and does one thing. Contracts (backend undecided per operator "shit idk" — shell script vs. Letta mod tool is forged during build):
+
+**1. `message-agent` (BY FAR the most important)**
+- Input: `sibling` (name, e.g. `ms-glm-l`), `prompt` (the message), optional `new_chat` (fresh vs. resume).
+- Behavior: reach `http://sudo-{sibling}-mcp:8000/mcp`, MCP handshake → `tools/call` `letta_prompt`/`hermes_prompt` with the prompt → return the sibling's reply.
+- Sessions: planner sibling = stateful (resumes unless `new_chat`); engineer sibling = stateless one-shot.
+- Must be no-timeout (long jobs don't get cut — the `HERMES_STREAM_*_TIMEOUT=inf` lesson).
+
+**2. `check-what-agent-is-doing`**
+- Input: `sibling`.
+- Behavior: `GET http://sudo-{sibling}-watch:8000/status` → return `{active, current_conversation, last_event_ts, events_logged, uptime_s}` (is it alive + mid-run?).
+
+**3. `check-agent-logs`**
+- Input: `sibling`, optional `n` (last N events).
+- Behavior: `GET http://sudo-{sibling}-watch:8000/events?n=N` (or `/stream` for live tail) → return the trailing event trail.
+
+### The skills — procedure (same three, written as Letta skills)
+
+Each tool has a matching skill documenting *when + how* to use it (the reach syntax, naming, quoting, which route maps to which intent). Pattern = the existing `reaching-my-engineer` skill, generalized to `reaching-any-sibling`. Skills live in the agent's MemFS `skills/` dir: `message-agent`, `check-what-agent-is-doing`, `check-agent-logs`.
+
+### The persona layer — awareness (the alignment that makes them USE it)
+
+Every agent's persona gets a short block teaching it: *"You are part of a fleet. You can message any sibling agent by name, check what it's doing, and read its logs. Here are the three tools/skills for that, and when to reach for them."* This is what makes the tools get *used* rather than sat-unused (the psy-glm lesson: capability without persona awareness is ignored).
+
+### The router default — how agents are born able to talk
+
+In **sudo-fleet**, the router pair (psnvc + forge) **bakes these into every spawned agent as a spawn-time default**: the 3 tools + 3 skills + persona block are part of what `up.sh`/spawn gives an agent, NOT a post-hoc per-agent bolting. A new agent comes out of the spawner already able to message/check any sibling. This is what "native" means — the fleet, as a whole, talks.
+
 ### Remaining questions (the ONLY things not already in the shipped code)
 
 Most of the earlier "open questions" are answered by `sudo-letta`'s shipped sidecar/MCP (see "Ground truth" above). What genuinely remains to design for the **native mesh** (the new part beyond the per-pod plumbing):
