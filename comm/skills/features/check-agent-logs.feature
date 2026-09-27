@@ -1,26 +1,41 @@
 Feature: The check-agent-logs skill teaches correct usage
 
   The check-agent-logs skill documents how an agent reads a sibling's recent
-  activity trail. Its instructions map each intent to the exact endpoint:
-  history vs live tail.
+  activity, across TWO modes (full vs compressed) with depth control in both.
 
-  Scenario: Skill maps history to /events
+  Scenario: Skill teaches the two modes and their meanings
     Given an agent has the "check-agent-logs" skill
-    When the agent wants the trailing history
-    Then the skill tells it to read GET /events?n=N for the last N events
+    When the agent wants to read a sibling's trail
+    Then the skill teaches:
+      | mode       | what it shows                                        | endpoint        |
+      | full       | every event incl. thinking/tools/sessions            | /events?n=N     |
+      | compressed | only real prompts + replies (chat log)               | /transcript?n=N |
 
-  Scenario: Skill maps live tail to /stream
+  Scenario: Skill teaches when to use compressed vs full
     Given an agent has the "check-agent-logs" skill
-    When the agent wants a live tail
-    Then the skill tells it to read GET /stream for the backlog plus follow
+    When the agent is deciding which mode to read
+    Then the skill teaches it to use compressed mode to see what was said (the conversation)
+    And to use full mode to see everything the sibling thought and did (reasoning, tool use)
 
-  Scenario: Skill teaches the event schema
+  Scenario: Skill teaches depth control in both modes
     Given an agent has the "check-agent-logs" skill
-    When the agent reads an event trail
+    When the agent wants to control how far back it looks
+    Then the skill teaches it to set n small for a quick recent check
+    And to set n large to reach deep history
+    And that n is honored by BOTH /events?n=N and /transcript?n=N
+
+  Scenario: Skill teaches the live tail
+    Given an agent has the "check-agent-logs" skill
+    When the agent wants to follow a sibling live
+    Then the skill tells it to use /stream (full-mode live tail)
+
+  Scenario: Skill teaches the full event schema
+    Given an agent has the "check-agent-logs" skill
+    When the agent reads a full-mode trail
     Then the skill tells it each event carries ts, conversation, and event
     And the event types are user, thinking, assistant, tool_call, tool_result, session, and process_state
 
   Scenario: Skill teaches catch-up-before-messaging
     Given an agent has the "check-agent-logs" skill
     When the agent needs context on what a sibling has been doing
-    Then the skill directs the agent to read the sibling's recent events before messaging it
+    Then the skill directs the agent to read the sibling's recent activity before messaging it
