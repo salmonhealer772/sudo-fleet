@@ -129,14 +129,25 @@ This is the Reaching-my-engineer pattern, generalized to **Reaching-any-sibling*
 - The proven one-shot reach paths: `hermes -z` (engineers) and `letta -p` (planners), with `HERMES_STREAM_*_TIMEOUT=inf` for long jobs.
 - fa-glm + ya-glm are the live testbed (both just swapped to `deepseek-flash` 2026-09-27).
 
-### Questions to investigate (write these answers back in before building)
+### Questions to investigate (answers as of 2026-09-27, verified live on fa/ya-glm)
 
-1. **MCP tool surface per agent** — what does `tools/list` actually return on a planner's `-mcp` vs an engineer's `-mcp`? Is the canonical cross-agent call a `letta_prompt`/`hermes_prompt` tool (as seen on mail-bot), and does every agent expose a *prompt/eval*-shaped tool a sibling can call generically?
-2. **Session semantics** — does messaging a sibling via MCP start a fresh stateless session (like `hermes -z`) or continue a persistent thread? Which do we want for "message any agent"?
-3. **The concurrency/multiplexer mechanic** — where does the queue live? (Per-pod watchdog in front of the `-mcp` endpoint? The `-watch` sidecar's process-namespace + docker-socket access suggests it could hold-and-feed.) How does a second prompt wait — blocking queue, deferred reply, or a `POST`-then-poll run id?
-4. **Discoverability** — with no registry, how does an agent *know* a sibling's name + port to reach it? (A baked phonebook in each agent? Derive from the deterministic `cksum` scheme? Hit a fleet list?) This is the gap between "full mesh" and "actually knowing who to call."
-5. **Monitoring read-shape** — what's the cleanest endpoint/route the `-watch` server offers for "what is agent X doing right now" (a `/state`-style route vs. tailing `events.jsonl`), so a check-on skill can be written against a stable contract.
-6. **Auth/keys** — the `mcp-session-id` flow is already live; is there a per-agent key gate we must mint (matching the `API_SERVER_KEY` / http-bearer pattern) so a sibling can call without human pasting a token?
+1. **MCP tool surface per agent — ANSWERED.** Both `-mcp` endpoints expose exactly ONE generic tool, uniform in shape, two variants:
+   - Letta planner (`-l`) → **`letta_prompt(prompt, stream, json, new_chat)`** — **stateful** by default (resumes the agent's persisted conversation unless `new_chat=true`); `stream` = stream-json joined deltas, `json` = raw object.
+   - Hermes engineer (`-h`) → **`hermes_prompt(prompt, json)`** — **stateless** one-shot (`json` = pretty-print if stdout is JSON).
+   - So "message any agent" is one generic tool (`*_prompt`), but **planners are stateful, engineers are one-shot** — a real distinction the messaging skill must encode.
+
+2. **Session semantics — ANSWERED (see #1).** Messaging a planner lands in its *live* conversation (stateful); messaging an engineer is a fresh stateless eval. The "message-agent" skill must be explicit about which, or pass `new_chat` deliberately.
+
+3. **Concurrency/multiplexer mechanic — STILL OPEN.** The `letta_prompt`/`hermes_prompt` tools are synchronous (return the reply inline); nothing yet holds/sequences a second prompt when the agent is mid-run. The `-watch` sidecar (process-namespace + docker-socket access) is the candidate home for a hold-and-feed queue — to be designed, not assumed.
+
+4. **Discoverability — STILL OPEN.** No registry; an agent must know a sibling's name + port. Candidates: a baked phonebook in each agent vs. deriving from the deterministic `cksum` scheme vs. a fleet-list route. Pick one to make the "full mesh" actually *reachable*.
+
+5. **Monitoring read-shape — ANSWERED.** The `-watch` server (`letta-watch/1.0`) serves exactly two live routes:
+   - **`GET /status`** → `{agent, deploy, uptime_s, agent_container_up, active, current_conversation, last_event_ts, events_logged, transcript_bytes, watch_port}` — the clean "what is this agent doing right now" contract.
+   - **`GET /events`** → newline-delimited `{ts, conversation, event, text/name/args}` — the trailing event/history stream.
+   - So **check-what-agent-is-doing → `/status`** and **check-agent-logs → `/events`** are the two stable read contracts for the check tools.
+
+6. **Auth/keys — PARTLY OPEN.** The `-mcp` handshake issues an `mcp-session-id` automatically (no key gate observed on the probe — initialize returned a session with no auth). Whether sibling calls need a per-agent key (matching the `API_SERVER_KEY`/bearer pattern for host-root-safety) must be pinned before building.
 
 ### Deliverable
 
