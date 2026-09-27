@@ -4,11 +4,11 @@ Tail a sibling's recent activity trail, in TWO modes, both depth-controllable.
 
 ## Contract
 
-- **Inputs:** `sibling` (agent name), `mode` (`full` or `compressed`), optional `n` (depth; how far back to look).
+- **Inputs:** `sibling` (agent name), `mode` (`full` or `compressed`), optional `n` (depth; how far back to look). `n=-1` (or a dedicated "all" sentinel) = the ENTIRE file, no depth cap — identical semantics on Letta and Hermes siblings.
 - **Behavior:**
-  - **full mode** → `GET http://sudo-{sibling}-watch:8000/events?n=N` (or `/stream` for live tail) — every event incl. `thinking`/`tool_call`/`tool_result`/`session`/`process_state`. Schema `{ts, conversation, event, ...}`.
-  - **compressed mode** → read the sibling's `transcript.txt` file (plain chat log: real prompts + replies only) — the SAME read `stream.sh -t` already does: `kubectl exec deploy/sudo-{sibling} -c watch -- tail -n N /home/node/.letta/watch/transcript.txt` (Letta) / the Hermes-equivalent transcript path. No HTTP route needed — read the file directly.
-- **Depth control:** `n` in both modes (full → `/events?n=N`; compressed → `tail -n N`). Small n = recent, large n = deep history.
+  - **full mode** → `GET http://sudo-{sibling}-watch:8000/events?n=N` (or `/stream` for live tail) — every event incl. `thinking`/`tool_call`/`tool_result`/`session`/`process_state`. Schema `{ts, conversation, event, ...}`. `n=-1` → the entire events file.
+  - **compressed mode** → read the sibling's `transcript.txt` file (plain chat log: real prompts + replies only) — the SAME read `stream.sh -t` already does: `kubectl exec deploy/sudo-{sibling} -c watch -- tail -n N /home/node/.letta/watch/transcript.txt` (Letta) / the Hermes-equivalent transcript path. No HTTP route needed — read the file directly. `n=-1` → `cat` the entire transcript (no `tail` bound).
+- **Depth control:** `n` in both modes (full → `/events?n=N`; compressed → `tail -n N`). Small n = recent, large n = deep history, `n=-1` = whole file.
 - **Purpose:** read what a sibling has been saying (compressed) or thinking/doing (full) — catch up before messaging it.
 
 ## Notes

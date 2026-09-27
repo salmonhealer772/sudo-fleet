@@ -19,6 +19,7 @@ Feature: The check-agent-logs skill teaches correct usage
     Then the skill tells it to set the "n" argument to the number of items to read:
       - n small (e.g. 5-20)   -> a quick recent check
       - n large (e.g. 100-500) -> deep history
+      - n = -1                -> the ENTIRE transcript/events file (no cap; never guess a huge n)
     And that "n" is honored in BOTH modes (full and compressed)
 
   Scenario: Skill gives the concrete invocation for compressed mode
@@ -37,6 +38,7 @@ Feature: The check-agent-logs skill teaches correct usage
     Given an agent has the "check-agent-logs" skill
     When the agent lacks context and needs a lot of history
     Then the skill tells it to use a LARGE n (e.g. 200+) rather than the small default
+    And if it needs the whole thing, to use n=-1 instead of guessing a huge number
 
   Scenario: Skill tells the agent how to follow live
     Given an agent has the "check-agent-logs" skill

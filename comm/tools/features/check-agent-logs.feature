@@ -20,7 +20,10 @@ Feature: Check a sibling agent's logs
   file directly.
 
   Both modes are depth-controllable: `n` selects how far back to look
-  (small n = recent, large n = deep history).
+  (small n = recent, large n = deep history). A sentinel value n=-1 (or a
+  dedicated "get the whole file" mode) returns the ENTIRE transcript (or the
+  ENTIRE events file) with no depth cap — so callers never have to guess a
+  huge number like n=90000.
 
   Background:
     Given a running sudo-fleet with at least two agents
@@ -63,6 +66,23 @@ Feature: Check a sibling agent's logs
     When I call check-agent-logs with sibling "ya-glm-l", mode compressed, and n=200
     Then it reads the last 200 lines of transcript.txt (i.e. `tail -n 200`)
     And it returns up to 200 chat lines
+
+  Scenario: n=-1 returns the entire compressed transcript (no depth cap)
+    Given agent "ya-glm-l" has a chat history of unknown length
+    When I call check-agent-logs with sibling "ya-glm-l", mode compressed, and n=-1
+    Then it reads the ENTIRE transcript.txt (i.e. `cat`, not a bounded `tail`)
+    And it returns all chat lines, regardless of how many there are
+
+  Scenario: n=-1 returns the entire full event trail (no depth cap)
+    Given agent "ya-glm-l" has many events
+    When I call check-agent-logs with sibling "ya-glm-l", mode full, and n=-1
+    Then it returns the ENTIRE events file, not just the trailing N events
+
+  Scenario: n=-1 works identically on Letta and Hermes siblings
+    Given agent "fa-glm-h" is a Hermes engineer sibling
+    When I call check-agent-logs with sibling "fa-glm-h", mode compressed, and n=-1
+    Then it reads the Hermes sibling's entire transcript file
+    And the sentinel behaves the same as it does for a Letta planner
 
   Scenario: Live tail in full mode
     Given agent "ya-glm-l" is reachable at "sudo-ya-glm-l-watch:8000"
