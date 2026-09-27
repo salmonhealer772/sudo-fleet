@@ -105,18 +105,16 @@ The goal: make cross-agent communication **native** — any agent messages any a
 - **Concurrency is mandatory.** If an agent is mid-run and a second/third prompt arrives, it **MUST be handled** — caught, held, sequenced, none dropped, no races. This is the prompt-multiplexer requirement, now concrete and non-optional.
 - **Keep orchestrator/engineer tendencies.** The mesh does NOT flatten pairs into undifferentiated peers: planner-delegates-to-engineer stays as the primary grain. The mesh adds *reachability in every direction*, not role collapse.
 
-### Ground truth (COPY — already built in sudo-letta, do not redesign)
+### Ground truth (the sidecars are a GIVEN — they live in each agent's directory)
 
-The plumbing is not "figure it out" — it is **already shipped** in the `sudo-letta` repo (`/opt/0-0/sudo-letta`, commits `2761e4e` MCP + `b923141` watch). The spec should **copy this contract verbatim**, not re-spec it:
+The sidecars are **already part of every agent**: the `watch` sidecar + the `-mcp` service live **inside each agent's directory** (co-located with its PVC/state, deployed by `up.sh` per agent). This is assumed — do NOT redesign or rebuild the sidecar itself. (The operator is building the Hermes-side sidecars in parallel; the Letta-side `watch_sidecar.py` + `letta_prompt` MCP already ship in `sudo-letta`.)
 
-- **MCP service** (`sudo-{name}-mcp:8000`, streamable HTTP on `/mcp`) — one tool `letta_prompt(prompt, stream, json, new_chat)`. Single source of truth `kube-scripts/letta_prompt.py`; in-pod `mcp_server.py` + `mcp_entrypoint.sh` (fastmcp). Default `new_chat=false` = resumes persisted conversation. **Limitation (explicit): no cross-agent name resolution / `--list` — that's host-side only, needs kubectl/kubeconfig.**
-- **Observer sidecar** (`watch`, same image, `kube-scripts/watch_sidecar.py` at `/opt/letta-watch/`, stdlib-only) — three jobs: (1) **process monitor** via `shareProcessNamespace: true` (idle↔active letta transitions), (2) **capture** (tail-follow `conversations/*/messages.jsonl` with byte-offset watermarks → normalized `events.jsonl`), (3) **HTTP tap** on per-agent `WATCH_PORT`. **Endpoints: `/healthz /status /ps /events?n=N /stream`** (live tail, Connection: close). Also writes `transcript.txt` (real prompts+replies only).
-- **Event schema** (`events.jsonl`): `{ts, conversation, event}`; types `user / thinking / assistant / tool_call{name,args} / tool_result{text,truncated,full_bytes} / session{id,cwd} / process_state{state,processes}`; `<system-reminder>` kept with `reminder:true`.
-- **Config**: ConfigMap `sudo-{name}-watch-config` → `{agent_name, deploy_name, watch_port, poll_interval_sec, log_dir}`; env override via WATCH_PORT/AGENT_NAME/DEPLOY_NAME; default log_dir `/home/node/.letta/watch`, poll 2s, tool_result trunc 4096.
-- **Privilege**: sidecar is **deliberately unprivileged** (no docker socket, no privileged securityContext) — `/proc` reads across the shared PID namespace work as `node`. (Contrast: my earlier memory wrongly assumed docker-socket access.)
-- **Privacy**: events.jsonl = full prompts + reasoning + tool results, on the PVC, in-cluster-only tap. Treat PVC as sensitive.
+- **Letta MCP**: `sudo-{name}-mcp:8000`, `/mcp`, one tool `letta_prompt(prompt, stream, json, new_chat)` — resumes the agent's persisted conversation (or `new_chat=true`). Source `kube-scripts/letta_prompt.py` + `mcp_server.py`.
+- **Letta watch sidecar**: `sudo-{name}-watch:8000`, routes `/healthz /status /ps /events?n=N /stream`. `kube-scripts/watch_sidecar.py`, stdlib-only, unprivileged (no docker socket). Writes `events.jsonl` + `transcript.txt` + `state.json` to the agent dir. Event schema `{ts, conversation, event}` (user/thinking/assistant/tool_call/tool_result/session/process_state); `process_state` captures idle↔active transitions.
 
-### What "native" concretely becomes
+### The real work: tools + skills + persona that INTERACT with the sidecars
+
+The sidecars are the substrate; what we build is the **agent-facing layer that makes each agent actually USE its own (and its siblings') sidecars**. This is the missing piece — not the plumbing, but the agent's hands on it.
 
 **Three tools + three skills, paired, on every agent** (operator's spec, 2026-09-27) — plus a persona alignment so agents *know* the functionality exists and reach for it:
 
@@ -131,14 +129,6 @@ The plumbing is not "figure it out" — it is **already shipped** in the `sudo-l
 **Persona alignment (the third layer, mandatory):** every agent's persona is **tweaked to teach it that this functionality exists and when to use it** — so "all levels align": tool (mechanism) + skill (procedure) + persona (awareness/intent). A tool without persona awareness gets ignored (the psy-glm lesson); a persona that names the tools makes the agent actually reach for them. This is the difference between "the capability is in the plumbing" and "the agent uses it."
 
 This is the Reaching-my-engineer pattern, generalized to **Reaching-any-sibling** (with check + logs alongside the core message).
-
-### What we know (verified plumbing)
-
-- Every pod exposes `sudo-<name>-mcp:8000` (real MCP: `initialize` / `tools/list` / `tools/call`, sessions) pinned to a deterministic host-LAN port.
-- Every pod exposes `sudo-<name>-watch:8000` (`letta-watch/1.0`) serving an event stream (`events.jsonl` / `state.json` / `transcript.txt`).
-- Deterministic ports: `8642 + cksum(name) % 5000`.
-- The proven one-shot reach paths: `hermes -z` (engineers) and `letta -p` (planners), with `HERMES_STREAM_*_TIMEOUT=inf` for long jobs.
-- fa-glm + ya-glm are the live testbed (both just swapped to `deepseek-flash` 2026-09-27).
 
 ### Remaining questions (the ONLY things not already in the shipped code)
 
