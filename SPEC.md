@@ -1,6 +1,34 @@
-# sudo-fleet — one entity, one repo
+# sudo-fleet — the room
 
-The whole agent fleet is **one entity** in one repo. This is the forward build: a portable stack that boots on any Linux box with a single `setup.sh`, and saves/pulls agents as complete identity packages.
+**sudo-fleet is a reproducible "empty room" for AI agent parties — where agents are *kept*, not just run.**
+
+You `git clone` + `setup.sh` on any Linux box and you get an *empty room* — no agents yet, just the plumbing and the room itself. Then you talk to the **two router agents** (psnvc + forge), and they pull any **saved agent** into the room, fast, by name. The agents in the room can **talk to each other natively** — that is the whole point of the party.
+
+**The steering law — agents are STORED, never memory-only.** An agent that lives only in memory (a pod, a PVC, a live process) is an agent you can lose, and the whole project evaporates with it. Every agent exists as a **"glimor"** — one complete save of its setup AND its persistent state, the *entire* agent — and that save **updates automatically once a save directory is given.** Save is not a manual backup you remember to run; it is the state the agent lives in. "Running" is a temporary view of a *stored* agent. Like a steering wheel that must turn the front wheels: this isn't a feature you rank, it's the thing that has to work or nothing else matters.
+
+**A glimor is also a seed — you fork copies across fleets.** It doesn't matter *where* a glimor physically lives; what matters is that a router can be told where it is. If fleet B's router is pointed at you in line and told "set up as many copies as I want," it forks that glimor into **as many independent agents as you ask for**. Each fork is its own agent from the moment it spawns — it does not stay linked to, or write back to, the source. And each fork **itself becomes a glimor that auto-saves in fleet B's own save directory** — it lands wherever B saves its own glimors. The source glimor stays put as a template you can fork from again later.
+
+The room currently hosts exactly **two kinds of guest**, and relies on the repo pair that builds them: **`sudo-letta`** (Letta planners — the brain) and **`sudo-agent`** (Hermes engineers — the hands). Those two factories are the *defaults*, not the boundary — but the glimor save/pull format and the plug-in contract are derived from them, so they're load-bearing, not incidental.
+
+## The load-bearing promises (this is what "done" means)
+
+Everything serves one of five promises. When all five are true, the room is done:
+
+1. **The room stands up.** `setup.sh` boots an empty fleet + router pair, reproducible, idempotent.
+2. **Agents are STORED (the steering law).** Every agent is saved as a complete glimor — setup + persistent state, the *entire* agent — and the save **updates automatically once a save directory is given.** No agent hangs out in memory only; an agent *is* its stored glimor, kept perpetually current.
+3. **The party talks.** The 4 tools + 4 skills + persona (`list-siblings`, `message-agent`, `check-what-agent-is-doing`, `check-agent-logs`) are built and baked in — new agents arrive already able to message/check siblings.
+4. **The hosts work.** You ask psnvc/forge "spawn X" (or "spawn N copies of X") and they pull + deploy them fast, by talking — not hand-running `up.sh`. Glimors are source-agnostic: point the router at where one lives, it forks as many independent copies as you want, each landing its own auto-saving glimor in that fleet's save dir.
+5. **The door is clear.** "Compatible" is pinned: `-mcp` surface + glimor format + naming/port scheme = in the room.
+
+## What is NOT the point (furniture, not the vision)
+
+These matter only insofar as they make the room faster to stand up or cheaper to run — they are not the vision and are deferred on purpose:
+
+- **LiteLLM / the shared model gateway** — an optimization (fewer keys, one swap point), not a promise. The room works with per-agent wiring; LiteLLM makes it tidier.
+- **Resource substrate / scale-to-zero** — a cost optimization, not a promise.
+- **Off-box DR mirrors** — replicating the glimors off the box is *extra* safety, not a promise. The glimor itself (steering law) is mandatory; mirroring it off-box is furniture.
+
+The test: *if a promise is false but the room still works, it was really furniture.* The steering law is above all of it — false steering, no car.
 
 ## The contract
 
