@@ -105,6 +105,17 @@ The goal: make cross-agent communication **native** — any agent messages any a
 - **Concurrency is mandatory.** If an agent is mid-run and a second/third prompt arrives, it **MUST be handled** — caught, held, sequenced, none dropped, no races. This is the prompt-multiplexer requirement, now concrete and non-optional.
 - **Keep orchestrator/engineer tendencies.** The mesh does NOT flatten pairs into undifferentiated peers: planner-delegates-to-engineer stays as the primary grain. The mesh adds *reachability in every direction*, not role collapse.
 
+### Ground truth (COPY — already built in sudo-letta, do not redesign)
+
+The plumbing is not "figure it out" — it is **already shipped** in the `sudo-letta` repo (`/opt/0-0/sudo-letta`, commits `2761e4e` MCP + `b923141` watch). The spec should **copy this contract verbatim**, not re-spec it:
+
+- **MCP service** (`sudo-{name}-mcp:8000`, streamable HTTP on `/mcp`) — one tool `letta_prompt(prompt, stream, json, new_chat)`. Single source of truth `kube-scripts/letta_prompt.py`; in-pod `mcp_server.py` + `mcp_entrypoint.sh` (fastmcp). Default `new_chat=false` = resumes persisted conversation. **Limitation (explicit): no cross-agent name resolution / `--list` — that's host-side only, needs kubectl/kubeconfig.**
+- **Observer sidecar** (`watch`, same image, `kube-scripts/watch_sidecar.py` at `/opt/letta-watch/`, stdlib-only) — three jobs: (1) **process monitor** via `shareProcessNamespace: true` (idle↔active letta transitions), (2) **capture** (tail-follow `conversations/*/messages.jsonl` with byte-offset watermarks → normalized `events.jsonl`), (3) **HTTP tap** on per-agent `WATCH_PORT`. **Endpoints: `/healthz /status /ps /events?n=N /stream`** (live tail, Connection: close). Also writes `transcript.txt` (real prompts+replies only).
+- **Event schema** (`events.jsonl`): `{ts, conversation, event}`; types `user / thinking / assistant / tool_call{name,args} / tool_result{text,truncated,full_bytes} / session{id,cwd} / process_state{state,processes}`; `<system-reminder>` kept with `reminder:true`.
+- **Config**: ConfigMap `sudo-{name}-watch-config` → `{agent_name, deploy_name, watch_port, poll_interval_sec, log_dir}`; env override via WATCH_PORT/AGENT_NAME/DEPLOY_NAME; default log_dir `/home/node/.letta/watch`, poll 2s, tool_result trunc 4096.
+- **Privilege**: sidecar is **deliberately unprivileged** (no docker socket, no privileged securityContext) — `/proc` reads across the shared PID namespace work as `node`. (Contrast: my earlier memory wrongly assumed docker-socket access.)
+- **Privacy**: events.jsonl = full prompts + reasoning + tool results, on the PVC, in-cluster-only tap. Treat PVC as sensitive.
+
 ### What "native" concretely becomes
 
 **Three tools + three skills, paired, on every agent** (operator's spec, 2026-09-27) — plus a persona alignment so agents *know* the functionality exists and reach for it:
@@ -129,25 +140,13 @@ This is the Reaching-my-engineer pattern, generalized to **Reaching-any-sibling*
 - The proven one-shot reach paths: `hermes -z` (engineers) and `letta -p` (planners), with `HERMES_STREAM_*_TIMEOUT=inf` for long jobs.
 - fa-glm + ya-glm are the live testbed (both just swapped to `deepseek-flash` 2026-09-27).
 
-### Questions to investigate (answers as of 2026-09-27, verified live on fa/ya-glm)
+### Remaining questions (the ONLY things not already in the shipped code)
 
-1. **MCP tool surface per agent — ANSWERED.** Both `-mcp` endpoints expose exactly ONE generic tool, uniform in shape, two variants:
-   - Letta planner (`-l`) → **`letta_prompt(prompt, stream, json, new_chat)`** — **stateful** by default (resumes the agent's persisted conversation unless `new_chat=true`); `stream` = stream-json joined deltas, `json` = raw object.
-   - Hermes engineer (`-h`) → **`hermes_prompt(prompt, json)`** — **stateless** one-shot (`json` = pretty-print if stdout is JSON).
-   - So "message any agent" is one generic tool (`*_prompt`), but **planners are stateful, engineers are one-shot** — a real distinction the messaging skill must encode.
+Most of the earlier "open questions" are answered by `sudo-letta`'s shipped sidecar/MCP (see "Ground truth" above). What genuinely remains to design for the **native mesh** (the new part beyond the per-pod plumbing):
 
-2. **Session semantics — ANSWERED (see #1).** Messaging a planner lands in its *live* conversation (stateful); messaging an engineer is a fresh stateless eval. The "message-agent" skill must be explicit about which, or pass `new_chat` deliberately.
-
-3. **Concurrency/multiplexer mechanic — STILL OPEN.** The `letta_prompt`/`hermes_prompt` tools are synchronous (return the reply inline); nothing yet holds/sequences a second prompt when the agent is mid-run. The `-watch` sidecar (process-namespace + docker-socket access) is the candidate home for a hold-and-feed queue — to be designed, not assumed.
-
-4. **Discoverability — STILL OPEN.** No registry; an agent must know a sibling's name + port. Candidates: a baked phonebook in each agent vs. deriving from the deterministic `cksum` scheme vs. a fleet-list route. Pick one to make the "full mesh" actually *reachable*.
-
-5. **Monitoring read-shape — ANSWERED.** The `-watch` server (`letta-watch/1.0`) serves exactly two live routes:
-   - **`GET /status`** → `{agent, deploy, uptime_s, agent_container_up, active, current_conversation, last_event_ts, events_logged, transcript_bytes, watch_port}` — the clean "what is this agent doing right now" contract.
-   - **`GET /events`** → newline-delimited `{ts, conversation, event, text/name/args}` — the trailing event/history stream.
-   - So **check-what-agent-is-doing → `/status`** and **check-agent-logs → `/events`** are the two stable read contracts for the check tools.
-
-6. **Auth/keys — PARTLY OPEN.** The `-mcp` handshake issues an `mcp-session-id` automatically (no key gate observed on the probe — initialize returned a session with no auth). Whether sibling calls need a per-agent key (matching the `API_SERVER_KEY`/bearer pattern for host-root-safety) must be pinned before building.
+1. **Cross-agent routing / discoverability** — the shipped MCP is **per-pod only**: `letta_prompt` prompts ITS OWN agent, and `--list`/cross-agent name-resolution is explicitly host-side (needs kubectl/kubeconfig), NOT exposed in-pod. For "any agent → any agent," an agent still needs to **know + reach a sibling's `-mcp` Service** (`http://sudo-{name}-mcp:8000/mcp`) and call `letta_prompt`/`hermes_prompt` on it. The native layer = bake that reach syntax + a sibling phonebook into skill/tool, over the per-pod MCP the repo already ships.
+2. **Concurrency/multiplexer** — the `letta_prompt`/`hermes_prompt` tools are synchronous; a second prompt to a mid-run agent is NOT yet held/queued. The `-watch` sidecar already exposes `process_state` (idle↔active) — that is the signal a queue can key on. Feed-a-second-prompt-when-idle is the mechanic to add (and it can live in/next to the existing sidecar, not a new broker).
+3. **Auth/keys** — `-mcp` initialize auto-issues an `mcp-session-id`, no key gate observed. For host-root-safety on cross-agent calls, mint a per-agent key (the `API_SERVER_KEY`/bearer pattern).
 
 ### Deliverable
 
