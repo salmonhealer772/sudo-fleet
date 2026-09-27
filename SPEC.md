@@ -1,24 +1,36 @@
 # sudo-fleet — the room
 
-**sudo-fleet is a reproducible "empty room" for AI agent parties — where agents are *kept*, not just run.**
+**sudo-fleet is a disposable room you stand up anywhere, where saved agents are pulled in, talk to each other, and survive the room's destruction.**
 
-You `git clone` + `setup.sh` on any Linux box and you get an *empty room* — no agents yet, just the plumbing and the room itself. Then you talk to the **two router agents** (psnvc + forge), and they pull any **saved agent** into the room, fast, by name. The agents in the room can **talk to each other natively** — that is the whole point of the party.
+The thing is three aspects, in one breath:
+
+1. **Glimors — the transportable agent.** A glimor is one complete save of an agent's setup AND its persistent state, the *entire* agent. This isn't new — you already move agents today via `docker commit`, PVC copies, the fabean snapshot pattern. The work here is **standardizing it**: one name, one format, one `save`/`pull`, so an agent is *reliably* movable instead of ad-hoc.
+
+2. **The social layer — agents see and talk to each other.** This is the genuinely new part. Agents can natively list, message, and check on one another (the four tools + four skills + persona: `list-siblings`, `message-agent`, `check-what-agent-is-doing`, `check-agent-logs`). This is what makes the room *not* just a pile of containers — it's a party.
+
+3. **The room itself — a disposable environment.** Stand it up, use it, **destroy it**, stand up a fresh one — and the glimors are already saved, so the party reconstitutes. The room is throwaway *because the agents aren't.* An ephemeral environment with durable people inside it.
+
+The three aspects lock together: **the room is disposable (3) because every agent is stored as a glimor (1), and the reason there's a room at all instead of just containers is that the agents talk (2).**
+
+You `git clone` + `setup.sh` on any Linux box and you get an *empty room* — no agents yet, just the plumbing and the room itself. Then you talk to the **two router agents** (psnvc + forge), and they pull any **saved agent** into the room, fast, by name.
 
 **The steering law — agents are STORED, never memory-only.** An agent that lives only in memory (a pod, a PVC, a live process) is an agent you can lose, and the whole project evaporates with it. Every agent exists as a **"glimor"** — one complete save of its setup AND its persistent state, the *entire* agent — and that save **updates automatically once a save directory is given.** Save is not a manual backup you remember to run; it is the state the agent lives in. "Running" is a temporary view of a *stored* agent. Like a steering wheel that must turn the front wheels: this isn't a feature you rank, it's the thing that has to work or nothing else matters.
 
-**A glimor is also a seed — you fork copies across fleets.** It doesn't matter *where* a glimor physically lives; what matters is that a router can be told where it is. If fleet B's router is pointed at you in line and told "set up as many copies as I want," it forks that glimor into **as many independent agents as you ask for**. Each fork is its own agent from the moment it spawns — it does not stay linked to, or write back to, the source. And each fork **itself becomes a glimor that auto-saves in fleet B's own save directory** — it lands wherever B saves its own glimors. The source glimor stays put as a template you can fork from again later.
+**A glimor is also a seed — you fork copies across fleets.** It doesn't matter *where* a glimor physically lives; what matters is that a router can be told where it is. If fleet B's router is pointed at that source and told "set up as many copies as I want," it forks the glimor into **as many independent agents as you ask for**. Each fork is its own agent from the moment it spawns — it does not stay linked to, or write back to, the source. And each fork **itself becomes a glimor that auto-saves in fleet B's own save directory** — it lands wherever B saves its own glimors. The source glimor stays put as a template you can fork from again later.
 
 The room currently hosts exactly **two kinds of guest**, and relies on the repo pair that builds them: **`sudo-letta`** (Letta planners — the brain) and **`sudo-agent`** (Hermes engineers — the hands). Those two factories are the *defaults*, not the boundary — but the glimor save/pull format and the plug-in contract are derived from them, so they're load-bearing, not incidental.
 
-## The load-bearing promises (this is what "done" means)
+## What "done" means (the three aspects, made concrete)
 
-Everything serves one of five promises. When all five are true, the room is done:
+When the three aspects are all real, the room is done:
 
-1. **The room stands up.** `setup.sh` boots an empty fleet + router pair, reproducible, idempotent.
-2. **Agents are STORED (the steering law).** Every agent is saved as a complete glimor — setup + persistent state, the *entire* agent — and the save **updates automatically once a save directory is given.** No agent hangs out in memory only; an agent *is* its stored glimor, kept perpetually current.
-3. **The party talks.** The 4 tools + 4 skills + persona (`list-siblings`, `message-agent`, `check-what-agent-is-doing`, `check-agent-logs`) are built and baked in — new agents arrive already able to message/check siblings.
-4. **The hosts work.** You ask psnvc/forge "spawn X" (or "spawn N copies of X") and they pull + deploy them fast, by talking — not hand-running `up.sh`. Glimors are source-agnostic: point the router at where one lives, it forks as many independent copies as you want, each landing its own auto-saving glimor in that fleet's save dir.
-5. **The door is clear.** "Compatible" is pinned: `-mcp` surface + glimor format + naming/port scheme = in the room.
+1. **Glimors are real.** Every agent is saved as a complete glimor — setup + persistent state, the *entire* agent — and the save **updates automatically once a save directory is given.** No agent hangs out in memory only; an agent *is* its stored glimor, kept perpetually current. (The steering law.)
+2. **The party talks.** The 4 tools + 4 skills + persona are built and baked into every spawned agent, so a new guest arrives already able to list, message, and check on its siblings — natively, no bridge, no hand-running.
+3. **The room is disposable.** You can stand up a room (`setup.sh`, reproducible + idempotent), use it, destroy it, and stand up another — and every agent comes back from its glimor. The router pair (psnvc + forge) pull and deploy agents by talking ("spawn X", "spawn N of X"), not by hand-running `up.sh`.
+
+The supporting cast (still required, in service of the three):
+- **The hosts work** — psnvc/forge pull + deploy fast, source-agnostic (point them at where a glimor lives, they fork N independent copies, each landing its own auto-saving glimor in that fleet's save dir).
+- **The door is clear** — "compatible" is pinned: `-mcp` surface + glimor format + naming/port scheme = in the room.
 
 ## What is NOT the point (furniture, not the vision)
 
@@ -28,7 +40,7 @@ These matter only insofar as they make the room faster to stand up or cheaper to
 - **Resource substrate / scale-to-zero** — a cost optimization, not a promise.
 - **Off-box DR mirrors** — replicating the glimors off the box is *extra* safety, not a promise. The glimor itself (steering law) is mandatory; mirroring it off-box is furniture.
 
-The test: *if a promise is false but the room still works, it was really furniture.* The steering law is above all of it — false steering, no car.
+The test: *if one of the three aspects is false but the room still works, it was really furniture.* The steering law is above all of it — false steering, no car.
 
 ## The contract
 
