@@ -20,6 +20,10 @@ The whole agent fleet is **one entity** in one repo. This is the forward build: 
 
 6. **The spawner/router** — **psnvc + forge together as a team.** No separate agent; me and forge ARE the router.
 
+7. **Fleet monitoring + messaging tools/skills** — built-in skills/tools every agent gets so they can **monitor each other** (tap the `-watch` streams) and **message each other** (call the `-mcp` surfaces) directly — agents observe and reach their siblings, not just be observed/reached.
+
+8. **A prompt multiplexer** — something that **handles multiple prompts sent to an agent at the same time**: catches them all, drops none, and sequences them (holds-and-feeds one-at-a-time, no races/collisions). This is the load-bearing store-and-forward piece that a bare MCP Service is *not*.
+
 ## An OPEN fleet (not a two-factory monoculture)
 
 `sudo-letta` and `sudo-agent` are the **defaults**, not the boundary. You can bring **any agent** and plug it in — as long as it is **set up compatibly**. The fleet is an interop surface, not a closed factory.
@@ -39,6 +43,14 @@ The `-mcp`/`-watch` sidecars and the deterministic-port scheme are therefore the
 - **`pull <name>`** → restores the complete package (definition + full state) on any instance, so an agent survives fleet moves intact — same agent, mid-conversation, on the next box.
 - Both in one or two commands, stored in the host VM directory.
 
+## Fleet monitoring + messaging + prompt multiplexing (the traffic/heartbeat layer)
+
+These turn the passive sidecar plumbing into an *active* agent capability:
+
+- **Monitor skills/tools** — every agent can tap its siblings' `-watch` streams (see who's talking, what they're doing), not just be watched itself.
+- **Message skills/tools** — every agent can call a sibling's `-mcp` surface to send it a prompt / invoke a tool, with the no-timeout `hermes -z`-style semantics so long jobs don't get cut.
+- **Prompt multiplexer** — the must-have store-and-forward: multiple prompts sent to one agent at the same time are **caught, held, and sequenced** (fed one at a time, none dropped, no interleaving). A bare MCP Service is an *address*, not a queue — this is the queue.
+
 ## Bootstrap state
 
 `setup.sh` puts up **basically empty bones** with the router and the setup agents (psnvc and forge). Not seeded with the current fleet.
@@ -49,6 +61,7 @@ The `-mcp`/`-watch` sidecars and the deterministic-port scheme are therefore the
 - **Save depth** = definition + full state, as a complete, printable, self-updating identity package.
 - **Seed** = empty bones (psnvc + forge + router) only; save/pull is per-agent. (Fleet-level `pull --all` was discussed but **not chosen** — do not build unless reopened.)
 - **Open fleet** = `sudo-letta`/`sudo-agent` are the *defaults*, not the boundary; any compatible agent plugs in (see "An OPEN fleet" above).
+- **Traffic layer** = every agent gets monitoring + messaging skills/tools (watch siblings, message siblings), and **multiple simultaneous prompts to one agent are queued/sequenced, not dropped** (the prompt multiplexer).
 
 ## What exists already (~90% — slow the roll, don't rebuild)
 
@@ -64,9 +77,10 @@ The `-mcp`/`-watch` sidecars and the deterministic-port scheme are therefore the
 2. `setup.sh` idempotency + portability (no Mac `/mnt/mac`, no fabean-only paths; detect bare-Linux and bootstrap k3s + the stack).
 3. The **save/pull system** as a complete, printable, self-updating identity package in the host VM directory — and as a **general spec any agent can conform to** (factory or brought-in).
 4. LiteLLM + the `-mcp`/`-watch` sidecars as first-class factory defaults (emitted by `setup.sh`, not post-deploy `letta install`) — AND as the documented **plug-in contract** an external agent must satisfy to join the fleet.
+5. The **monitor/message skills + the prompt multiplexer** — the traffic layer that turns passive sidecars into active in-fleet monitoring/messaging, plus the store-and-forward queue that sequences simultaneous prompts. (The multiplexer replaces the old "multi-message queue" open question below as a *built* requirement.)
 
 ## Open / not settled
 
-- **Multi-message queue** (store-and-forward mailbox) still unresolved — a bare MCP Service is an address, not a queue. Decide later; do NOT bake a Service-only answer and rediscover the gap.
+- **Prompt multiplexer semantics** — is "handle multiple prompts at the same time" strictly **hold + feed one-at-a-time** (mailbox/queue), or also **genuine parallel workers** for concurrent execution? Confirm before building; default assumption = queue/sequence (catch-all, drop-none, no races).
 - "90% exists" is a **hypothesis** — confirm which existing pieces actually port vs. need rework before promising one-command `setup.sh`.
 - **The exact plug-in gate** (under "An OPEN fleet") is under-specified: is it strictly "MCP server + identity-package conformance," or is there a harder gate (required sidecar, env-var contract, router registration)? And when an agent is **not** compatible, is the path "wrap it until it speaks the contract" or "rejected / stays outside the fleet"? Pin these before building the plug-in path.
