@@ -107,12 +107,19 @@ The goal: make cross-agent communication **native** — any agent messages any a
 
 ### What "native" concretely becomes
 
-Per-agent **skills + tools** (not a separate registry service, not a central broker — the operator's choice):
+**Three tools + three skills, paired, on every agent** (operator's spec, 2026-09-27) — plus a persona alignment so agents *know* the functionality exists and reach for it:
 
-- **Messaging skill/tool** — every agent gets a baked skill that reaches and messages a sibling by name (the exact `-mcp` call semantics, no-timeout `hermes -z`-style, quoting rules), so it can message a sibling by name without a human in the loop.
-- **Check-on skill/tool** — every agent gets a baked skill that reads a sibling's `-watch` stream to see what it's doing (its current turn, recent events, state).
+| Surface | Tool (mechanism) | Skill (procedure) |
+|---|---|---|
+| **message-agent** | call a sibling's `-mcp` to send it a prompt / invoke a tool | the reach-and-message recipe (no-timeout, naming, quoting) |
+| **check-what-agent-is-doing** | read a sibling's live `-watch` stream (current turn / activity) | the "what is X doing right now" recipe |
+| **check-agent-logs** | tail a sibling's event/transcript history | the "read X's recent trail" recipe |
 
-This is the Reaching-my-engineer skill pattern, generalized to "Reaching-any-sibling."
+**`message-agent` is BY FAR the most important** — it's the mesh's whole point; the two check tools are the observability that makes messaging safe.
+
+**Persona alignment (the third layer, mandatory):** every agent's persona is **tweaked to teach it that this functionality exists and when to use it** — so "all levels align": tool (mechanism) + skill (procedure) + persona (awareness/intent). A tool without persona awareness gets ignored (the psy-glm lesson); a persona that names the tools makes the agent actually reach for them. This is the difference between "the capability is in the plumbing" and "the agent uses it."
+
+This is the Reaching-my-engineer pattern, generalized to **Reaching-any-sibling** (with check + logs alongside the core message).
 
 ### What we know (verified plumbing)
 
