@@ -3,31 +3,25 @@ Feature: The message-agent skill teaches correct usage
   The message-agent skill documents how an agent messages a sibling. Its
   instructions must tell the agent HOW to invoke the tool in each case —
   the exact arguments — so the agent does not reason from the raw MCP
-  plumbing. It also teaches that messages are QUEUED and fed to the sibling
-  one at a time, so the agent does not expect an instant answer when the
-  sibling is busy. It generalizes "reaching-my-engineer" to
+  plumbing.
+
+  The skill also teaches that the SENDING tool is simple: the sibling's own
+  stack (its Redis-backed distributor) queues and orders the work, so the
+  sending agent just sends and reads the reply — it does not manage
+  concurrency or ordering itself. It generalizes "reaching-my-engineer" to
   "reaching-any-sibling".
 
   Scenario: Skill gives the concrete invocation for a plain message
     Given an agent has the "message-agent" skill
     When the agent wants a single plain-text reply from a sibling
     Then the skill says: message-agent with sibling "<name>" and prompt "<message>"
-    And the skill notes the default mode is direct (waits for the reply)
+    And the skill notes that sending is all the agent does — the recipient's distributor handles queuing
 
-  Scenario: Skill teaches the two delivery modes and when to use each
-    Given an agent has the "message-agent" skill
-    When the agent is deciding how to send
-    Then the skill teaches:
-      | mode   | behavior                                     | use when                                          |
-      | direct | enqueue + wait for the reply                 | you need the answer now, in one call              |
-      | inbox  | enqueue only, get a message id, no wait      | fire-and-forget, or let the sibling get to it     |
-
-  Scenario: Skill tells the agent messages are queued, not instant
+  Scenario: Skill teaches that the recipient handles ordering, not the sender
     Given an agent has the "message-agent" skill
     When the agent messages a sibling that may be busy
-    Then the skill teaches that the message is held in a queue and fed one at a time
-    And that the reply may be delayed if the sibling is mid-task
-    And the skill suggests inbox mode when the agent does not need to wait
+    Then the skill teaches that the message is queued and fed one at a time by the sibling's own stack
+    And that the sending agent does NOT need to wait-check or re-order anything itself
 
   Scenario: Skill tells the agent how to pick the sibling by name
     Given an agent has the "message-agent" skill

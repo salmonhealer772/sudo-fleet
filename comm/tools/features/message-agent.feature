@@ -1,13 +1,14 @@
 Feature: Message a sibling agent
 
   The message-agent tool is the primary way agents in the fleet talk to each
-  other. It delivers a prompt to any sibling by name and (optionally) waits
-  for that sibling's reply.
+  other. It sends a prompt to any sibling by name and returns that sibling's
+  reply.
 
-  Delivery is no longer direct-to-process. A message flows MCP -> a Redis
-  queue in front of the sibling -> the sibling is fed ONE message at a time.
-  This is what makes "messaged while busy" safe: messages are held and
-  sequenced, never dropped and never raced onto the same agent at once.
+  The tool is deliberately SIMPLE: it just sends. It does NOT queue, order,
+  or manage concurrency — all of that lives in the RECIPIENT's prompt
+  distributor (a Redis-backed queue in front of the agent's MCP door), which
+  feeds the agent one message at a time. The sender's job is only to address
+  a sibling and hand it a prompt; the recipient's stack handles the rest.
 
   A sibling is addressed by its bare name (the deployment name minus the
   leading "sudo-"; e.g. deployment "sudo-fa-glm-l" -> name "fa-glm-l"). The
@@ -16,20 +17,15 @@ Feature: Message a sibling agent
     - a Letta planner exposes "letta_prompt(prompt, stream, json, new_chat)"
     - a Hermes engineer exposes "hermes_prompt(prompt, json)"
 
-  Delivery modes:
-    - "direct"  (default): enqueue and WAIT for the reply (synchronous).
-    - "inbox": enqueue only; return a message id immediately, do not wait.
-
   Background:
     Given a running sudo-fleet with at least two agents
     And each agent exposes its "-mcp" service
-    And a Redis queue sits in front of each agent's MCP door
+    And a Redis-backed distributor sits in front of each agent's MCP door
 
-  Scenario: Direct message to a planner (default mode)
+  Scenario: Send a prompt to a planner and get the reply
     Given agent "fa-glm-l" is reachable at "sudo-fa-glm-l-mcp:8000"
-    When I call message-agent with sibling "fa-glm-l", prompt "Who are you?", and mode direct
-    Then it enqueues the message and waits
-    And when the message is fed to the agent it calls letta_prompt with prompt "Who are you?", stream=false, json=false, new_chat=false
+    When I call message-agent with sibling "fa-glm-l" and prompt "Who are you?"
+    Then it calls letta_prompt with prompt "Who are you?", stream=false, json=false, new_chat=false
     And it returns the plain-text reply string from "fa-glm-l"
 
   Scenario: Default resumes the planner's persisted conversation
@@ -68,31 +64,18 @@ Feature: Message a sibling agent
     Then it calls hermes_prompt with only prompt and json
     And the stream and new_chat flags are ignored for the engineer
 
-  Scenario: Inbox mode enqueues and returns a message id without waiting
-    Given agent "fa-glm-l" is reachable at "sudo-fa-glm-l-mcp:8000"
-    When I call message-agent with sibling "fa-glm-l", prompt "do the thing", and mode inbox
-    Then it enqueues the message into the sibling's queue
-    And it returns a message id immediately
-    And it does NOT wait for the agent to reply
+  Scenario: Engineer json mode pretty-prints only valid JSON
+    Given agent "fa-glm-h" is reachable at "sudo-fa-glm-h-mcp:8000"
+    When I call message-agent with sibling "fa-glm-h", prompt "hi", and json=true
+    Then it calls hermes_prompt with json=true
+    And it pretty-prints the reply when it is valid JSON, otherwise returns the raw text
 
-  Scenario: A busy agent queues messages instead of racing them
-    Given agent "fa-glm-l" is mid-run on a long prompt
-    When three messages are sent to "fa-glm-l" in quick succession
-    Then no more than one is fed to the agent at a time
-    And the rest are held in the queue until the agent is free
-
-  Scenario: Messages are drained one source at a time (first-in-first, then group-by-source)
-    Given agent "fa-glm-l" received a first message from "msg-source-a"
-    And more messages from both "msg-source-a" and "msg-source-b"
-    When the queue drains
-    Then the FIRST message is the first one that arrived
-    And after it, every remaining message from "msg-source-a" is fed before any message from "msg-source-b"
-
-  Scenario: When a source is empty, move to the most recent other source
-    Given agent "fa-glm-l" finished draining "msg-source-a"
-    And the newest remaining message is from "msg-source-c"
-    When the queue drains the next message
-    Then it feeds "msg-source-c"'s message next
+  Scenario: The sender does not manage ordering — the recipient does
+    Given agent "fa-glm-l" is busy and three more messages are sent to it
+    When I call message-agent to "fa-glm-l"
+    Then the tool simply sends each message
+    And the recipient's distributor queues and feeds them one at a time (not the sender's concern)
+    And no message is dropped or raced by the sending tool
 
   Scenario: Long job is not cut off
     Given agent "fa-glm-l" is reachable at "sudo-fa-glm-l-mcp:8000"
