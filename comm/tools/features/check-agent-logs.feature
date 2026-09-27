@@ -1,19 +1,23 @@
 Feature: Check a sibling agent's logs
 
-  The check-agent-logs tool tails a sibling's event trail from its "-watch"
-  sidecar at "http://sudo-{name}-watch:8000". It supports TWO modes, both
-  depth-controllable:
+  The check-agent-logs tool reads a sibling's activity trail in TWO modes,
+  both depth-controllable:
 
-  - FULL mode reads GET /events?n=N (or GET /stream for a live tail): every
-    event — including every "thinking", "tool_call", "tool_result",
-    "session", and "process_state" event. This is the raw, unabridged trail
-    of everything the agent has thought and done.
+  - FULL mode reads GET /events?n=N (or GET /stream for a live tail) from the
+    sibling's "-watch" sidecar: every event — including every "thinking",
+    "tool_call", "tool_result", "session", and "process_state" event. This is
+    the raw, unabridged trail of everything the agent has thought and done.
 
-  - COMPRESSED mode reads GET /transcript?n=N: only real user prompts
-    ("You:") and assistant replies ("Agent:"). Thinking, tool calls/results,
-    sessions, process states, and system reminders are stripped out. This is
-    the plain chat log — just what was said, not how the agent got there.
-    (Parity with `stream.sh -t`, which tails transcript.txt.)
+  - COMPRESSED mode reads the sibling's transcript.txt file directly (the
+    same read `stream.sh -t` already does): only real user prompts ("You:")
+    and assistant replies ("Agent:"). Thinking, tool calls/results, sessions,
+    process states, and system reminders are stripped out. This is the plain
+    chat log — just what was said, not how the agent got there.
+
+  The compressed transcript (transcript.txt) is stored on-display in the
+  sibling's watch dir; the full trail (events.jsonl) is served by the
+  "-watch" HTTP tap. So full mode goes over HTTP, compressed mode reads the
+  file directly.
 
   Both modes are depth-controllable: `n` selects how far back to look
   (small n = recent, large n = deep history).
@@ -41,10 +45,10 @@ Feature: Check a sibling agent's logs
     Then it performs GET /events?n=1000
     And it returns up to 1000 events, reaching further back than the default
 
-  Scenario: Compressed mode returns last N chat lines
-    Given agent "ya-glm-l" is reachable at "sudo-ya-glm-l-watch:8000"
+  Scenario: Compressed mode reads the transcript file directly
+    Given agent "ya-glm-l" has its transcript.txt at "/home/node/.letta/watch/transcript.txt"
     When I call check-agent-logs with sibling "ya-glm-l", mode compressed, and n=10
-    Then it performs GET /transcript?n=10
+    Then it reads the last 10 lines of transcript.txt (i.e. `tail -n 10`)
     And it returns up to 10 plain-text lines of the form "[ts] You:/Agent: text"
     And no thinking, tool_call, tool_result, session, process_state, or reminder text is present
 
@@ -57,7 +61,7 @@ Feature: Check a sibling agent's logs
   Scenario: Compressed mode is depth-controllable
     Given agent "ya-glm-l" has a long chat history
     When I call check-agent-logs with sibling "ya-glm-l", mode compressed, and n=200
-    Then it performs GET /transcript?n=200
+    Then it reads the last 200 lines of transcript.txt (i.e. `tail -n 200`)
     And it returns up to 200 chat lines
 
   Scenario: Live tail in full mode

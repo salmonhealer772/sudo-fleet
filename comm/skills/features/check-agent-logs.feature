@@ -7,9 +7,9 @@ Feature: The check-agent-logs skill teaches correct usage
     Given an agent has the "check-agent-logs" skill
     When the agent wants to read a sibling's trail
     Then the skill teaches:
-      | mode       | what it shows                                        | endpoint        |
-      | full       | every event incl. thinking/tools/sessions            | /events?n=N     |
-      | compressed | only real prompts + replies (chat log)               | /transcript?n=N |
+      | mode       | what it shows                                        | how to read it                                |
+      | full       | every event incl. thinking/tools/sessions            | GET /events?n=N (the -watch HTTP tap)         |
+      | compressed | only real prompts + replies (chat log)               | read transcript.txt directly (tail -n N)      |
 
   Scenario: Skill teaches when to use compressed vs full
     Given an agent has the "check-agent-logs" skill
@@ -22,7 +22,7 @@ Feature: The check-agent-logs skill teaches correct usage
     When the agent wants to control how far back it looks
     Then the skill teaches it to set n small for a quick recent check
     And to set n large to reach deep history
-    And that n is honored by BOTH /events?n=N and /transcript?n=N
+    And that n is honored by BOTH /events?n=N (full) and tail -n N (compressed)
 
   Scenario: Skill teaches the live tail
     Given an agent has the "check-agent-logs" skill
