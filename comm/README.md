@@ -12,11 +12,12 @@ Three folders, three layers that must **align**:
 
 A tool without a skill is a bare callable nobody reaches for. A tool + skill without the persona snippet gets ignored because the agent doesn't know it exists (the whole point of the persona layer is to make the agent *actually use* what it has).
 
-## The three tools (and their skills)
+## The four tools (and their skills)
 
-1. **`message-agent`** — BY FAR the most important. Message any sibling by name (`letta_prompt`/`hermes_prompt` via the sibling's `-mcp`).
-2. **`check-what-agent-is-doing`** — read a sibling's live activity (`GET ...-watch/status`).
-3. **`check-agent-logs`** — tail a sibling's event trail (`GET ...-watch/events?n=N` / `/stream`).
+1. **`list-siblings`** — see who exists and how to reach them (read `kubectl get services`, the live roster).
+2. **`message-agent`** — BY FAR the most important. Message any sibling by name (`letta_prompt`/`hermes_prompt` via the sibling's `-mcp`).
+3. **`check-what-agent-is-doing`** — read a sibling's live activity (`GET ...-watch/status`).
+4. **`check-agent-logs`** — tail a sibling's event trail (`GET ...-watch/events?n=N` / `/stream`).
 
 ## The router default
 

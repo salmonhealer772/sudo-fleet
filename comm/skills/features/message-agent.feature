@@ -15,7 +15,25 @@ Feature: The message-agent skill teaches correct usage
     Given an agent has the "message-agent" skill
     When the agent wants a single plain-text reply from a sibling
     Then the skill says: message-agent with sibling "<name>" and prompt "<message>"
-    And the skill notes that sending is all the agent does — the recipient's distributor handles queuing
+    And the skill notes that sending is all the agent does — the recipient's distributor handles queuing and ordering
+
+  Scenario: Skill teaches direct vs inbox mode
+    Given an agent has the "message-agent" skill
+    When the agent must pick how to send
+    Then the skill instructs: mode "direct" = send and wait for the full reply (default)
+    And mode "inbox" = send, get a message id back immediately, fetch the reply later
+    And the skill tells it to use "inbox" when it does not need the reply right now (fire-and-forget), and "direct" when it does
+
+  Scenario: Skill teaches how an inbox reply is retrieved
+    Given an agent has the "message-agent" skill
+    When the agent sent a message in inbox mode and got back an id
+    Then the skill directs it to the sibling's queue-status tool to fetch the result by that id
+
+  Scenario: Skill teaches the source tag for grouped ordering
+    Given an agent has the "message-agent" skill
+    When the agent wants its own messages kept together in the recipient's queue
+    Then the skill says: set "source" to a stable id (e.g. your own name)
+    And the skill notes the recipient drains all messages from one source before moving to the next
 
   Scenario: Skill teaches that the recipient handles ordering, not the sender
     Given an agent has the "message-agent" skill
@@ -50,7 +68,7 @@ Feature: The message-agent skill teaches correct usage
   Scenario: Skill teaches that engineers are stateless one-shots
     Given an agent has the "message-agent" skill
     When the agent messages a Hermes engineer sibling
-    Then the skill notes the engineer only accepts prompt (and optional json)
+    Then the skill notes the engineer only accepts prompt, json, mode, and source
     And the skill directs the agent to NOT pass stream or new_chat to an engineer (they are ignored)
 
   Scenario: Skill teaches the no-timeout path for long jobs
