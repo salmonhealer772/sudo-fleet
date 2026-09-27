@@ -94,6 +94,47 @@ These turn the passive sidecar plumbing into an *active* agent capability:
 4. LiteLLM + the `-mcp`/`-watch` sidecars as first-class factory defaults (emitted by `setup.sh`, not post-deploy `letta install`) — AND as the documented **plug-in contract** an external agent must satisfy to join the fleet.
 5. The **monitor/message skills + the prompt multiplexer** — the traffic layer that turns passive sidecars into active in-fleet monitoring/messaging, plus the store-and-forward queue that sequences simultaneous prompts. (The multiplexer replaces the old "multi-message queue" open question below as a *built* requirement.)
 
+## Native cross-agent communication (the mesh) — SPEC IN PROGRESS, testbed = fa-glm + ya-glm
+
+The goal: make cross-agent communication **native** — any agent messages any agent, and any agent checks on any agent, without psnvc/forge hand-running a bridge each time. The `-mcp` + `-watch` sidecars already exist fleet-wide (the plumbing); this spec turns them into a native capability.
+
+### The model (operator's spec, 2026-09-27)
+
+- **Full mesh — any agent → any agent.** Every agent can message every other agent, any direction. Not just planner→engineer within a pair; planners, engineers, across pairs, all of it.
+- **Same idea for monitoring — any agent → any agent's activity.** Every agent can check what any other agent is doing (tap its `-watch` stream), not just be watched itself.
+- **Concurrency is mandatory.** If an agent is mid-run and a second/third prompt arrives, it **MUST be handled** — caught, held, sequenced, none dropped, no races. This is the prompt-multiplexer requirement, now concrete and non-optional.
+- **Keep orchestrator/engineer tendencies.** The mesh does NOT flatten pairs into undifferentiated peers: planner-delegates-to-engineer stays as the primary grain. The mesh adds *reachability in every direction*, not role collapse.
+
+### What "native" concretely becomes
+
+Per-agent **skills + tools** (not a separate registry service, not a central broker — the operator's choice):
+
+- **Messaging skill/tool** — every agent gets a baked skill that reaches and messages a sibling by name (the exact `-mcp` call semantics, no-timeout `hermes -z`-style, quoting rules), so it can message a sibling by name without a human in the loop.
+- **Check-on skill/tool** — every agent gets a baked skill that reads a sibling's `-watch` stream to see what it's doing (its current turn, recent events, state).
+
+This is the Reaching-my-engineer skill pattern, generalized to "Reaching-any-sibling."
+
+### What we know (verified plumbing)
+
+- Every pod exposes `sudo-<name>-mcp:8000` (real MCP: `initialize` / `tools/list` / `tools/call`, sessions) pinned to a deterministic host-LAN port.
+- Every pod exposes `sudo-<name>-watch:8000` (`letta-watch/1.0`) serving an event stream (`events.jsonl` / `state.json` / `transcript.txt`).
+- Deterministic ports: `8642 + cksum(name) % 5000`.
+- The proven one-shot reach paths: `hermes -z` (engineers) and `letta -p` (planners), with `HERMES_STREAM_*_TIMEOUT=inf` for long jobs.
+- fa-glm + ya-glm are the live testbed (both just swapped to `deepseek-flash` 2026-09-27).
+
+### Questions to investigate (write these answers back in before building)
+
+1. **MCP tool surface per agent** — what does `tools/list` actually return on a planner's `-mcp` vs an engineer's `-mcp`? Is the canonical cross-agent call a `letta_prompt`/`hermes_prompt` tool (as seen on mail-bot), and does every agent expose a *prompt/eval*-shaped tool a sibling can call generically?
+2. **Session semantics** — does messaging a sibling via MCP start a fresh stateless session (like `hermes -z`) or continue a persistent thread? Which do we want for "message any agent"?
+3. **The concurrency/multiplexer mechanic** — where does the queue live? (Per-pod watchdog in front of the `-mcp` endpoint? The `-watch` sidecar's process-namespace + docker-socket access suggests it could hold-and-feed.) How does a second prompt wait — blocking queue, deferred reply, or a `POST`-then-poll run id?
+4. **Discoverability** — with no registry, how does an agent *know* a sibling's name + port to reach it? (A baked phonebook in each agent? Derive from the deterministic `cksum` scheme? Hit a fleet list?) This is the gap between "full mesh" and "actually knowing who to call."
+5. **Monitoring read-shape** — what's the cleanest endpoint/route the `-watch` server offers for "what is agent X doing right now" (a `/state`-style route vs. tailing `events.jsonl`), so a check-on skill can be written against a stable contract.
+6. **Auth/keys** — the `mcp-session-id` flow is already live; is there a per-agent key gate we must mint (matching the `API_SERVER_KEY` / http-bearer pattern) so a sibling can call without human pasting a token?
+
+### Deliverable
+
+Extend this `sudo-fleet` spec into the definitive native cross-agent-communication contract (mesh + monitoring + multiplexing), with the per-agent messaging + check-on skills specced at the same level as the existing Reaching-my-engineer skill. Test on fa-glm/ya-glm, then record the verified mechanics here.
+
 ## Open / not settled
 
 - **Save storage backend** — where the saved package lands (the host VM directory vs. a remote mirror; GCS/GitHub/fabean). The host VM directory is the canonical local store; the off-box mirror is the "lose my computer" answer. Pick the remote before building DR.
