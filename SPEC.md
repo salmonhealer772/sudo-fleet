@@ -160,12 +160,26 @@ Every agent's persona gets a short block teaching it: *"You are part of a fleet.
 
 In **sudo-fleet**, the router pair (psnvc + forge) **bakes these into every spawned agent as a spawn-time default**: the 3 tools + 3 skills + persona block are part of what `up.sh`/spawn gives an agent, NOT a post-hoc per-agent bolting. A new agent comes out of the spawner already able to message/check any sibling. This is what "native" means — the fleet, as a whole, talks.
 
+### The message queue — how "messaged while busy" is handled (operator's spec, 2026-09-27)
+
+Today `letta_prompt`/`hermes_prompt` are **synchronous and queue-less**: a hit over MCP spawns a letta process immediately, so N rapid prompts = N parallel processes racing the same shared conversation state (the parallel-shared corruption risk). The fix is a **standard OSS message queue** in front of the MCP door. **Product: Redis** (the most normal/regular OSS queue) — but the contract is semantics-first, so forge may substitute if Redis misbehaves.
+
+**Flow:** `MCP → queue → agent`, the queue feeding the agent **one message at a time** (never two concurrent runs on the same agent).
+
+**Ordering rule (the load-bearing part, operator's words):**
+1. **First message in = first message processed.** The very first queued message seeds the session.
+2. **Then group-by-source:** the agent drains **ALL messages from that first message's sender** before touching anyone else.
+3. When that sender's messages are empty, **move to the next most recent source** (the sender whose newest message is most recent), and again drain that sender fully.
+4. **FIFO within a sender's group.**
+
+So the shape is: seed the source from the first arrival, exhaust one source completely, then jump to the most-recent other source, repeat. This is the concrete, built resolution of the earlier "concurrency/multiplexer — second prompt MUST be handled" requirement — handling = **queued + sequenced by sender**, not dropped and not raced.
+
 ### Remaining questions (the ONLY things not already in the shipped code)
 
 Most of the earlier "open questions" are answered by `sudo-letta`'s shipped sidecar/MCP (see "Ground truth" above). What genuinely remains to design for the **native mesh** (the new part beyond the per-pod plumbing):
 
 1. **Cross-agent routing / discoverability** — the shipped MCP is **per-pod only**: `letta_prompt` prompts ITS OWN agent, and `--list`/cross-agent name-resolution is explicitly host-side (needs kubectl/kubeconfig), NOT exposed in-pod. For "any agent → any agent," an agent still needs to **know + reach a sibling's `-mcp` Service** (`http://sudo-{name}-mcp:8000/mcp`) and call `letta_prompt`/`hermes_prompt` on it. The native layer = bake that reach syntax + a sibling phonebook into skill/tool, over the per-pod MCP the repo already ships.
-2. **Concurrency/multiplexer** — the `letta_prompt`/`hermes_prompt` tools are synchronous; a second prompt to a mid-run agent is NOT yet held/queued. The `-watch` sidecar already exposes `process_state` (idle↔active) — that is the signal a queue can key on. Feed-a-second-prompt-when-idle is the mechanic to add (and it can live in/next to the existing sidecar, not a new broker).
+2. **Concurrency/multiplexer — RESOLVED as the message queue (see "The message queue" above).** `letta_prompt`/`hermes_prompt` are synchronous and queue-less today; the fix is a Redis-backed queue in front of the MCP door that feeds the agent one-at-a-time, grouped by sender (first-in first, then drain-one-source-fully, then next most-recent source). This is the built answer to "second prompt MUST be handled."
 3. **Auth/keys** — `-mcp` initialize auto-issues an `mcp-session-id`, no key gate observed. For host-root-safety on cross-agent calls, mint a per-agent key (the `API_SERVER_KEY`/bearer pattern).
 
 ### Deliverable
