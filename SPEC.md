@@ -32,6 +32,18 @@ The supporting cast (still required, in service of the three):
 - **The hosts work** — psnvc/forge pull + deploy fast, source-agnostic (point them at where a glimor lives, they fork N independent copies, each landing its own auto-saving glimor in that fleet's save dir).
 - **The door is clear** — "compatible" is pinned: `-mcp` surface + glimor format + naming/port scheme = in the room.
 
+## The build order (three phases, mapped to the three aspects)
+
+This is not a moonshot — it is *"the fleet I already rebuild by hand on kube every time, made good": `setup.sh` + save/pull so the room reproduces clean and fast instead of from memory. Done is small on purpose: you stop rebuilding by hand, and your agents come back talking.
+
+1. **Phase 1 — make the talky tools work.** Build the 4 tools + 4 skills + persona (aspect #2, the social layer) and prove a live pair actually talks on its own. This is the only genuinely-new, ready-to-build part, and the mechanism is ~90% already shipped (`letta mcp call` in the image, `-mcp`/`-watch` sidecars, Redis queue). Done = the four tools built + baked in + a live pair (fa-glm/ya-glm) messages and checks each other *unprompted*, not just invokable by hand.
+
+2. **Phase 2 — get glimors working well.** Save/pull/fork solidly (aspect #1, the transportable agent). This is the steering law — "agents are STORED, never memory-only" — and everything downstream (disposable room, forking N) assumes it. Done = save an agent on box A, destroy the room, stand up a fresh room on box B, pull, and the *same agent* returns mid-conversation and immediately messages its siblings.
+
+3. **Phase 3 — the room + the router.** `setup.sh` (the disposable environment), LiteLLM (the shared model gateway), and the kube substrate, with psnvc/forge as the router that operates it all (aspect #3). This is NOT a fourth mountain — it is Phases 1+2 *composed*: the router pair driving the fleet is just the two host agents using the talky tools to run the glimor layer over the kube substrate. Done = `setup.sh` on a fresh box gives an empty room, you talk to the router, it pulls the glimors in, the party runs and talks.
+
+The three phases line up exactly with the three aspects, and each phase sits on the last. There is no hidden fourth phase.
+
 ## What is NOT the point (furniture, not the vision)
 
 These matter only insofar as they make the room faster to stand up or cheaper to run — they are not the vision and are deferred on purpose:
