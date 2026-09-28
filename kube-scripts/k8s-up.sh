@@ -16,7 +16,7 @@ set -euo pipefail
 #
 # Usage: bash k8s-up.sh
 
-FLEET_HOME="${FLEET_HOME:-/opt/0-0}"
+FLEET_HOME="${FLEET_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 FLEET_ENV="$FLEET_HOME/.env"
 AGENT_REPO="$FLEET_HOME/sudo-agent"
 LETTA_REPO="$FLEET_HOME/sudo-letta"

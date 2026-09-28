@@ -16,7 +16,7 @@ set -euo pipefail
 # Uses kubectl cp from the live pods (labels agent=psnvc / agent=forge). If a
 # source pod is not running, that glimor is skipped with a warning.
 
-FLEET_HOME="${FLEET_HOME:-/opt/0-0}"
+FLEET_HOME="${FLEET_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 GLIMOR_DIR="$FLEET_HOME/glimors"
 
 die()  { echo "✗ $*" >&2; exit 1; }

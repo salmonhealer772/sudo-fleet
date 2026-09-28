@@ -9,7 +9,7 @@ set -euo pipefail
 # (This folds in the logic that used to live in the repo root down.sh; the root
 #  down.sh is now a thin pointer that execs this script.)
 
-FLEET_HOME="${FLEET_HOME:-/opt/0-0}"
+FLEET_HOME="${FLEET_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 AGENT_REPO="$FLEET_HOME/sudo-agent"
 LETTA_REPO="$FLEET_HOME/sudo-letta"
 

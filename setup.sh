@@ -1,31 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# sudo-fleet/setup.sh — Command 1 of 2 (bootstrap ONLY).
+# sudo-fleet/setup.sh — Command 1 of 2 (bootstrap ONLY; normally run by
+# bootstrap.sh after it clones + writes .env).
+#
 # Bootstraps a bare Linux box: docker + k3s (single node), clones the two
-# factory repos + this repo into the fleet home, and builds both factory
-# images non-interactively. It does NOT deploy agents — that is Command 2:
+# factory repos NESTED inside this one folder, and builds both factory images
+# non-interactively. It does NOT deploy agents — that is Command 2:
 #
-#   cd /opt/0-0/sudo-fleet/kube-scripts && bash k8s-up.sh
+#   cd sudo-fleet/kube-scripts && bash k8s-up.sh
 #
-# API keys are NOT interactive. Drop a .env into the fleet home (default
-# /opt/0-0/.env) with at least:
-#     GITHUB_TOKEN=...          # GitHub PAT (x-access-token) for authenticated clone/pull
+# Everything this script creates lives INSIDE the single `sudo-fleet/` folder
+# (the repo root = FLEET_HOME). No /opt/0-0, no siblings, nothing outside it.
+#
+# API keys are collected by bootstrap.sh (interactive) into FLEET_HOME/.env.
+# setup.sh reads them non-interactively from there. Required:
 #     DEEPSEEK_API_KEY=...      # sudo-agent / Hermes
 #     LLM_PROVIDER=...          # sudo-letta / Letta (openai|anthropic|deepseek|...)
 #     API_KEY=...               # sudo-letta / Letta
 #   optional:
+#     GITHUB_TOKEN=...          # GitHub PAT for authenticated clone/pull (repos are public)
 #     LLM_BASE_URL=...          # OpenAI-compatible base URL
 #     TAVILY_API_KEY=...        # letta web_search hard-requires one of
 #                               #   EXA_API_KEY / TAVILY_API_KEY / PARALLEL_API_KEY / PERPLEXITY_API_KEY
-# The wrapper sources it and feeds the factories non-interactively (see step 5).
 
-FLEET_HOME="${FLEET_HOME:-/opt/0-0}"
+# FLEET_HOME is the repo root — the single sudo-fleet/ folder. Derive it from
+# the script's own location (portable to ANY directory), never a hardcoded path.
+FLEET_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEET_ENV="$FLEET_HOME/.env"
 
 AGENT_REPO="$FLEET_HOME/sudo-agent"
 LETTA_REPO="$FLEET_HOME/sudo-letta"
-FLEET_REPO="$FLEET_HOME/sudo-fleet"
+GLIMOR_DIR="$FLEET_HOME/glimors"
 
 GH="https://github.com/salmonhealer772"
 
@@ -42,8 +48,6 @@ if ! is_root; then
   echo "→ Warming up sudo (you may be prompted for your password once)..."
   $SUDO -v || die "sudo failed — this script needs sudo to install docker/k3s"
 fi
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- 1. Docker ------------------------------------------------------------------
 step "1/6 Bootstrap: Docker"
@@ -85,37 +89,34 @@ kubectl wait --for=condition=Ready node --all --timeout=180s >/dev/null 2>&1 \
   || warn "node not Ready within 180s (check: kubectl get nodes)"
 ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | paste -sd, -))"
 
-# --- 3. repos (GITHUB_TOKEN-authenticated clone) --------------------------------
-step "3/6 Repos into $FLEET_HOME"
-# Source the fleet env FIRST so GITHUB_TOKEN is available to authenticate the clone.
-[[ -f "$FLEET_ENV" ]] || die "No $FLEET_ENV — drop one with GITHUB_TOKEN, DEEPSEEK_API_KEY, LLM_PROVIDER, API_KEY before running."
+# --- 3. repos (nested, inside sudo-fleet/; GITHUB_TOKEN optional) ---------------
+step "3/6 Repos (nested inside $FLEET_HOME)"
+# Source the fleet env FIRST so GITHUB_TOKEN is available for authenticated clone.
+[[ -f "$FLEET_ENV" ]] || die "No $FLEET_ENV — run bootstrap.sh first (or drop one with DEEPSEEK_API_KEY, LLM_PROVIDER, API_KEY)."
 set +euo pipefail
 # shellcheck disable=SC1090
 source "$FLEET_ENV"
 set -euo pipefail
-[[ -n "${GITHUB_TOKEN:-}" ]] || die "GITHUB_TOKEN missing in $FLEET_ENV"
 export GITHUB_TOKEN
-$SUDO mkdir -p "$FLEET_HOME"
 _clone_or_pull() {
   local url="$1" dir="$2"
-  # Build the authenticated URL in a var — NEVER echo it (it carries the token).
-  local tokenized_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${url#https://github.com/}"
+  # Build the clone URL in a var — NEVER echo it if it carries a token.
+  # Repos are public, so when GITHUB_TOKEN is unset we clone anonymously.
+  local clone_url="$url"
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    clone_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${url#https://github.com/}"
+  fi
   export GIT_TERMINAL_PROMPT=0
   if [[ -d "$dir/.git" ]]; then
     echo "→ $dir exists — git pull"
-    (cd "$dir" && $SUDO git remote set-url origin "$tokenized_url" && $SUDO git pull --ff-only) || die "git pull failed in $dir"
+    (cd "$dir" && $SUDO git remote set-url origin "$clone_url" && $SUDO git pull --ff-only) || die "git pull failed in $dir"
   else
     echo "→ cloning $url"
-    $SUDO git clone "$tokenized_url" "$dir" || die "git clone failed: $url"
+    $SUDO git clone "$clone_url" "$dir" || die "git clone failed: $url"
   fi
 }
 _clone_or_pull "$GH/sudo-agent.git" "$AGENT_REPO"
 _clone_or_pull "$GH/sudo-letta.git" "$LETTA_REPO"
-if [[ "$SCRIPT_DIR" == "$FLEET_REPO" ]]; then
-  ok "sudo-fleet already present (running from it)"
-else
-  _clone_or_pull "$GH/sudo-fleet.git" "$FLEET_REPO"
-fi
 
 # --- 4. API keys (non-interactive) ---------------------------------------------
 step "4/6 API keys from $FLEET_ENV"
@@ -177,4 +178,4 @@ echo ""
 ok "Bootstrap complete (docker + k3s + repos + images)."
 echo ""
 echo "Next — bring up the cluster and stand up Marc + Caesar:"
-echo "    cd $FLEET_REPO/kube-scripts && bash k8s-up.sh"
+echo "    cd $FLEET_HOME/kube-scripts && bash k8s-up.sh"
