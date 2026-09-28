@@ -87,8 +87,9 @@ elif [[ -n "${DEEPSEEK_API_KEY:-}" || -n "${API_KEY:-}" ]]; then
   _KEY="${DEEPSEEK_API_KEY:-$API_KEY}"
   ok "LLM_API_KEY derived from existing key — reusing"
 else
-  read -rs -p "LLM API key: " _KEY || die "read failed for LLM_API_KEY"
-  echo ""
+  printf '%s' "LLM API key: " >&2
+  read -rs _KEY < /dev/tty || die "read failed for LLM_API_KEY"
+  echo "" >&2
   [[ -n "$_KEY" ]] || warn "LLM_API_KEY not provided — you can add it to $FLEET_ENV later."
 fi
 
@@ -97,7 +98,7 @@ if [[ -n "${LLM_BASE_URL:-}" ]]; then
   _BASE_URL="${LLM_BASE_URL}"
   ok "LLM API URL already set ($_BASE_URL) — reusing"
 else
-  read -r -p "LLM API URL [default: https://api.deepseek.com/v1]: " _BASE_URL || die "read failed for LLM API URL"
+  read -r -p "LLM API URL [default: https://api.deepseek.com/v1]: " _BASE_URL < /dev/tty || die "read failed for LLM API URL"
   _BASE_URL="${_BASE_URL:-https://api.deepseek.com/v1}"
 fi
 
@@ -115,8 +116,9 @@ if [[ -n "${TAVILY_API_KEY:-}" ]]; then
   _WS_KEY="$TAVILY_API_KEY"
   ok "TAVILY_API_KEY already set — reusing"
 else
-  read -rs -p "Tavily API key (optional): " _WS_KEY || die "read failed for TAVILY_API_KEY"
-  echo ""
+  printf '%s' "Tavily API key (optional): " >&2
+  read -rs _WS_KEY < /dev/tty || die "read failed for TAVILY_API_KEY"
+  echo "" >&2
   [[ -n "$_WS_KEY" ]] || warn "TAVILY_API_KEY not provided — you can add it to $FLEET_ENV later."
 fi
 
