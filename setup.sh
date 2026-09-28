@@ -15,7 +15,7 @@ set -euo pipefail
 #
 # Everything this script creates lives INSIDE the single `sudo-fleet/` folder
 # (the repo root = FLEET_HOME). No siblings, nothing outside it.
-# Prompted here (EXACTLY three fields, written to FLEET_HOME/.env, never echoed):
+# Prompted here (EXACTLY three fields, written to FLEET_HOME/.env, chmod 600):
 #     LLM_API_KEY=...          # ONE LLM API key used by BOTH agents (secret)
 #     LLM_BASE_URL=...         # LLM API URL (defaults to https://api.deepseek.com/v1 if blank)
 #     TAVILY_API_KEY=...       # letta search mods (secret, optional)
@@ -39,6 +39,16 @@ die()  { echo "✗ $*" >&2; exit 1; }
 step() { echo ""; echo "── $* ──"; }
 ok()   { echo "✓ $*"; }
 warn() { echo "⚠ $*" >&2; }
+
+# Read one full line from stdin and echo it back. tty-agnostic: no -s, no
+# /dev/tty, no echo suppression — so typed input is ALWAYS accepted. The keys
+# land in a chmod-600 file, so plain echo is safe and reliable.
+_ask() {
+  # $1 = prompt label; reads one full line from stdin, echoes exactly what is typed.
+  printf '%s' "$1 " >&2
+  IFS= read -r REPLY
+  printf '%s' "$REPLY"
+}
 
 # --- root/sudo -----------------------------------------------------------------
 is_root() { [[ "$(id -u)" -eq 0 ]]; }
@@ -87,9 +97,7 @@ elif [[ -n "${DEEPSEEK_API_KEY:-}" || -n "${API_KEY:-}" ]]; then
   _KEY="${DEEPSEEK_API_KEY:-$API_KEY}"
   ok "LLM_API_KEY derived from existing key — reusing"
 else
-  printf '%s' "LLM API key: " >&2
-  read -rs _KEY < /dev/tty || die "read failed for LLM_API_KEY"
-  echo "" >&2
+  _KEY="$(_ask "LLM API key:")"
   [[ -n "$_KEY" ]] || warn "LLM_API_KEY not provided — you can add it to $FLEET_ENV later."
 fi
 
@@ -98,7 +106,7 @@ if [[ -n "${LLM_BASE_URL:-}" ]]; then
   _BASE_URL="${LLM_BASE_URL}"
   ok "LLM API URL already set ($_BASE_URL) — reusing"
 else
-  read -r -p "LLM API URL [default: https://api.deepseek.com/v1]: " _BASE_URL < /dev/tty || die "read failed for LLM API URL"
+  _BASE_URL="$(_ask "LLM API URL [default https://api.deepseek.com/v1]:")"
   _BASE_URL="${_BASE_URL:-https://api.deepseek.com/v1}"
 fi
 
@@ -116,9 +124,7 @@ if [[ -n "${TAVILY_API_KEY:-}" ]]; then
   _WS_KEY="$TAVILY_API_KEY"
   ok "TAVILY_API_KEY already set — reusing"
 else
-  printf '%s' "Tavily API key (optional): " >&2
-  read -rs _WS_KEY < /dev/tty || die "read failed for TAVILY_API_KEY"
-  echo "" >&2
+  _WS_KEY="$(_ask "Tavily API key (optional):")"
   [[ -n "$_WS_KEY" ]] || warn "TAVILY_API_KEY not provided — you can add it to $FLEET_ENV later."
 fi
 
