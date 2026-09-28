@@ -33,7 +33,7 @@ TAVILY_API_KEY=...              # optional — letta web_search needs one (or EX
 **Command 2 — bring up the cluster + stand up Marc + Caesar:**
 
 ```bash
-cd sudo-fleet/kube-scripts && bash k8s-up.sh
+cd kube-scripts && bash k8s-up.sh
 ```
 
 This deploys `sudo-marc` (Letta planner) and `sudo-caesar` (Hermes engineer),
@@ -72,7 +72,7 @@ plain files under `sudo-fleet/glimors/`:
 **Capture** them on a box that has the live pair running:
 
 ```bash
-cd sudo-fleet/kube-scripts && bash save-glimor.sh
+cd kube-scripts && bash save-glimor.sh
 ```
 
 **Move** them to a fresh box (they are just files — no live pod needed at restore time):
@@ -87,9 +87,9 @@ deploys that agent EMPTY (factory defaults) and warns loudly.
 ## Tear down
 
 ```bash
-cd sudo-fleet/kube-scripts && bash k8s-down.sh                 # stop agents, PRESERVE PVCs (state)
-cd sudo-fleet/kube-scripts && bash k8s-down.sh --purge          # also delete PVCs
-cd sudo-fleet/kube-scripts && bash k8s-down.sh --teardown-k3s   # uninstall k3s too
+cd kube-scripts && bash k8s-down.sh                 # stop agents, PRESERVE PVCs (state)
+cd kube-scripts && bash k8s-down.sh --purge          # also delete PVCs
+cd kube-scripts && bash k8s-down.sh --teardown-k3s   # uninstall k3s too
 ```
 
 (The repo-root `down.sh` is a thin pointer to `kube-scripts/k8s-down.sh`.)

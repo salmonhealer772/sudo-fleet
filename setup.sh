@@ -11,7 +11,7 @@ set -euo pipefail
 #     git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet && bash setup.sh
 #
 #   Command 2:
-#     cd sudo-fleet/kube-scripts && bash k8s-up.sh
+#     cd kube-scripts && bash k8s-up.sh
 #
 # Everything this script creates lives INSIDE the single `sudo-fleet/` folder
 # (the repo root = FLEET_HOME). No siblings, nothing outside it.
