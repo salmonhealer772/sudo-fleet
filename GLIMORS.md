@@ -10,7 +10,7 @@ A **glimor** is the entire agent — its definition *and* its complete persisten
 
 This is the load-bearing mechanics, the part that turns "a glimor is X" into "the fleet runs *on* glimors":
 
-1. **Home = a `glimors/` directory** inside the sudo-fleet application directory. That is the canonical location where all agent glimors live.
+1. **Home = a `glimors/` directory** inside the fleet application directory. The fleet application directory is **`/opt/0-0/`** — the canonical on-disk home the stack owns (SPEC item #5): it already holds `sudo-fleet/` (the spec repo), `sudo-letta/` (planner factory), `sudo-agent/` (engineer factory), `sudo-letta-personas/`, and the cluster auth (`admin-user.kubeconfig`/`.token`). So glimors live at **`/opt/0-0/glimors/`** — a sibling of the factories and the spec repo, **not** inside any git repo (glimors are live runtime state, not source). That is the canonical location where all agent glimors live.
 2. **A glimor is a file.** One file per agent — not a directory tree, not a loose bundle of PVC delta manifests. The "complete agent" is packed into one file.
 3. **The router pair knows how to stand agents up from glimors.** `spawn`/pull means: consume a glimor file → deploy the agent it describes → run it. The router does not hand-run `up.sh`; it brings an agent into the room *by glimor*.
 4. **Every agent in the fleet MUST be stood up from a glimor.** No bare pod, no memory-only agent. When an agent enters the fleet, a glimor is either:
