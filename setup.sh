@@ -57,14 +57,19 @@ _source_env() {
   source "$FLEET_ENV"
   set -euo pipefail
 }
+# The invoking user (for chown, so the .env stays usable by whoever runs this).
+TARGET_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 # Idempotent: on re-run, keys already in $FLEET_ENV are reused (not re-prompted).
+# The tree may be root-owned (sudo git clone), so EVERY .env write goes through
+# $SUDO and the file is chowned back to the invoking user so it never fails.
 if [[ -f "$FLEET_ENV" ]]; then
   _source_env
   ok "reusing existing keys from $FLEET_ENV"
 else
-  : > "$FLEET_ENV"
+  $SUDO touch "$FLEET_ENV"
 fi
-chmod 600 "$FLEET_ENV" 2>/dev/null || warn "could not chmod 600 $FLEET_ENV"
+$SUDO chown "$TARGET_USER" "$FLEET_ENV" 2>/dev/null || warn "could not chown $FLEET_ENV to $TARGET_USER"
+$SUDO chmod 600 "$FLEET_ENV" 2>/dev/null || warn "could not chmod 600 $FLEET_ENV"
 
 _prompt() {
   local var="$1" label="$2" mode="$3" required="$4"
@@ -79,9 +84,10 @@ _prompt() {
     read -r -p "$label: " "$var" || die "read failed for $var"
   fi
   if [[ -z "${!var:-}" && "$required" == "yes" ]]; then
-    die "$var is required"
+    warn "$var not provided — you can add it to $FLEET_ENV later."
+    return
   fi
-  [[ -n "${!var:-}" ]] && printf '%s=%s\n' "$var" "${!var}" >> "$FLEET_ENV"
+  [[ -n "${!var:-}" ]] && printf '%s=%s\n' "$var" "${!var}" | $SUDO tee -a "$FLEET_ENV" >/dev/null
 }
 
 _prompt DEEPSEEK_API_KEY "DEEPSEEK_API_KEY" secret yes
@@ -94,11 +100,16 @@ _prompt TAVILY_API_KEY    "Web-search key TAVILY_API_KEY (or EXA_/PARALLEL_/PERP
 # Re-source so every key (prompted or pre-existing) is exported fresh below.
 _source_env
 
-# Validate required + export for the factory build steps.
-[[ -n "${DEEPSEEK_API_KEY:-}" ]] || die "DEEPSEEK_API_KEY missing"
-[[ -n "${LLM_PROVIDER:-}" ]]      || die "LLM_PROVIDER missing"
-[[ -n "${API_KEY:-}" ]]           || die "API_KEY missing"
-export DEEPSEEK_API_KEY LLM_PROVIDER API_KEY
+# Validate required + export for the factory build steps. Missing "required"
+# keys are DOWNGRADED to warn (never die): export whatever IS present, skip
+# empty, and let the factory build steps (step 6) fail loudly on their own
+# if a key is truly needed. Do NOT block the whole script at step 1.
+[[ -n "${DEEPSEEK_API_KEY:-}" ]] || warn "DEEPSEEK_API_KEY missing — you can add it to $FLEET_ENV later"
+[[ -n "${LLM_PROVIDER:-}" ]]      || warn "LLM_PROVIDER missing — you can add it to $FLEET_ENV later"
+[[ -n "${API_KEY:-}" ]]           || warn "API_KEY missing — you can add it to $FLEET_ENV later"
+[[ -n "${DEEPSEEK_API_KEY:-}" ]] && export DEEPSEEK_API_KEY
+[[ -n "${LLM_PROVIDER:-}" ]]      && export LLM_PROVIDER
+[[ -n "${API_KEY:-}" ]]           && export API_KEY
 [[ -n "${LLM_BASE_URL:-}" ]] && export LLM_BASE_URL
 [[ -n "${GITHUB_TOKEN:-}" ]] && export GITHUB_TOKEN
 _have_ws=0
@@ -122,7 +133,6 @@ else
 fi
 # Add the invoking user to the docker group (best-effort; the factory steps are
 # run under sudo below, which covers the case where the group isn't active yet).
-TARGET_USER="${SUDO_USER:-$USER}"
 if [[ -n "$TARGET_USER" && "$TARGET_USER" != "root" ]]; then
   $SUDO usermod -aG docker "$TARGET_USER" 2>/dev/null \
     && ok "added $TARGET_USER to docker group" \
