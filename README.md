@@ -15,15 +15,24 @@ factories INSIDE `sudo-fleet/`, builds images). Run it from ANY directory:
 git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet && bash setup.sh
 ```
 
-`setup.sh` asks for your keys up front, then writes them to `sudo-fleet/.env`:
+`setup.sh` asks for just three things up front — one LLM key (used by BOTH
+agents), a provider (defaults to `deepseek`), and an optional web-search key —
+then derives and writes the rest to `sudo-fleet/.env`:
 
 ```
-DEEPSEEK_API_KEY=...            # sudo-agent / Hermes (required)
-LLM_PROVIDER=deepseek           # sudo-letta / Letta (required; openai|anthropic|deepseek|...)
-API_KEY=...                     # sudo-letta / Letta (required)
-LLM_BASE_URL=https://api.deepseek.com/v1   # optional, OpenAI-compatible
-GITHUB_TOKEN=...                # optional — the repos are PUBLIC, no token needed
-TAVILY_API_KEY=...              # optional — letta web_search needs one (or EXA_/PARALLEL_/PERPLEXITY_)
+LLM_API_KEY=...                 # ONE key used by BOTH agents (Hermes + Letta)
+Provider [deepseek]:            # default deepseek; any other provider asks for a Base URL
+TAVILY_API_KEY=...              # optional — letta web_search key (or EXA_/PARALLEL_/PERPLEXITY_)
+```
+
+It derives (never prompts for) the rest:
+
+```
+DEEPSEEK_API_KEY=$LLM_API_KEY   # sudo-agent / Hermes
+LLM_PROVIDER=$PROVIDER          # sudo-letta / Letta
+API_KEY=$LLM_API_KEY            # sudo-letta / Letta
+LLM_BASE_URL=...                # auto https://api.deepseek.com/v1 for deepseek, else prompted
+TAVILY_API_KEY=$TAVILY_API_KEY  # may be empty
 ```
 
 > `sudo-fleet/.env`, `sudo-fleet/glimors/`, `sudo-fleet/sudo-agent/` and

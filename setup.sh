@@ -16,13 +16,15 @@ set -euo pipefail
 # Everything this script creates lives INSIDE the single `sudo-fleet/` folder
 # (the repo root = FLEET_HOME). No siblings, nothing outside it.
 # Required keys (prompted here, written to FLEET_HOME/.env, never echoed):
-#     DEEPSEEK_API_KEY=...      # sudo-agent / Hermes
-#     LLM_PROVIDER=...          # sudo-letta / Letta (openai|anthropic|deepseek|...)
-#     API_KEY=...               # sudo-letta / Letta
+#     LLM_API_KEY=...          # ONE key used by BOTH agents (Hermes + Letta)
+#     PROVIDER=deepseek        # default deepseek; any other provider asks for a Base URL
 #   optional:
-#     LLM_BASE_URL=...          # OpenAI-compatible base URL
-#     GITHUB_TOKEN=...          # GitHub PAT for authenticated clone/pull (repos are public)
-#     TAVILY_API_KEY=...        # letta web_search needs one of EXA_/TAVILY_/PARALLEL_/PERPLEXITY_
+#     TAVILY_API_KEY=...        # letta web_search key (or EXA_/PARALLEL_/PERPLEXITY_)
+#   derived in .env (never prompted):
+#     DEEPSEEK_API_KEY=$LLM_API_KEY   # sudo-agent / Hermes
+#     LLM_PROVIDER=$PROVIDER          # sudo-letta / Letta
+#     API_KEY=$LLM_API_KEY            # sudo-letta / Letta
+#     LLM_BASE_URL=...                # auto for deepseek, prompted otherwise
 
 # FLEET_HOME is the repo root — the single sudo-fleet/ folder. Derive it from
 # the script's own location (portable to ANY directory), never a hardcoded path.
@@ -71,31 +73,60 @@ fi
 $SUDO chown "$TARGET_USER" "$FLEET_ENV" 2>/dev/null || warn "could not chown $FLEET_ENV to $TARGET_USER"
 $SUDO chmod 600 "$FLEET_ENV" 2>/dev/null || warn "could not chmod 600 $FLEET_ENV"
 
-_prompt() {
-  local var="$1" label="$2" mode="$3" required="$4"
-  if [[ -n "${!var:-}" ]]; then
-    ok "$var already set — reusing"
-    return
-  fi
-  if [[ "$mode" == "secret" ]]; then
-    read -rs -p "$label: " "$var" || die "read failed for $var"
-    echo ""
-  else
-    read -r -p "$label: " "$var" || die "read failed for $var"
-  fi
-  if [[ -z "${!var:-}" && "$required" == "yes" ]]; then
-    warn "$var not provided — you can add it to $FLEET_ENV later."
-    return
-  fi
-  [[ -n "${!var:-}" ]] && printf '%s=%s\n' "$var" "${!var}" | $SUDO tee -a "$FLEET_ENV" >/dev/null
+# Write one key=value line to $FLEET_ENV only if that key isn't already present,
+# so re-runs are idempotent (no re-prompt, no duplicate lines). Secrets never echo.
+_write_env() {
+  local line="$1" key="${1%%=*}"
+  [[ -n "${!key:-}" ]] && return
+  printf '%s\n' "$line" | $SUDO tee -a "$FLEET_ENV" >/dev/null
 }
 
-_prompt DEEPSEEK_API_KEY "DEEPSEEK_API_KEY" secret yes
-_prompt LLM_PROVIDER      "LLM_PROVIDER (openai|anthropic|deepseek|...)" plain yes
-_prompt API_KEY           "API_KEY" secret yes
-_prompt LLM_BASE_URL      "LLM_BASE_URL (optional OpenAI-compatible, Enter to skip)" plain no
-_prompt GITHUB_TOKEN      "GITHUB_TOKEN (optional — repos are public, Enter to skip)" secret no
-_prompt TAVILY_API_KEY    "Web-search key TAVILY_API_KEY (or EXA_/PARALLEL_/PERPLEXITY_ — optional, Enter to skip)" secret no
+# --- (1) ONE key used by BOTH agents ------------------------------------------
+if [[ -n "${LLM_API_KEY:-}" ]]; then
+  _KEY="${LLM_API_KEY}"
+  ok "LLM_API_KEY already set — reusing"
+elif [[ -n "${DEEPSEEK_API_KEY:-}" || -n "${API_KEY:-}" ]]; then
+  _KEY="${DEEPSEEK_API_KEY:-$API_KEY}"
+  ok "LLM_API_KEY derived from existing key — reusing"
+else
+  read -rs -p "LLM_API_KEY: " _KEY || die "read failed for LLM_API_KEY"
+  echo ""
+  [[ -n "$_KEY" ]] || warn "LLM_API_KEY not provided — you can add it to $FLEET_ENV later."
+fi
+
+# --- (2) Provider — default deepseek; only a non-deepseek provider asks for a URL
+if [[ -n "${LLM_PROVIDER:-}" ]]; then
+  _PROVIDER="$LLM_PROVIDER"
+  ok "Provider already set ($_PROVIDER) — reusing"
+else
+  read -r -p "Provider [deepseek]:" _PROVIDER || die "read failed for provider"
+  _PROVIDER="${_PROVIDER:-deepseek}"
+fi
+if [[ "${_PROVIDER,,}" == "deepseek" ]]; then
+  _BASE_URL="${LLM_BASE_URL:-https://api.deepseek.com/v1}"
+else
+  _BASE_URL="${LLM_BASE_URL:-}"
+  if [[ -z "$_BASE_URL" ]]; then
+    read -r -p "Base URL: " _BASE_URL || die "read failed for base URL"
+  fi
+fi
+
+# --- (3) Web-search key (optional) --------------------------------------------
+if [[ -n "${TAVILY_API_KEY:-}" ]]; then
+  _WS_KEY="$TAVILY_API_KEY"
+  ok "TAVILY_API_KEY already set — reusing"
+else
+  read -rs -p "TAVILY_API_KEY (optional — Enter to skip): " _WS_KEY || die "read failed for TAVILY_API_KEY"
+  echo ""
+  [[ -n "$_WS_KEY" ]] || warn "TAVILY_API_KEY not provided — you can add it to $FLEET_ENV later."
+fi
+
+# Backend derivation: map the ONE key + provider into the vars the factories need.
+_write_env "DEEPSEEK_API_KEY=${_KEY}"
+_write_env "LLM_PROVIDER=${_PROVIDER}"
+_write_env "API_KEY=${_KEY}"
+_write_env "LLM_BASE_URL=${_BASE_URL}"
+_write_env "TAVILY_API_KEY=${_WS_KEY}"
 
 # Re-source so every key (prompted or pre-existing) is exported fresh below.
 _source_env
@@ -111,7 +142,6 @@ _source_env
 [[ -n "${LLM_PROVIDER:-}" ]]      && export LLM_PROVIDER
 [[ -n "${API_KEY:-}" ]]           && export API_KEY
 [[ -n "${LLM_BASE_URL:-}" ]] && export LLM_BASE_URL
-[[ -n "${GITHUB_TOKEN:-}" ]] && export GITHUB_TOKEN
 _have_ws=0
 for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
   if [[ -n "${!_wk:-}" ]]; then
