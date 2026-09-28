@@ -16,7 +16,7 @@ def test_direct_mode_calls_letta_prompt_and_returns_reply(env):
     tool, args = env.mcp["fa-glm-l"].calls[-1]
     assert tool == "letta_prompt"
     assert args == {
-        "prompt": "Who are you?", "stream": False, "json": False,
+        "prompt": "Who are you?", "json": False,
         "new_chat": False, "mode": "direct", "source": None,
     }
     assert reply == "I am fa-glm-l"
@@ -84,16 +84,6 @@ def test_json_mode_returns_structured_reply(env):
     assert result == {"reply": "hi", "status": "ok"}
 
 
-def test_stream_mode_joins_deltas(env):
-    # Arrange
-    env.mcp["fa-glm-l"].stream_deltas = ["Hel", "lo, ", "world"]
-    # Act
-    result = message_agent("fa-glm-l", "hi", stream=True, fleet=env.fleet)
-    # Assert
-    assert env.mcp["fa-glm-l"].calls[-1][1]["stream"] is True
-    assert result == "Hello, world"
-
-
 def test_engineer_sibling_uses_hermes_prompt(env):
     # Arrange
     env.mcp["fa-glm-h"].reply = "hello"
@@ -106,14 +96,13 @@ def test_engineer_sibling_uses_hermes_prompt(env):
     assert reply == "hello"
 
 
-def test_engineer_ignores_stream_and_new_chat(env):
+def test_engineer_ignores_new_chat(env):
     # Act
-    message_agent("fa-glm-h", "hi", stream=True, new_chat=True, fleet=env.fleet)
-    # Assert: hermes_prompt got only prompt/json/mode/source
+    message_agent("fa-glm-h", "hi", new_chat=True, fleet=env.fleet)
+    # Assert: hermes_prompt got exactly prompt/json/mode/source (new_chat ignored)
     tool, args = env.mcp["fa-glm-h"].calls[-1]
     assert tool == "hermes_prompt"
-    assert set(args) == {"prompt", "json", "mode", "source"}
-    assert "stream" not in args and "new_chat" not in args
+    assert args == {"prompt": "hi", "json": False, "mode": "direct", "source": None}
 
 
 def test_engineer_json_pretty_prints_valid_json(env):

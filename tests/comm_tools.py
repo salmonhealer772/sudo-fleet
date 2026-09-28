@@ -113,11 +113,11 @@ def list_siblings(filter=None, *, fleet):
 # --- message-agent ---------------------------------------------------------
 
 def message_agent(sibling, prompt, mode="direct", new_chat=False, json=False,
-                  stream=False, source=None, *, fleet):
+                  source=None, *, fleet):
     entry = fleet.resolve(sibling)
     url = f"http://{entry['mcp_host']}/mcp"
     if entry["kind"] == "hermes":
-        # Stateless one-shot: stream / new_chat are not exposed and ignored.
+        # Stateless one-shot: new_chat is not exposed and ignored.
         args = {"prompt": prompt, "json": json, "mode": mode, "source": source}
         result = fleet.transport.mcp_call(url, "hermes_prompt", args)
         if json:
@@ -125,7 +125,6 @@ def message_agent(sibling, prompt, mode="direct", new_chat=False, json=False,
         return result
     args = {
         "prompt": prompt,
-        "stream": stream,
         "json": json,
         "new_chat": new_chat,
         "mode": mode,

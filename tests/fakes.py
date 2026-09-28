@@ -79,7 +79,6 @@ class FakeMcpSidecar:
         self.kind = kind            # "letta" (planner) or "hermes" (engineer)
         self.calls = []             # list of (tool_name, args_dict)
         self.reply = ""             # plain-text reply for direct (non-json) mode
-        self.stream_deltas = ["Hel", "lo, ", "world"]  # joined when stream=True
         self.json_object = {"reply": "hi", "status": "ok"}  # letta json reply
         self.hermes_json_text = '{"reply": "hi from hermes"}'  # hermes json reply
         self.inbox_id = "msg-0001"
@@ -90,8 +89,6 @@ class FakeMcpSidecar:
         if tool in ("letta_prompt", "hermes_prompt"):
             if args.get("mode") == "inbox":
                 return {"id": self.inbox_id, "status": "pending"}
-            if args.get("stream"):
-                return "".join(self.stream_deltas)
             if args.get("json"):
                 if self.kind == "hermes":
                     return self.hermes_json_text

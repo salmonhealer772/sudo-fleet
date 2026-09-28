@@ -19,7 +19,7 @@ Feature: Message a sibling agent
   leading "sudo-"; e.g. deployment "sudo-fa-glm-l" -> name "fa-glm-l"). The
   tool reaches the sibling at "http://sudo-{name}-mcp:8000/mcp", performs the
   MCP handshake (initialize), and calls the sibling's prompt tool:
-    - a Letta planner exposes "letta_prompt(prompt, stream, json, new_chat, mode, source)"
+    - a Letta planner exposes "letta_prompt(prompt, json, new_chat, mode, source)"
     - a Hermes engineer exposes "hermes_prompt(prompt, json, mode, source)"
 
   Background:
@@ -30,7 +30,7 @@ Feature: Message a sibling agent
   Scenario: Send a prompt to a planner and get the reply (direct mode)
     Given agent "fa-glm-l" is reachable at "sudo-fa-glm-l-mcp:8000"
     When I call message-agent with sibling "fa-glm-l", prompt "Who are you?", and mode "direct"
-    Then it calls letta_prompt with prompt "Who are you?", stream=false, json=false, new_chat=false, mode="direct"
+    Then it calls letta_prompt with prompt "Who are you?", json=false, new_chat=false, mode="direct"
     And it waits for and returns the plain-text reply string from "fa-glm-l"
 
   Scenario: Default mode is direct (send and wait)
@@ -75,23 +75,17 @@ Feature: Message a sibling agent
     Then it calls letta_prompt with json=true
     And it returns the structured JSON reply
 
-  Scenario: stream mode joins the stream-json deltas into one reply
-    Given agent "fa-glm-l" is reachable at "sudo-fa-glm-l-mcp:8000"
-    When I call message-agent with sibling "fa-glm-l", prompt "hi", and stream=true
-    Then it calls letta_prompt with stream=true
-    And it returns the full reply text as the concatenation of the stream-json deltas
-
   Scenario: Message an engineer sibling (stateless one-shot)
     Given agent "fa-glm-h" is reachable at "sudo-fa-glm-h-mcp:8000"
     When I call message-agent with sibling "fa-glm-h" and prompt "say hi"
     Then it calls hermes_prompt with prompt "say hi", json=false, and mode direct
     And it returns the reply string from "fa-glm-h"
 
-  Scenario: Engineer sibling has no stream or new_chat mode
+  Scenario: Engineer sibling has no new_chat mode
     Given agent "fa-glm-h" is reachable at "sudo-fa-glm-h-mcp:8000"
-    When I call message-agent with sibling "fa-glm-h", prompt "hi", stream=true, and new_chat=true
+    When I call message-agent with sibling "fa-glm-h", prompt "hi", and new_chat=true
     Then it calls hermes_prompt with only prompt, json, mode, and source
-    And the stream and new_chat flags are ignored for the engineer
+    And the new_chat flag is ignored for the engineer
 
   Scenario: Engineer json mode pretty-prints only valid JSON
     Given agent "fa-glm-h" is reachable at "sudo-fa-glm-h-mcp:8000"

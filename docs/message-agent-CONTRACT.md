@@ -4,9 +4,9 @@
 
 ## Contract
 
-- **Inputs:** `sibling` (agent name, e.g. `fa-glm-l` / `ms-glm-l`), `prompt` (the message), optional `new_chat` (bool, default false), optional `json` (bool), optional `stream` (bool), optional `mode` (`direct` | `inbox`), optional `source` (id tag for group-by-source ordering).
+- **Inputs:** `sibling` (agent name, e.g. `fa-glm-l` / `ms-glm-l`), `prompt` (the message), optional `new_chat` (bool, default false), optional `json` (bool), optional `mode` (`direct` | `inbox`), optional `source` (id tag for group-by-source ordering).
 - **Behavior:** reach `http://sudo-{sibling}-mcp:8000/mcp` → MCP `initialize` → `tools/call` the sibling's prompt tool (`letta_prompt` for Letta planners, `hermes_prompt` for Hermes engineers) with `prompt` → return the reply string.
-- **Session semantics:** planner sibling = stateful (resumes its persisted conversation unless `new_chat=true`); engineer sibling = stateless one-shot (no `new_chat`/`stream` — they are ignored).
+- **Session semantics:** planner sibling = stateful (resumes its persisted conversation unless `new_chat=true`); engineer sibling = stateless one-shot (no `new_chat` — it is ignored).
 - **Concurrency is the RECIPIENT's job, not the sender's.** The tool only sends. The sibling's Redis-backed distributor queues every prompt and feeds the agent ONE at a time — N rapid messages = N queued runs, never N parallel races, nothing dropped.
 - **Two delivery modes (both factories):**
   - `mode="direct"` (default) — enqueue and WAIT for the reply. No timeout; long jobs are fine.
@@ -16,8 +16,8 @@
 
 ## The recipient's queue (its own MCP surface, same shape on both factories)
 
-- `letta_prompt(prompt, stream, json, new_chat, mode, source)` — Letta planner.
-- `hermes_prompt(prompt, json, mode, source)` — Hermes engineer (stateless; `stream`/`new_chat` are no-ops and not exposed).
+- `letta_prompt(prompt, json, new_chat, mode, source)` — Letta planner.
+- `hermes_prompt(prompt, json, mode, source)` — Hermes engineer (stateless; `new_chat` is a no-op and not exposed).
 - `letta_queue_status()` / `hermes_queue_status()` — pending queue + recent processed results (ids, sources, timestamps); the observability window, and how `inbox` replies are fetched.
 - Backing store: shared fleet Redis (`sudo-letta-redis` on `127.0.0.1:6379`; `sudo-agent-redis` on `127.0.0.1:6380`, AOF-durable), hostNetwork on the node loopback, each agent keyed by its own queue namespace (unique `MCP_PORT` / `AGENT_NAME`).
 
