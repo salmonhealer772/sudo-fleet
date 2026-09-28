@@ -15,16 +15,14 @@ set -euo pipefail
 #
 # Everything this script creates lives INSIDE the single `sudo-fleet/` folder
 # (the repo root = FLEET_HOME). No siblings, nothing outside it.
-# Required keys (prompted here, written to FLEET_HOME/.env, never echoed):
-#     LLM_API_KEY=...          # ONE key used by BOTH agents (Hermes + Letta)
-#     PROVIDER=deepseek        # default deepseek; any other provider asks for a Base URL
-#   optional:
-#     TAVILY_API_KEY=...        # letta web_search key (or EXA_/PARALLEL_/PERPLEXITY_)
+# Prompted here (EXACTLY three fields, written to FLEET_HOME/.env, never echoed):
+#     LLM_API_KEY=...          # ONE LLM API key used by BOTH agents (secret)
+#     LLM_BASE_URL=...         # LLM API URL (defaults to https://api.deepseek.com/v1 if blank)
+#     TAVILY_API_KEY=...       # letta search mods (secret, optional)
 #   derived in .env (never prompted):
 #     DEEPSEEK_API_KEY=$LLM_API_KEY   # sudo-agent / Hermes
-#     LLM_PROVIDER=$PROVIDER          # sudo-letta / Letta
 #     API_KEY=$LLM_API_KEY            # sudo-letta / Letta
-#     LLM_BASE_URL=...                # auto for deepseek, prompted otherwise
+#     LLM_PROVIDER=<derived from LLM_BASE_URL>   # deepseek|anthropic|openai|...
 
 # FLEET_HOME is the repo root — the single sudo-fleet/ folder. Derive it from
 # the script's own location (portable to ANY directory), never a hardcoded path.
@@ -89,39 +87,40 @@ elif [[ -n "${DEEPSEEK_API_KEY:-}" || -n "${API_KEY:-}" ]]; then
   _KEY="${DEEPSEEK_API_KEY:-$API_KEY}"
   ok "LLM_API_KEY derived from existing key — reusing"
 else
-  read -rs -p "LLM_API_KEY: " _KEY || die "read failed for LLM_API_KEY"
+  read -rs -p "LLM API key: " _KEY || die "read failed for LLM_API_KEY"
   echo ""
   [[ -n "$_KEY" ]] || warn "LLM_API_KEY not provided — you can add it to $FLEET_ENV later."
 fi
 
-# --- (2) Provider — default deepseek; only a non-deepseek provider asks for a URL
-if [[ -n "${LLM_PROVIDER:-}" ]]; then
-  _PROVIDER="$LLM_PROVIDER"
-  ok "Provider already set ($_PROVIDER) — reusing"
+# --- (2) LLM API URL — defaults to deepseek if left blank (plain) -------------
+if [[ -n "${LLM_BASE_URL:-}" ]]; then
+  _BASE_URL="${LLM_BASE_URL}"
+  ok "LLM API URL already set ($_BASE_URL) — reusing"
 else
-  read -r -p "Provider [deepseek]:" _PROVIDER || die "read failed for provider"
-  _PROVIDER="${_PROVIDER:-deepseek}"
-fi
-if [[ "${_PROVIDER,,}" == "deepseek" ]]; then
-  _BASE_URL="${LLM_BASE_URL:-https://api.deepseek.com/v1}"
-else
-  _BASE_URL="${LLM_BASE_URL:-}"
-  if [[ -z "$_BASE_URL" ]]; then
-    read -r -p "Base URL: " _BASE_URL || die "read failed for base URL"
-  fi
+  read -r -p "LLM API URL [default: https://api.deepseek.com/v1]: " _BASE_URL || die "read failed for LLM API URL"
+  _BASE_URL="${_BASE_URL:-https://api.deepseek.com/v1}"
 fi
 
-# --- (3) Web-search key (optional) --------------------------------------------
+# --- Provider is DERIVED from the URL, never prompted --------------------------
+# deepseek -> deepseek; anthropic -> anthropic; openai -> openai; else openai.
+case "$_BASE_URL" in
+  *deepseek*)  _PROVIDER="deepseek"  ;;
+  *anthropic*) _PROVIDER="anthropic" ;;
+  *openai*)    _PROVIDER="openai"    ;;
+  *)           _PROVIDER="openai"    ;;
+esac
+
+# --- (3) Tavily API key — letta search mods (secret, optional) ---------------
 if [[ -n "${TAVILY_API_KEY:-}" ]]; then
   _WS_KEY="$TAVILY_API_KEY"
   ok "TAVILY_API_KEY already set — reusing"
 else
-  read -rs -p "TAVILY_API_KEY (optional — Enter to skip): " _WS_KEY || die "read failed for TAVILY_API_KEY"
+  read -rs -p "Tavily API key (optional): " _WS_KEY || die "read failed for TAVILY_API_KEY"
   echo ""
   [[ -n "$_WS_KEY" ]] || warn "TAVILY_API_KEY not provided — you can add it to $FLEET_ENV later."
 fi
 
-# Backend derivation: map the ONE key + provider into the vars the factories need.
+# Backend derivation: map the ONE key + derived provider into the factory vars.
 _write_env "DEEPSEEK_API_KEY=${_KEY}"
 _write_env "LLM_PROVIDER=${_PROVIDER}"
 _write_env "API_KEY=${_KEY}"
@@ -197,18 +196,13 @@ step "4/6 Repos (nested inside $FLEET_HOME)"
 $SUDO mkdir -p "$FLEET_HOME"
 _clone_or_pull() {
   local url="$1" dir="$2"
-  local clone_url="$url"
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    # Authenticated URL built in a var — NEVER echo it (carries the token).
-    clone_url="https://x-access-token:${GITHUB_TOKEN}@github.com/${url#https://github.com/}"
-  fi
   export GIT_TERMINAL_PROMPT=0
   if [[ -d "$dir/.git" ]]; then
     echo "→ $dir exists — git pull"
-    (cd "$dir" && $SUDO git remote set-url origin "$clone_url" && $SUDO git pull --ff-only) || die "git pull failed in $dir"
+    (cd "$dir" && $SUDO git remote set-url origin "$url" && $SUDO git pull --ff-only) || die "git pull failed in $dir"
   else
     echo "→ cloning $url"
-    $SUDO git clone "$clone_url" "$dir" || die "git clone failed: $url"
+    $SUDO git clone "$url" "$dir" || die "git clone failed: $url"
   fi
 }
 _clone_or_pull "$GH/sudo-agent.git" "$AGENT_REPO"
