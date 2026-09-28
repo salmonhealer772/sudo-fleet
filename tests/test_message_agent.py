@@ -1,4 +1,4 @@
-"""Tests for the message-agent tool (comm/tools/features/message-agent.feature)."""
+"""Tests for the message-agent tool (features/message-agent.feature)."""
 
 import pytest
 

@@ -18,7 +18,7 @@ One list now, because "how to talk" and "how to be capable" ship together and th
 
 ### Comm layer — the 4 we are building right now (every agent)
 
-These are the native "talk to the fleet" skills, already specced in `comm/skills/features/` + `comm/tools/*/CONTRACT.md`. They are **part of the base set**, not a separate thing bolted on.
+These are the native "talk to the fleet" skills, already specced in `features/` + `docs/`. They are **part of the base set**, not a separate thing bolted on.
 
 | # | Skill | What it is | State |
 |---|---|---|---|

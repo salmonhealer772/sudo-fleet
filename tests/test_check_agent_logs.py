@@ -1,5 +1,5 @@
 """Tests for the check-agent-logs tool
-(comm/tools/features/check-agent-logs.feature)."""
+(features/check-agent-logs.feature)."""
 
 import pytest
 

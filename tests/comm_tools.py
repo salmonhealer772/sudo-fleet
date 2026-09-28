@@ -1,8 +1,8 @@
 """Reference tool interfaces for the sudo-fleet comm layer.
 
 These are the callable interfaces the real backend will eventually satisfy.
-The contracts are pinned by comm/tools/features/*.feature and
-comm/tools/<tool>/CONTRACT.md; these reference implementations encode exactly
+The contracts are pinned by features/*.feature and
+docs/; these reference implementations encode exactly
 that contract against an injected transport, so the tests can verify the
 endpoints and arguments each tool uses WITHOUT a real backend.
 

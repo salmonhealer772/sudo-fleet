@@ -1,4 +1,4 @@
-"""Tests for the list-siblings tool (comm/tools/features/list-siblings.feature)."""
+"""Tests for the list-siblings tool (features/list-siblings.feature)."""
 
 from comm_tools import list_siblings, message_agent
 from fakes import make_env, services_text

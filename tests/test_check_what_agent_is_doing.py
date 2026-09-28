@@ -1,5 +1,5 @@
 """Tests for the check-what-agent-is-doing tool
-(comm/tools/features/check-what-agent-is-doing.feature)."""
+(features/check-what-agent-is-doing.feature)."""
 
 import pytest
 
