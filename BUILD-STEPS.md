@@ -50,7 +50,7 @@ spec:
       volumes:
       - name: data
         hostPath:
-          path: /opt/0-0/sudo-fleet/deployments/$NAME/pvc
+          path: /opt/sudo-fleet/deployments/$NAME/pvc
           type: DirectoryOrCreate
 ```
 
@@ -61,7 +61,7 @@ spec:
 ## The resulting glimor layout
 
 ```
-/opt/0-0/sudo-fleet/deployments/
+/opt/sudo-fleet/deployments/
 ├── fa-glm-l/
 │   ├── fa-glm-l.yaml          ← up.sh writes it here now (not $REPO_DIR/deployments)
 │   └── pvc/                   ← hostPath: the agent's live state, on a path WE own
@@ -78,16 +78,16 @@ One folder = one glimor = yaml + pvc, both on paths we control.
 
 ## What this changes and what it doesn't
 
-- **Changes:** storage moves from `/var/lib/rancher/k3s/storage/pvc-<uuid>_.../` to `/opt/0-0/sudo-fleet/deployments/<name>/pvc/`. The PVC stanza is gone; no more `local-path` provisioning for agent state. State survives PVC deletion (kube won't delete a `hostPath` dir).
+- **Changes:** storage moves from `/var/lib/rancher/k3s/storage/pvc-<uuid>_.../` to `/opt/sudo-fleet/deployments/<name>/pvc/`. The PVC stanza is gone; no more `local-path` provisioning for agent state. State survives PVC deletion (kube won't delete a `hostPath` dir).
 - **Doesn't change:** the mount path inside the pod (`/home/node/.letta` / `/opt/data`), the agent's view of its own files, the sidecars, the image, the ports.
 - **New responsibility (ours):** nothing auto-cleans a `hostPath` dir. `rm-containers.sh`'s `kubectl delete pvc` must become an explicit `rm -rf` of the `pvc/` dir *when and only when* teardown is intended (and only after a glimor save/backup). This is the destroy button moving from kube to us — intentional.
 
 ## Two build steps for forge
 
-1. **Retarget the yaml write + the storage volume.** In both `up.sh`: change `YAML_DIR` to write under `/opt/0-0/sudo-fleet/deployments/$NAME/`, remove the PVC stanza, and change the `data` volume from `persistentVolumeClaim` to `hostPath: {path: /opt/0-0/sudo-fleet/deployments/$NAME/pvc, type: DirectoryOrCreate}`.
-2. **Fix teardown.** In both `rm-containers.sh` (and `down.sh` if separate): replace `kubectl delete pvc "$DEPLOY-data"` with an explicit, guarded removal of `/opt/0-0/sudo-fleet/deployments/$NAME/pvc` — and only after confirming a glimor save exists. Never delete a `pvc/` dir whose agent hasn't been saved.
+1. **Retarget the yaml write + the storage volume.** In both `up.sh`: change `YAML_DIR` to write under `/opt/sudo-fleet/deployments/$NAME/`, remove the PVC stanza, and change the `data` volume from `persistentVolumeClaim` to `hostPath: {path: /opt/sudo-fleet/deployments/$NAME/pvc, type: DirectoryOrCreate}`.
+2. **Fix teardown.** In both `rm-containers.sh` (and `down.sh` if separate): replace `kubectl delete pvc "$DEPLOY-data"` with an explicit, guarded removal of `/opt/sudo-fleet/deployments/$NAME/pvc` — and only after confirming a glimor save exists. Never delete a `pvc/` dir whose agent hasn't been saved.
 
 ## Open / to confirm before building
 
-- **`/opt/0-0` vs `sudo-fleet` naming:** the operator is using them interchangeably ("0-0 = the fleet dir"). The path above is `/opt/0-0/sudo-fleet/deployments/<name>/pvc`. If the fleet home is instead meant to be the `sudo-fleet` repo *itself* (and `sudo-fleet/deployments/` is relative to the repo root), adjust the base once. This doc assumes the app dir is `/opt/0-0/` with `sudo-fleet/` as a subdir (matches the GLIMORS.md operational spine).
-- **Is the deployments tree still git-tracked?** `glimors` are runtime state; if `deployments/<name>/pvc/` sits inside the `sudo-fleet` git repo, the `.gitignore` must exclude `pvc/` (state) while keeping `*.yaml` (wiring) tracked. Confirm which, since storing live agent memory in git is a leak risk.
+- **Canonical base path (settled in `LAYOUT.md`):** the fleet application directory is **`/opt/sudo-fleet/`** — it is the top, with `deployments/` + `sudo-letta/` + `sudo-agent/` + the spec docs all *inside* it. The glimor path is therefore **`/opt/sudo-fleet/deployments/<name>/pvc`** (yaml at `.../<name>.yaml`). This supersedes the earlier `/opt/0-0/` reading.
+- **Is the deployments tree still git-tracked?** `glimors` are runtime state; since `deployments/<name>/pvc/` now sits inside the `sudo-fleet` repo tree, the `.gitignore` must exclude `pvc/` (state) while keeping `*.yaml` (wiring) tracked. Confirm which, since storing live agent memory in git is a leak risk.
