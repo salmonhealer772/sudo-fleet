@@ -2,30 +2,33 @@
 
 A disposable room you stand up anywhere: saved agents are pulled in, talk to each other, and survive the room's destruction. The full spec lives in `SPEC.md`.
 
-Everything lives inside ONE folder — `sudo-fleet/`. The two factory repos are cloned NESTED inside it, and the `.env` + `glimors/` state also live inside it. No siblings, nothing outside it.
+Everything lives inside ONE folder — `sudo-fleet/`. The two factory repos (`sudo-agent`, `sudo-letta`), your `.env` secrets, and the saved `glimors/` state are all nested inside it. No siblings, nothing outside it.
 
 ## Your fleet is up (two commands)
 
-On a bare Linux box (systemd + curl/wget/git/tailscale — no docker/k3s yet), run Command 1 from WHATEVER directory you choose:
+On a bare Linux box (systemd + curl/wget/git/tailscale — no docker/k3s yet):
 
-**Command 1 — bootstrap** (prompts for keys, clones into `./sudo-fleet/`, then builds docker + k3s + repos + images):
+**Command 1 — bootstrap** (prompts for keys, installs docker + k3s, clones the
+factories INSIDE `sudo-fleet/`, builds images). Run it from ANY directory:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/salmonhealer772/sudo-fleet/main/bootstrap.sh | bash
+git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet && bash setup.sh
 ```
 
-It asks for the keys FIRST, before cloning or installing anything:
+`setup.sh` asks for your keys up front, then writes them to `sudo-fleet/.env`:
 
 ```
-GITHUB_TOKEN=...                # optional — repos are public
 DEEPSEEK_API_KEY=...            # sudo-agent / Hermes (required)
 LLM_PROVIDER=deepseek           # sudo-letta / Letta (required; openai|anthropic|deepseek|...)
 API_KEY=...                     # sudo-letta / Letta (required)
 LLM_BASE_URL=https://api.deepseek.com/v1   # optional, OpenAI-compatible
+GITHUB_TOKEN=...                # optional — the repos are PUBLIC, no token needed
 TAVILY_API_KEY=...              # optional — letta web_search needs one (or EXA_/PARALLEL_/PERPLEXITY_)
 ```
 
-The collected keys are written to `./sudo-fleet/.env` and setup runs automatically.
+> `sudo-fleet/.env`, `sudo-fleet/glimors/`, `sudo-fleet/sudo-agent/` and
+> `sudo-fleet/sudo-letta/` are all gitignored — secrets, saved agent state, and
+> the nested clone trees stay out of the repo.
 
 **Command 2 — bring up the cluster + stand up Marc + Caesar:**
 
@@ -39,22 +42,23 @@ wakes up AS forge — and they diverge independently from there.
 
 ## One-folder layout
 
-Everything the scripts create lives inside `sudo-fleet/`:
-
 ```
 sudo-fleet/
-├── bootstrap.sh          # Command 1 entry point (curl | bash)
-├── setup.sh              # docker + k3s + clone factories + build images
+├── setup.sh              # Command 1 — prompt keys, docker+k3s, clone factories, build images
 ├── README.md
 ├── SPEC.md
-├── .env                  # your keys (gitignored)
-├── kube-scripts/
-│   ├── k8s-up.sh         # Command 2
-│   ├── k8s-down.sh
-│   └── save-glimor.sh
-├── sudo-agent/           # nested clone (gitignored)
-├── sudo-letta/           # nested clone (gitignored)
-└── glimors/              # saved agent state (gitignored)
+├── .gitignore
+├── down.sh               # thin pointer -> kube-scripts/k8s-down.sh
+├── .env                  # your keys (gitignored, written by setup.sh)
+├── sudo-agent/           # Hermes engineer factory (nested clone, gitignored)
+├── sudo-letta/           # Letta planner factory (nested clone, gitignored)
+├── glimors/              # saved agent identity (gitignored)
+│   ├── psnvc/            # Letta brain (persona + memory + skills)
+│   └── forge/            # Hermes identity (SOUL.md + state.db + history)
+└── kube-scripts/
+    ├── k8s-up.sh         # Command 2 — deploy Marc + Caesar, seed glimors
+    ├── k8s-down.sh       # stop / purge / teardown
+    └── save-glimor.sh    # snapshot the live pair into glimors/
 ```
 
 ## Glimor seed (portable identity)
@@ -92,7 +96,7 @@ cd sudo-fleet/kube-scripts && bash k8s-down.sh --teardown-k3s   # uninstall k3s 
 
 ## What setup.sh touches on your box (outside sudo-fleet/)
 
-`setup.sh` (run by Command 1) is a bootstrap and by design writes system-wide. FLEET_HOME is now the `sudo-fleet/` folder itself, so the repos, `.env`, and `glimors/` all live INSIDE it — nothing fleet-related is written outside `sudo-fleet/`. What it does touch outside `sudo-fleet/` is limited to the system-level tooling:
+`setup.sh` (Command 1) is a bootstrap and by design writes system-wide. FLEET_HOME is now the `sudo-fleet/` folder itself, so the repos, `.env`, and `glimors/` all live INSIDE it — nothing fleet-related is written outside `sudo-fleet/`. What it does touch outside `sudo-fleet/` is limited to the system-level tooling:
 
 - **Docker** (get.docker.com): `/usr/bin/` docker binaries, `/etc/systemd/system/docker.service` + `containerd.service`, `/var/lib/docker` (images), `/var/lib/containerd`, adds the invoking user to the `docker` group, `/etc/docker/`.
 - **k3s** (get.k3s.io): `/usr/local/bin/k3s` (+ `kubectl`/`crictl`/`ctr` symlinks), `/etc/systemd/system/k3s.service`, `/var/lib/rancher/k3s/` (all cluster data), `/etc/rancher/k3s/k3s.yaml` (kubeconfig), `/var/lib/kubelet`.
