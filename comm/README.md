@@ -19,6 +19,10 @@ A tool without a skill is a bare callable nobody reaches for. A tool + skill wit
 3. **`check-what-agent-is-doing`** — read a sibling's live activity (`GET ...-watch/status`).
 4. **`check-agent-logs`** — tail a sibling's event trail (`GET ...-watch/events?n=N` / `/stream`).
 
+## Base skills — the universal starter set
+
+For the *base skill set* every fleet agent ships (cross-host, skill-vetter, find-skills, clawhub, creating-skills, plus the pair skills) — see base-skills/BASE-SKILLS.md. It is a separate axis from the comm layer: comm = "how to talk", base skills = "how to be capable" (reach the machine, extend yourself, self-repair). Both are baked by the router at spawn-time.
+
 ## The router default
 
 In a `sudo-fleet`, the spawner/router (psnvc + forge) bakes these into **every spawned agent** as a spawn-time default — a new agent is *born* able to talk to the fleet. This directory is the canonical source of that default: what `up.sh`/spawn copies into each new agent.
