@@ -1,84 +1,77 @@
 # GLIMORS — what an agent glimor is
 
-> Dedicated definition. This is the canonical, self-contained spec of the unit called a **glimor**. It pulls the glimor idea out of `SPEC.md`'s prose and pins it down so the save/pull/fork machinery has one unambiguous target to build against. Branch `glimors`.
+> Dedicated definition. This is the canonical, self-contained spec of the unit called a **glimor**. It pins down what a glimor is on disk, so the save/pull/fork machinery has one unambiguous target to build against. Branch `glimors`.
 
 ## The one-sentence definition
 
-A **glimor** is the entire agent — its definition *and* its complete persistent state — captured as a single, printable, perpetually-current, forkable identity package that lives in a save directory and is restored wholesale by `pull`.
+A **glimor** is one agent, fully described — a folder holding that agent's **yaml** (its wiring/definition) and a **reference to its one live PVC** (its state). One glimor = one yaml + one PVC = one running agent.
 
-## The operational spine (2026-09-28 — how a glimor actually lives and gets used)
+## The operational spine (the part that makes the fleet run *on* glimors)
 
-This is the load-bearing mechanics, the part that turns "a glimor is X" into "the fleet runs *on* glimors":
+1. **Home = `/opt/0-0/glimors/`.** The fleet application directory is `/opt/0-0/` (SPEC item #5: the canonical on-disk home the stack owns). Inside it, `glimors/` holds **one folder per agent**, named by the agent's bare name.
 
-1. **Home = a `glimors/` directory** inside the fleet application directory. The fleet application directory is **`/opt/0-0/`** — the canonical on-disk home the stack owns (SPEC item #5): it already holds `sudo-fleet/` (the spec repo), `sudo-letta/` (planner factory), `sudo-agent/` (engineer factory), `sudo-letta-personas/`, and the cluster auth (`admin-user.kubeconfig`/`.token`). So glimors live at **`/opt/0-0/glimors/`** — a sibling of the factories and the spec repo, **not** inside any git repo (glimors are live runtime state, not source). That is the canonical location where all agent glimors live.
-2. **A glimor is a file.** One file per agent — not a directory tree, not a loose bundle of PVC delta manifests. The "complete agent" is packed into one file.
-3. **The router pair knows how to stand agents up from glimors.** `spawn`/pull means: consume a glimor file → deploy the agent it describes → run it. The router does not hand-run `up.sh`; it brings an agent into the room *by glimor*.
+2. **The two factories write their yamls OUTSIDE themselves.** The `sudo-letta` and `sudo-agent` repos do **not** keep their own `deployments/` directories anymore. When `up.sh` stands an agent up, it writes that agent's yaml into `glimors/<name>/`, not into the repo. The repos are *source*; `glimors/` is the *runtime* store they emit into.
+
+3. **Each glimor holds exactly: the yaml + a reference to ONE live PVC (not a copy).**
+
+   ```
+   /opt/0-0/glimors/
+   ├── fa-glm-l/
+   │   ├── fa-glm-l.yaml          ← written here by the planner factory
+   │   └── pvc -> sudo-fa-glm-l-data   ← reference to the ONE live PVC, never a copy
+   ├── fa-glm-h/
+   │   ├── fa-glm-h.yaml          ← written here by the engineer factory
+   │   └── pvc -> sudo-fa-glm-h-data
+   └── ...
+   ```
+
+   - The **yaml** is the agent's wiring: the PVC claim, the Deployment, the `-mcp`/`-watch` sidecars, the env/model wiring, and the deterministic ports. Its `image:` line points at the shared `sudo-letta:latest` / `sudo-agent:latest` (built from the factory Dockerfiles — but the Dockerfile is **factory-level**, one per kind, NOT part of any single glimor).
+   - The **pvc** is a reference to the **one** bound PVC (`sudo-<name>-data`), which already exists and already holds the agent's full state (persona/SOUL, memory, conversations, skills, config, watch logs). It is **never copied, only pointed-to** — the live PVC *is* the glimor's state.
+
 4. **Every agent in the fleet MUST be stood up from a glimor.** No bare pod, no memory-only agent. When an agent enters the fleet, a glimor is either:
-   - **created** — a brand-new agent's glimor is written at the moment it first goes up, or
+   - **created** — a brand-new agent's yaml is written and its PVC is created at the moment it first goes up, or
    - **assigned** — an existing glimor is pulled in and that agent *is* that glimor.
    There is no third path. "Agent standing up" and "glimor exists" are the same event.
-5. **One glimor = one running agent.** A glimor is a **unique identifier** — the 1:1 identity token of exactly one running agent. Not a snapshot of many, not a version history; it is the singular, nameable identity that one live agent corresponds to.
+
+5. **One glimor = one running agent.** A glimor is a **unique identifier** — the 1:1 identity token of exactly one running agent. One folder, one yaml, one PVC; no snapshot history, no "change one → change all" linking.
 
 ## Why it exists (the steering law)
 
-An agent that lives only in memory (a pod, a PVC, a live process) is an agent you can lose, and the whole fleet evaporates with it. So every agent exists as a **glimor** — one complete save — and that save **updates automatically once a save directory is given.**
+An agent that lives only in memory (a pod, a PVC, a live process) is an agent you can lose, and the whole fleet evaporates with it. So every agent exists as a **glimor** — its yaml + its live PVC, named and pinned.
 
-**"Running" is a temporary view of a *stored* agent.** Save is not a manual backup you remember to run; it is the state the agent lives in. This is load-bearing, not a ranked feature — if it fails, nothing else matters (the steering wheel that must turn the front wheels).
+**"Running" is a temporary view of a *stored* agent.** The PVC is the persistent state the agent lives in; the yaml is how it runs. Save isn't a manual backup you remember to run — it is the state the agent already lives in, made unambiguous. This is load-bearing, not a ranked feature — if it fails, nothing else matters (the steering wheel that must turn the front wheels).
 
-## What a glimor contains — three layers packed into one file
+## What the two halves mean
 
-A full glimor is **one file** holding **three layers**, none sufficient alone:
+- **PVC = the agent's state** (its "brain and memories"): identity (`persona.md` / `SOUL.md`), memory + conversation history, skills, agent config, model/provider wiring, and the `watch` sidecar's accumulated logs. This is the *save* of "persistent state."
+- **Yaml = the agent's wiring** (its "plumbing"): the PVC claim + Deployment + sidecars + ports + env. This is how the state gets *run and reached*.
 
-1. **State (PVC contents)** — the agent's brain and memories:
-   - identity: `persona.md` (Letta) / `SOUL.md` (Hermes)
-   - memory + conversation history (`messages.jsonl` / recall store)
-   - skills (`skills/`), agent config (`settings.json`, `config.yaml`, model/provider wiring)
-   - the `watch` sidecar's accumulated logs (`events.jsonl`, `state.json`, `transcript.txt`)
-
-2. **Wiring (kube manifests)** — the agent's plumbing:
-   - the Deployment, the `-mcp` Service, the `-watch` Service, the `watch-config` ConfigMap
-   - the deterministic port assignments, so sidecars + reachability come back too
-
-3. **Secrets/env** — model keys and injected credentials, stored as **references** (secret *names*), **never** baked into the package as values.
+The **secrets** stay referenced: model keys and injected credentials are **never** baked into the glimor folder as values — they remain env/secret references, resolved by the cluster.
 
 ## Required properties (the "done" bar for a glimor)
 
-- **Printable** — a glimor can be rendered as a human-readable snapshot of "what is this agent, right now" (identity + state + wiring), not just a binary blob.
-- **Living** — the package **updates as the agent is used**, not as a manual one-shot. Restore always lands on the agent's *latest* self.
-- **Source-agnostic** — a glimor does not record *where* it lives; a router can be pointed at *any* location and told to fork it.
+- **Living** — the PVC is the *live* state; there is no stale copy to drift. The yaml is what `up.sh` wrote at spawn and re-writes on change.
+- **Source-agnostic** — a glimor does not record *where* it lives. A router pointed at any `glimors/` store (or a copy of the PVC + yaml) can stand the agent up.
+- **Printable** — `glimors/<name>/` is browsable: `cat fa-glm-l.yaml` + `ls pvc` shows exactly what the agent is, no decoding.
 
-## Save (`save <name>`) and pull (`pull <name>`)
+## Save and pull
 
-- **`save <name>`** produces a complete glimor: the three layers captured together.
-  - **Trigger — continuous / as-used** (mandatory): the save fires **automatically whenever the agent is used**, piggybacking on the `-watch` tail that already sees every turn. State is refreshed live, not on a remembered schedule.
-  - **Trigger — explicit**: `save <name>` forces a snapshot on demand.
-- **`pull <name>`** restores the complete glimor (state + wiring + secret refs) on any instance — the *same agent*, mid-conversation, on the next box. One or two commands.
+- **`save <name>`** = make the glimor unambiguous and portable: ensure `glimors/<name>/yaml` is current, and the one PVC `sudo-<name>-data` is bound. Off-box DR = copy the PVC (only then is a copy made, for the "lose my computer" case) to the mirror.
+- **`pull <name>`** = apply `glimors/<name>/<name>.yaml` + re-attach the PVC → the same agent returns, mid-conversation, on the next box. One or two commands.
+
+*Note:* within the live cluster the PVC is shared, not copied — "one glimor = one PVC" holds. A **copy** of the PVC is made *only* for off-box disaster recovery, never as part of the glimor's normal life.
 
 ## Forking — a glimor is also a seed
 
-A glimor is both:
-- (a) the auto-updating stored state of *a* living agent, and
-- (b) a portable **seed** you fork from.
-
-Point any fleet's router at where glimors live (a path / address / source fleet), tell it "spawn N", and it forks the glimor into **N independent copies**. Each fork:
-- is its **own agent from the moment it spawns** — not linked to, and does **not write back to**, the source;
-- **itself becomes a glimor** that auto-saves in the **target fleet's own save directory**.
-
-Source stays put as the template for future forks. "Copy" means copies are their own people, not linked instances ("change one → change all" is explicitly NOT the semantics).
+A glimor is both (a) the stored identity of *a* living agent, and (b) a portable **seed**. Point a router at a glimor and tell it "spawn N": each fork gets its **own new PVC** (a copy at fork time) + a yaml, and becomes its own independent glimor. It does not write back to the source.
 
 ## Fleet snapshot (disaster recovery)
 
-The per-agent glimor is the granular primitive. A **fleet glimor snapshot** (`save all`) captures **all** glimors (all PVCs + all manifests + secret refs) off-box in one operation — the "lose my computer" answer. Live payload was measured ~6.1 GB across all PVCs (Hermes engineers 400 MB–1.2 GB each; Letta planners 4–80 MB each).
-
-## Open questions to pin before building (flag, do not assume)
-
-1. **Save storage backend (off-box mirror)** — the `glimors/` directory in the app directory is the canonical local store (settled). What remains: the **off-box mirror** (GCS / GitHub / fabean) for the "lose my computer" fleet snapshot. Pick the remote before building DR.
-2. **Snapshot consolidation** — per-agent `save` is the primitive, but how often the fleet snapshot is consolidated (every use vs. rolling dedup) needs pinning.
-3. **The glimor file format** — settled that it's *a file*; still open is *what kind of file*: a single-line JSON identity record, a tar/gzip of the state, or a content-addressed blob whose name is the agent's unique id. The "printable + living + source-agnostic + unique-identifier" properties constrain this but the encoding is not yet chosen.
-4. **The unique-identifier format** — "one glimor = one running agent" means the glimor *is* the identifier, but the exact id scheme (agent name? a hash? `name@glimor`) is unpinned.
+The per-agent glimor is the granular primitive. **`save all`** = copy every agent's PVC off-box (the only time copies are taken) to the mirror. Live payload measured ~6.1 GB across all PVCs (Hermes engineers 400 MB–1.2 GB each; Letta planners 4–80 MB each).
 
 ## What a glimor is NOT
 
-- Not a docker image / `docker commit` snapshot (that captures a filesystem, not identity + wiring + secrets-as-refs).
-- Not a linked instance in a multi-fleet "change one → change all" web.
+- Not a docker image / `docker commit` snapshot — the Dockerfile builds the shared kind image (`sudo-letta:latest` / `sudo-agent:latest`), which lives in the factory, not in any one glimor.
+- Not a linked instance in a "change one → change all" web.
 - Not memory-only state that happens to be backed up occasionally.
+- Not a copy of the PVC kept in the folder — the pvc entry *references* the one live PVC; a copy is made only for DR/fork.
