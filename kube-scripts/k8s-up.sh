@@ -29,8 +29,34 @@ step() { echo ""; echo "── $* ──"; }
 ok()   { echo "✓ $*"; }
 warn() { echo "⚠ $*" >&2; }
 
+is_root() { [[ "$(id -u)" -eq 0 ]]; }
 SUDO=""
-[[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
+if ! is_root; then
+  SUDO="sudo"
+  echo "→ Warming up sudo (you may be prompted once for your password)..."
+  # Prime sudo non-interactively FIRST: succeeds when credentials are already
+  # cached (passwordless sudo, or a recent sudo) without hanging on a hidden
+  # prompt. Only fall back to an interactive prompt (real TTY) or a password
+  # read from stdin (-S) when there is no cached credential; never hang.
+  if ! sudo -n -v 2>/dev/null; then
+    if [[ -t 0 ]]; then
+      sudo -v || die "sudo authentication failed — this script needs sudo to stand up Marc + Caesar"
+    else
+      # No TTY + no cached credential: consume ONE line of stdin as the sudo
+      # password (so a piped / agent / CI run can still authenticate), then feed
+      # it to sudo -S. There are no other stdin prompts in this script (the API
+      # keys are sourced from $FLEET_ENV, not prompted), so this is safe.
+      IFS= read -r _SUDO_PW || true
+      if [[ -n "${_SUDO_PW:-}" ]]; then
+        printf '%s\n' "$_SUDO_PW" | sudo -S -v 2>/dev/null \
+          || die "sudo authentication failed (wrong password) — this script needs sudo to stand up Marc + Caesar"
+      else
+        die "sudo needs a password but none arrived on stdin (no TTY, no cached credential). Run in a terminal, pre-authenticate with 'sudo -v', or pipe the password as the first line of stdin."
+      fi
+      unset _SUDO_PW
+    fi
+  fi
+fi
 
 # --- 1. Cluster -----------------------------------------------------------------
 step "1/5 Cluster"
