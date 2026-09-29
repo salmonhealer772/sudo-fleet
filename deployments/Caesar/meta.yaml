@@ -1,0 +1,5 @@
+kind: hermes
+source_agent_id: forge
+name: Caesar
+model: deepseek/deepseek-v4-pro
+ports: []

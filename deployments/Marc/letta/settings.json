@@ -1,0 +1,45 @@
+{
+  "tokenStreaming": true,
+  "preferredBackendMode": "local",
+  "globalSharedBlockIds": {},
+  "permissions": {
+    "bash": "allow",
+    "read": "allow",
+    "write": "allow"
+  },
+  "autoConversationTitles": false,
+  "autoConversationTitlesRollbackApplied": true,
+  "deviceId": "5a11391f-fdb7-4e86-8515-583d70f24003",
+  "agents": [
+    {
+      "agentId": "agent-local-a290e69d-fc84-495e-b46c-c7ed8aaeeae0",
+      "baseUrl": "local:/home/node/.letta/lc-local-backend",
+      "systemPromptPreset": "default",
+      "systemPromptHash": "sha256:RRY0nMUJfkPfTj3qWRu2xihu1yhZIC594ghGpBy9vrY",
+      "systemPromptVersion": "0.33.2",
+      "pinned": true,
+      "memfs": true
+    },
+    {
+      "agentId": "agent-local-2b08c123-f8cc-4802-8b17-974d7b0dac07",
+      "baseUrl": "local:/home/node/.letta/lc-local-backend",
+      "memfs": false
+    },
+    {
+      "agentId": "agent-local-ed4712d3-cc5c-4a16-afa0-18ee8a700c97",
+      "baseUrl": "local:/home/node/.letta/lc-local-backend",
+      "memfs": false
+    },
+    {
+      "agentId": "agent-local-4a0ebacb-0230-497a-83dd-45796d959a71",
+      "baseUrl": "local:/home/node/.letta/lc-local-backend",
+      "memfs": false
+    }
+  ],
+  "sessionsByServer": {
+    "local:/home/node/.letta/lc-local-backend": {
+      "agentId": "agent-local-a290e69d-fc84-495e-b46c-c7ed8aaeeae0",
+      "conversationId": "local-conv-30"
+    }
+  }
+}

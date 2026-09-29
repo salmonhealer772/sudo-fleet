@@ -2,7 +2,7 @@
 
 A disposable room you stand up anywhere: saved agents are pulled in, talk to each other, and survive the room's destruction. The full spec lives in `SPEC.md`.
 
-Everything lives inside ONE folder — `sudo-fleet/`. The two factory repos (`sudo-agent`, `sudo-letta`), your `.env` secrets, and the saved `glimors/` state are all nested inside it. No siblings, nothing outside it.
+Everything lives inside ONE folder — `sudo-fleet/`. The two factory repos (`sudo-agent`, `sudo-letta`), your `.env` secrets, and the committed `deployments/{Marc,Caesar}/` glimors are all nested inside it. No siblings, nothing outside it.
 
 ## Your fleet is up (two commands)
 
@@ -36,9 +36,9 @@ LLM_BASE_URL=$LLM_BASE_URL           # defaulted to https://api.deepseek.com/v1 
 TAVILY_API_KEY=$TAVILY_API_KEY       # may be empty
 ```
 
-> `sudo-fleet/.env`, `sudo-fleet/glimors/`, `sudo-fleet/sudo-agent/` and
-> `sudo-fleet/sudo-letta/` are all gitignored — secrets, saved agent state, and
-> the nested clone trees stay out of the repo.
+> `sudo-fleet/.env`, `sudo-fleet/sudo-agent/` and `sudo-fleet/sudo-letta/` are
+> gitignored — secrets and the nested clone trees stay out of the repo.
+> `sudo-fleet/deployments/{Marc,Caesar}/` (the committed glimors) ARE tracked.
 
 **Command 2 — bring up the cluster + stand up Marc + Caesar:**
 
@@ -47,8 +47,9 @@ cd kube-scripts && bash k8s-up.sh
 ```
 
 This deploys `sudo-marc` (Letta planner) and `sudo-caesar` (Hermes engineer),
-then seeds their identity from saved glimors — Marc wakes up AS psnvc, Caesar
-wakes up AS forge — and they diverge independently from there.
+seeding their identity from the committed glimors via an initContainer — Marc
+wakes up AS Marc (the renamed psnvc), Caesar AS Caesar (the renamed forge) —
+and they diverge independently from there.
 
 ## One-folder layout
 
@@ -62,37 +63,29 @@ sudo-fleet/
 ├── .env                  # your keys (gitignored, written by setup.sh)
 ├── sudo-agent/           # Hermes engineer factory (nested clone, gitignored)
 ├── sudo-letta/           # Letta planner factory (nested clone, gitignored)
-├── glimors/              # saved agent identity (gitignored)
-│   ├── psnvc/            # Letta brain (persona + memory + skills)
-│   └── forge/            # Hermes identity (SOUL.md + state.db + history)
+├── deployments/          # committed glimors (the router pair's identity)
+│   ├── Marc/             # Letta planner (renamed from psnvc)
+│   └── Caesar/           # Hermes engineer (renamed from forge)
 └── kube-scripts/
-    ├── k8s-up.sh         # Command 2 — deploy Marc + Caesar, seed glimors
-    ├── k8s-down.sh       # stop / purge / teardown
-    └── save-glimor.sh    # snapshot the live pair into glimors/
+    ├── k8s-up.sh         # Command 2 — deploy Marc + Caesar, seed from committed glimors
+    └── k8s-down.sh       # stop / purge / teardown
 ```
 
-## Glimor seed (portable identity)
+## Glimor seed (committed identity)
 
-A **glimor** is a saved snapshot of an agent's identity + live state, stored as
-plain files under `sudo-fleet/glimors/`:
+A **glimor** is a committed snapshot of one agent's full resumable state, stored
+under `sudo-fleet/deployments/`:
 
-- `glimors/psnvc/` — the whole Letta brain (persona + memory blocks + skills), i.e. the `/home/node/.letta` tree.
-- `glimors/forge/`  — the Hermes identity: `SOUL.md` + `state.db` + `.hermes_history` + `.local` + `cache`.
+- `deployments/Marc/`   — the Letta planner (renamed from psnvc): the agent
+  record + its memfs brain + `settings.json`, scrubbed for the public repo.
+- `deployments/Caesar/` — the Hermes engineer (renamed from forge): `SOUL.md` +
+  `config.yaml` + `state.db` + `.hermes_history` + `.local/`, scrubbed.
 
-**Capture** them on a box that has the live pair running:
-
-```bash
-cd kube-scripts && bash save-glimor.sh
-```
-
-**Move** them to a fresh box (they are just files — no live pod needed at restore time):
-
-```bash
-tar czf glimors.tgz -C sudo-fleet glimors     # then copy + extract on the fresh box
-```
-
-`k8s-up.sh` restores from `glimors/` if present; if a glimor dir is missing it
-deploys that agent EMPTY (factory defaults) and warns loudly.
+They are **committed** (not gitignored), so a fresh box gets them with the repo.
+`k8s-up.sh` passes each to the factory `up.sh --from-glimor <dir>`; the factory
+deploys an **initContainer** that copies the glimor into the PVC *before* the
+agent process starts. A missing or invalid glimor fails the deploy loudly — a
+blank Tutor / bare Hermes can never come up.
 
 ## Tear down
 
@@ -106,7 +99,7 @@ cd kube-scripts && bash k8s-down.sh --teardown-k3s   # uninstall k3s too
 
 ## What setup.sh touches on your box (outside sudo-fleet/)
 
-`setup.sh` (Command 1) is a bootstrap and by design writes system-wide. FLEET_HOME is now the `sudo-fleet/` folder itself, so the repos, `.env`, and `glimors/` all live INSIDE it — nothing fleet-related is written outside `sudo-fleet/`. What it does touch outside `sudo-fleet/` is limited to the system-level tooling:
+`setup.sh` (Command 1) is a bootstrap and by design writes system-wide. FLEET_HOME is now the `sudo-fleet/` folder itself, so the repos, `.env`, and `deployments/` glimors all live INSIDE it — nothing fleet-related is written outside `sudo-fleet/`. What it does touch outside `sudo-fleet/` is limited to the system-level tooling:
 
 - **Docker** (get.docker.com): `/usr/bin/` docker binaries, `/etc/systemd/system/docker.service` + `containerd.service`, `/var/lib/docker` (images), `/var/lib/containerd`, adds the invoking user to the `docker` group, `/etc/docker/`.
 - **k3s** (get.k3s.io): `/usr/local/bin/k3s` (+ `kubectl`/`crictl`/`ctr` symlinks), `/etc/systemd/system/k3s.service`, `/var/lib/rancher/k3s/` (all cluster data), `/etc/rancher/k3s/k3s.yaml` (kubeconfig), `/var/lib/kubelet`.
