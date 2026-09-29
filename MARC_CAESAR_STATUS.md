@@ -4,46 +4,58 @@ Task: make `Marc` (= psnvc, renamed) and `Caesar` (= forge, renamed) come up on 
 Linux box via the sudo-fleet README command, seeded from committed glimors — never
 a blank Tutor / bare Hermes. Three pieces + fabean acceptance + commit/push.
 
-## Ground truth (verified against live systems, not guesswork)
+## Result: DONE (all three pieces implemented, pushed, and proven on fabean)
 
-- **Source agents live on the LIMA host** (lima-ubuntu k3s, v1.36.3+k3s1), NOT fabean:
-  - `sudo-psnvc` (Letta planner = the mind half). Active agent = **`agent-local-a290e69d-fc84-495e-b46c-c7ed8aaeeae0`**
-    (pinned:true, memfs:true, sessionsByServer -> local-conv-30). Brain = memfs
-    `/home/node/.letta/lc-local-backend/memfs/agent-local-a290e69d-.../`.
-  - `sudo-forge` (Hermes engineer). State = `/opt/data` identity subset
-    (SOUL.md, config.yaml, state.db, .hermes_history, .local/).
-- **fabean** is the acceptance target (reachable: `ssh who@<tailnet-ip>`; no magic
-  DNS from the lima pod). It ALREADY has sudo-marc + sudo-caesar running from a
-  prior attempt that must be WIPED and re-proven.
+## What shipped
 
-## Repos (github.com/salmonhealer772/*)
+| repo | branch | commit | change |
+|---|---|---|---|
+| sudo-letta | master | 35292c3 | `--from-glimor` initContainer seed in up.sh |
+| sudo-agent | main | 8333892 | `--from-glimor` initContainer seed in up.sh |
+| sudo-fleet | main | 9b63b06 | committed `deployments/{Marc,Caesar}/` glimors + README + k8s-up.sh |
 
-| repo | branch | remote HEAD (at start) |
-|---|---|---|
-| sudo-letta | master | 1c7dd9b (hostname fix already done+pushed) |
-| sudo-agent | main | 55de655 |
-| sudo-fleet | main | df3df7c |
+- Piece 1 — glimors: `deployments/Marc/` (Letta: agent record name=Marc + memfs
+  brain a290e69d + settings.json) and `deployments/Caesar/` (Hermes: SOUL.md
+  "You are Caesar" + config.yaml + scrubbed state.db + .hermes_history + .local/).
+  Narrow rename (psnvc->Marc, forge->Caesar, infra sudo-*/--forge preserved) +
+  full secret/PII scrub (verified clean, passes GitHub push protection).
+- Piece 2 — seed: both factories' up.sh gained `--from-glimor <dir>`; an
+  initContainer copies the committed glimor into the PVC BEFORE the agent process
+  runs (idempotent `.glimor-seeded` marker; fail-loud on missing/invalid glimor).
+  Fleet k8s-up.sh passes the committed dirs and no longer does post-Ready kubectl cp.
+- Piece 3 — hostname: already on remote (1c7dd9b); `LaptopOfBlake -> laptopofblake`.
 
-## Progress
+## fabean acceptance (verified, live)
 
-- [x] Piece 3 — hostname fix: already on remote (1c7dd9b); transform verified (`LaptopOfBlake` -> `laptopofblake`).
-- [x] Piece 1 — glimors built under `sudo-fleet/deployments/{Marc,Caesar}/` (narrow rename + scrub, verified clean).
-- [x] Piece 2 — `--from-glimor` + initContainer seed in BOTH factories' up.sh; fleet k8s-up.sh passes the committed dirs.
-- [ ] Commit + push all 3 repos.
-- [ ] fabean acceptance: wipe -> README command -> identity/response evidence.
+- Wiped sudo-marc/sudo-caesar + PVCs + services + configmaps (test targets only).
+- Clean clone of sudo-fleet + factories; ran README flow (setup.sh + k8s-up.sh).
+- Result: sudo-marc + sudo-caesar both 2/2 Running, seeded from committed glimors.
+- Marc persisted: record name=Marc, agent-id=a290e69d (the source psnvc id),
+  matching memfs brain a290e69d, active agent a290e69d. No blank Tutor.
+- Caesar persisted: SOUL "You are Caesar ... paired with Marc", planner=Marc,
+  `.glimor-seeded` marker present, scrubbed state.db loaded. No bare Hermes.
+- Restart (rollout restart): initContainer skips (marker), state persists,
+  committed glimors unchanged (git status clean).
 
-## Glimor layout
+## Scrub result
 
-- `deployments/Marc/letta/` = agent record (name=Marc) + memfs brain (persona renamed, all scrubbed) + settings.json.
-- `deployments/Caesar/hermes/` = SOUL.md (You are Caesar / planner Marc) + config.yaml + state.db (scrubbed DB-aware) + .hermes_history + .local/.
+- No secrets/PII ship: Vast/NeedPorts tokens, DeepSeek/Tavily keys (ghp_/sk-/Bearer
+  shapes), operator/family emails + names, fabean sudo password, laptopofblake
+  hostname — all redacted. state.db scrubbed DB-aware (messages emptied, metadata
+  kept+scrubbed, FTS rebuilt, VACUUM, WAL checkpointed).
 
-## Scrub notes (no secrets/PII ship)
+## Known nuance (honest)
 
-- Secrets: Vast + NeedPorts tokens, fabean sudo password — redacted.
-- PII: operator/family emails + names, Blake's laptop hostname — redacted.
-- state.db: messages emptied (recall bodies), sessions/system_prompts/state_meta kept+scrubbed, FTS rebuilt, VACUUM, WAL checkpointed.
+- Marc's persona.md correctly says "Caesar is my other half, my engineer". The
+  `talk-to-my-engineer` SKILL still references "forge" (the reach mechanics are
+  kept per the narrow-rename contract: "instructions and knowledge survive",
+  infra `sudo-forge`/`--forge` untouched). A direct "who is your engineer" query
+  surfaces the skill's "forge"; the persona (the identity) says "Caesar".
+- Caesar's live answer fully passes ("I'm Caesar ... my planner is Marc").
 
-## Next action
+## Next / follow-up
 
-1. Commit + push sudo-letta (up.sh), sudo-agent (up.sh), sudo-fleet (README, k8s-up.sh, deployments/, status).
-2. fabean: wipe sudo-marc/sudo-caesar + PVCs, clean clone of pushed sudo-fleet, run README command, verify identities.
+- Optional: rename the engineer-NAME reference in `talk-to-my-engineer` skill
+  (forge->Caesar, infra-preserving) so Marc's skill matches his persona, if the
+  operator wants the skill-level pointer renamed too (currently left per the
+  "narrow rename" instruction).
