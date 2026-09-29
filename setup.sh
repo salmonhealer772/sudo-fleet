@@ -271,6 +271,17 @@ ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | pa
 # --- 4. Repos (nested clones inside $FLEET_HOME) -------------------------------
 step "4/6 Repos (nested inside $FLEET_HOME)"
 mkdir -p "$FLEET_HOME"
+# Self-heal ownership: a `sudo git clone` leaves FLEET_HOME root-owned, so the
+# nested as-user clones below would die with Permission denied. If we're non-root
+# and the folder isn't writable by us, take it back for the invoking user via
+# sudo. Recursive so any pre-existing root-owned subdirs (a half-finished clone)
+# are covered too. No-op when already writable; never touches anything outside
+# $FLEET_HOME; never clobbers ownership the user already has.
+if ! is_root && [[ ! -w "$FLEET_HOME" ]]; then
+  warn "repo is root-owned from sudo clone — taking ownership for $TARGET_USER"
+  $SUDO chown -R "$TARGET_USER" "$FLEET_HOME" \
+    || die "could not chown $FLEET_HOME to $TARGET_USER — nested clones would fail"
+fi
 # Clone/pull the nested factories as the INVOKING user (never sudo): FLEET_HOME
 # is owned by whoever cloned this repo, so the nested repos stay user-owned and
 # git works on re-runs without a sudo credential (a `sudo git` in a subshell
