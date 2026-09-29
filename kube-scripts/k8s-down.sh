@@ -79,8 +79,17 @@ fi
 step "Stop router pair"
 marc_fail=0
 caesar_fail=0
-$SUDO bash "$LETTA_REPO/kube-scripts/down.sh" --marc   || marc_fail=$?
-$SUDO bash "$AGENT_REPO/kube-scripts/down.sh" --caesar || caesar_fail=$?
+# sudo resets the environment (Defaults env_reset), so an exported KUBECONFIG
+# does NOT survive the `$SUDO bash ...` hop. The factory letta down.sh re-detects
+# its own kubeconfig, but the factory agent down.sh does NOT — so pass KUBECONFIG
+# explicitly to make BOTH stop reliably when run as non-root.
+if [[ -n "${KUBECONFIG:-}" ]]; then
+  $SUDO env "KUBECONFIG=$KUBECONFIG" bash "$LETTA_REPO/kube-scripts/down.sh" --marc   || marc_fail=$?
+  $SUDO env "KUBECONFIG=$KUBECONFIG" bash "$AGENT_REPO/kube-scripts/down.sh" --caesar || caesar_fail=$?
+else
+  $SUDO bash "$LETTA_REPO/kube-scripts/down.sh" --marc   || marc_fail=$?
+  $SUDO bash "$AGENT_REPO/kube-scripts/down.sh" --caesar || caesar_fail=$?
+fi
 
 # A failed factory down.sh must NOT be swallowed: fail loud, do not claim
 # "stopped" while either Marc or Caesar is still up.
