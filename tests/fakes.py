@@ -216,3 +216,90 @@ def make_env(specs):
     fleet = Fleet(transport, kinds=kinds)
     return SimpleNamespace(fleet=fleet, transport=transport, host=host,
                            mcp=mcp, watch=watch, specs=specs)
+
+
+# --- fakes for the real backend's own hardware (retry, TTL, HTTP) ----------
+
+class FakeRunner:
+    """A stand-in for `real_transport.RealTransport`'s subprocess runner.
+
+    Scripts transient failures so the bounded-retry behaviour is testable with
+    no cluster: the first ``fail_times`` invocations raise, every later one
+    returns ``stdout``. Records every argv it was asked to run, in call order.
+    """
+
+    def __init__(self, stdout="", fail_times=0, error="transient bridge failure"):
+        self.stdout = stdout
+        self.fail_times = fail_times
+        self.error = error
+        self.calls = []         # list of (argv, timeout), in call order
+
+    def __call__(self, cmd, timeout=None):
+        self.calls.append((list(cmd), timeout))
+        if len(self.calls) <= self.fail_times:
+            raise RuntimeError(self.error)
+        return self.stdout
+
+    @property
+    def count(self):
+        return len(self.calls)
+
+
+class FakeClock:
+    """A hand-cranked monotonic clock for the ClusterIP TTL tests."""
+
+    def __init__(self, start=1000.0):
+        self.t = float(start)
+
+    def __call__(self):
+        return self.t
+
+    def advance(self, seconds):
+        self.t += float(seconds)
+        return self.t
+
+
+class FakeHttpDoor:
+    """A stand-in for ``urllib.request.urlopen`` (records urls, scripts failures).
+
+    The first ``fail_times`` calls raise ``error`` (a ConnectionRefusedError by
+    default) -- a sidecar that is down or still coming up; later calls return a
+    response carrying ``body``. The response carries the slice of the real
+    surface the transport uses (``read()``, ``headers``, a context manager), so
+    it serves both ``http_get`` and the MCP POST path.
+    """
+
+    def __init__(self, body='{"ok": true}', fail_times=0, error=None):
+        self.body = body
+        self.fail_times = fail_times
+        self.error = error if error is not None else ConnectionRefusedError(
+            "connection refused")
+        self.urls = []
+
+    def __call__(self, request, timeout=None):
+        url = getattr(request, "full_url", None) or str(request)
+        self.urls.append(url)
+        if len(self.urls) <= self.fail_times:
+            raise self.error
+        return _FakeResponse(self.body)
+
+    @property
+    def count(self):
+        return len(self.urls)
+
+
+class _FakeResponse:
+    """The slice of ``http.client.HTTPResponse`` the transport actually uses."""
+
+    def __init__(self, body):
+        self._body = str(body).encode("utf-8")
+        self.headers = {}       # .get() must work (Mcp-Session-Id)
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False

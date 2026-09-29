@@ -16,6 +16,11 @@ The roster comes from `kubectl get services -n default` run on the HOST
 through the docker-socket + nsenter bridge, parsed by the reference
 `comm_tools.parse_services`. Nothing is cached and nothing is baked in, so a
 sibling that is spawned or removed shows up / drops off on the next call.
+
+The host reach is BOUNDED-RETRY (see `real_transport.RealTransport`): a k3s
+blip or a docker cold-start is retried a few times, with a short backoff,
+before the call is allowed to fail -- so one transient hiccup no longer sinks
+the roster read.
 """
 
 from __future__ import annotations
@@ -99,7 +104,9 @@ def main(argv=None):
     try:
         roster = live_roster(filter=args.filter, transport=transport)
     except HostBridgeError as exc:
-        print(f"list-siblings: could not reach the host: {exc}", file=sys.stderr)
+        print(f"list-siblings: could not reach the host (after "
+              f"{transport.retries} attempt{'' if transport.retries == 1 else 's'}): "
+              f"{exc}", file=sys.stderr)
         return 1
 
     if args.json:

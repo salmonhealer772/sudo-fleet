@@ -23,6 +23,14 @@ Wire it up:
     for entry in list_siblings(fleet=live_fleet()):
         print(entry)
 
+Robustness: every door is BOUNDED-RETRY. One k3s blip, one docker cold-start,
+one "connection refused" while a sidecar is still coming up must not sink the
+call, so each door retries a small number of times with a short backoff before
+it gives up. A FINAL failure still raises the same error as before
+(``HostBridgeError`` for the host reach, the urllib/OS error for HTTP), so the
+callers' contracts are unchanged -- a bare transient failure just stops being
+one.
+
 ``host_command`` is the piece list-siblings needs; it is exercised live by
 ``tools/list_siblings.py``. ``mcp_call`` / ``http_get`` are the real doors the
 other two comm tools (message-agent, check-agent) need; they are implemented
@@ -37,6 +45,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -48,6 +57,12 @@ BRIDGE_IMAGE = "alpine:latest"
 
 #: seconds allowed per host command / HTTP call.
 DEFAULT_TIMEOUT = 60.0
+
+#: bounded retry: how many times a whole attempt is made, and the base pause
+#: between rounds (linear -- ``backoff``, ``2 * backoff``, ...). Three rounds a
+#: half-second apart absorbs a blip without turning a hard failure into a hang.
+DEFAULT_RETRIES = 3
+DEFAULT_BACKOFF = 0.5
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TESTS_DIR = os.path.join(_REPO_ROOT, "tests")
@@ -67,12 +82,39 @@ class RealTransport:
     """The comm-layer transport protocol, backed by real doors."""
 
     def __init__(self, host_kubeconfig=HOST_KUBECONFIG, bridge_image=BRIDGE_IMAGE,
-                 timeout=DEFAULT_TIMEOUT, runner=None):
+                 timeout=DEFAULT_TIMEOUT, runner=None, retries=DEFAULT_RETRIES,
+                 backoff=DEFAULT_BACKOFF, sleep=None):
         self.host_kubeconfig = host_kubeconfig
         self.bridge_image = bridge_image
         self.timeout = float(timeout)
         #: injectable for tests: runner(argv, timeout) -> stdout
         self.runner = runner or self._subprocess_runner
+        #: bounded retry (see _retry): rounds per door + base backoff seconds
+        self.retries = max(1, int(retries))
+        self.backoff = max(0.0, float(backoff))
+        #: injectable for tests: sleep(seconds) -- keeps the backoff off the clock
+        self._sleep = sleep or time.sleep
+
+    def _retry(self, attempt, label, retries=None, backoff=None):
+        """Run ``attempt()`` with bounded retry and a short backoff.
+
+        The attempt is made up to ``retries`` times; between rounds it sleeps
+        ``backoff``, ``2 * backoff``, ... so a transient failure (a k3s blip, a
+        cold docker daemon, a sidecar still coming up) self-heals instead of
+        sinking the call. The LAST failure is re-raised unchanged, so a final
+        failure keeps the caller's contract.
+        """
+        tries = self.retries if retries is None else max(1, int(retries))
+        pause = self.backoff if backoff is None else max(0.0, float(backoff))
+        last = None
+        for round_no in range(tries):
+            try:
+                return attempt()
+            except Exception as exc:                # transient, or the real thing
+                last = exc
+                if round_no + 1 < tries:
+                    self._sleep(pause * (round_no + 1))
+        raise last
 
     # ------------------------------------------------------------------ host
 
@@ -82,6 +124,10 @@ class RealTransport:
         ``argv`` is the command as a list (what ``comm_tools`` always passes),
         e.g. ``["kubectl", "get", "services", "-n", "default"]``. It is executed
         host-side, with the host kubeconfig exported, through the bridge.
+
+        The reach is retried as a WHOLE: each round walks the whole ladder, and
+        a round that fails everywhere is retried ``retries`` times before
+        ``HostBridgeError`` is raised carrying every attempt made.
         """
         if isinstance(argv, str):
             argv = shlex.split(argv)
@@ -91,12 +137,17 @@ class RealTransport:
         timeout = self.timeout if timeout is None else float(timeout)
 
         attempts = []
-        for cmd in self.bridge_commands(argv):
-            try:
-                return self.runner(cmd, timeout)
-            except Exception as exc:                    # try the next reach
-                attempts.append((cmd, f"{type(exc).__name__}: {exc}"))
-        raise HostBridgeError(argv, attempts)
+
+        def reach_the_host():
+            for cmd in self.bridge_commands(argv):
+                try:
+                    return self.runner(cmd, timeout)
+                except Exception as exc:            # try the next reach
+                    attempts.append((cmd, f"{type(exc).__name__}: {exc}"))
+            # every reach failed this round -> retry the ladder, or give up.
+            raise HostBridgeError(argv, attempts)
+
+        return self._retry(reach_the_host, "host_command")
 
     def bridge_commands(self, argv):
         """The host-reach ladder, most portable first.
@@ -131,21 +182,28 @@ class RealTransport:
 
         Returns the tool result: the JSON object when the tool answers JSON
         (the text content part, parsed), else the plain text.
+
+        Retried as one conversation: a "connection refused" while the sibling's
+        sidecar is still coming up, or a failed ``initialize``, is retried (with
+        a fresh MCP session) before the error is handed back.
         """
         timeout = self.timeout if timeout is None else float(timeout)
-        session = {}
 
-        self._mcp_rpc(url, "initialize", {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "sudo-fleet-comm", "version": "1.0"},
-        }, timeout, session)
-        self._mcp_notify(url, "notifications/initialized", {}, timeout, session)
+        def converse():
+            session = {}
+            self._mcp_rpc(url, "initialize", {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "sudo-fleet-comm", "version": "1.0"},
+            }, timeout, session)
+            self._mcp_notify(url, "notifications/initialized", {}, timeout, session)
 
-        result = self._mcp_rpc(url, "tools/call",
-                               {"name": tool, "arguments": dict(args)},
-                               timeout, session)
-        return _mcp_text_or_obj(result)
+            result = self._mcp_rpc(url, "tools/call",
+                                   {"name": tool, "arguments": dict(args)},
+                                   timeout, session)
+            return _mcp_text_or_obj(result)
+
+        return self._retry(converse, "mcp_call")
 
     def _mcp_post(self, url, payload, timeout, session):
         body = json.dumps(payload).encode("utf-8")
@@ -180,11 +238,19 @@ class RealTransport:
     # ------------------------------------------------------------------ HTTP
 
     def http_get(self, url, timeout=None):
-        """GET a sidecar (e.g. a -watch ``/events?n=N``) and parse its JSON."""
+        """GET a sidecar (e.g. a -watch ``/events?n=N``) and parse its JSON.
+
+        Retried on a transient failure (a connection refused / reset while the
+        sidecar restarts); a final failure raises the urllib/OS error as before.
+        """
         timeout = self.timeout if timeout is None else float(timeout)
-        request = urllib.request.Request(url, headers={"Accept": "application/json"})
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
+
+        def fetch():
+            request = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return response.read().decode("utf-8")
+
+        raw = self._retry(fetch, "http_get")
         try:
             return json.loads(raw)
         except ValueError:

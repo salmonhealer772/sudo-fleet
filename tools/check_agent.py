@@ -32,15 +32,25 @@ ENTIRE file with no depth cap; omitted = the default depth of 100.
 
 The sibling is resolved live against the cluster (`kubectl get services -n
 default` on the HOST), so a spawned sibling appears and a removed one drops off
-with nothing baked in. Two cluster facts the live backend absorbs:
+with nothing baked in. Three live-cluster facts the backend absorbs:
 
   * `sudo-<name>-watch` does NOT resolve from inside an agent pod (no cluster
     DNS for the service names), so the live ClusterIP is read from the roster
-    and GET directly -- see AddressBookTransport.
+    and GET directly -- see AddressBookTransport (which never caches an empty
+    address, expires what it does cache, and re-resolves when the Service is
+    recreated).
   * a sibling's `kind` (Letta planner vs Hermes engineer) is learned from its
     Deployment's `app` label (sudo-letta | sudo-agent), because the two kinds
     keep their transcript at different paths on the shared data volume -- see
     LiveFleet / _read_transcript.
+  * a `-watch` sidecar that answers WITHOUT one valid event (a 503 page, an HTML
+    error, a proxy in front of a dead port) is reported as "appears down"
+    (SidecarDown) rather than rendered as a pile of raw pseudo-events -- see
+    sidecar_is_down / require_live_sidecar -- and one that cannot be reached at
+    all (refused / reset) is reported as "appears down" too, with no traceback.
+
+Transient failures (bridge or HTTP) are retried by ``real_transport`` before
+this tool sees an error, so a k3s blip or a sidecar still coming up self-heals.
 """
 
 from __future__ import annotations
@@ -49,6 +59,8 @@ import argparse
 import json
 import os
 import sys
+import time
+import urllib.error
 from urllib.parse import urlsplit, urlunsplit
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -80,6 +92,12 @@ APP_KINDS = {"sudo-agent": HERMES, "sudo-letta": LETTA}
 
 N_WHOLE_FILE = -1
 
+#: how long a resolved ClusterIP is trusted before the address book asks the
+#: cluster again. A recreated Service gets a NEW ClusterIP, so an address cached
+#: for the life of the process is a live endpoint for as long as the service
+#: lives and a DEAD one forever after it is recreated.
+CLUSTER_IP_TTL = 30.0
+
 
 class TranscriptUnreadable(RuntimeError):
     """A sibling's transcript file could not be read through the host bridge."""
@@ -91,19 +109,62 @@ class TranscriptUnreadable(RuntimeError):
         super().__init__(f"could not read the transcript of {sibling}: {detail}")
 
 
+class SidecarDown(RuntimeError):
+    """A sibling's -watch sidecar answered HTTP, but with no valid event.
+
+    Distinct from its two neighbours: `HostBridgeError` means the cluster could
+    not be reached at all, and an EMPTY trail means a live sidecar with nothing
+    to report. This is the in-between -- something answered (a 503 page, an HTML
+    error, a 404 from a proxy in front of a dead port, a truncated stream) but
+    not one line of the ndjson event schema came back, so there is no trail to
+    report.
+    """
+
+    def __init__(self, sibling, invalid, status=None):
+        self.sibling = sibling
+        self.status = status
+        self.invalid = [str(item) for item in invalid]
+        lines = len(self.invalid)
+        first = _clip(_one_line(self.invalid[0]), 120) if self.invalid else ""
+        where = f"HTTP {status}: " if status else ""
+        detail = (f"{where}{lines} non-JSON line{'s' if lines != 1 else ''}"
+                  if lines else f"{where}empty body")
+        super().__init__(
+            f"{sibling}: the -watch sidecar returned no valid events "
+            f"({detail}); it appears down." + (f" first line: {first!r}"
+                                               if first else ""))
+
+
 class AddressBookTransport(RealTransport):
     """RealTransport + live service-name -> ClusterIP resolution for http_get.
 
     An agent pod cannot resolve `sudo-<name>-watch` (the service names are not
     in the pod's DNS), so a GET by name dies with "Name or service not known".
     The ClusterIP is read from `kubectl get service <name> -n default` over the
-    same host bridge the roster uses, cached, and the GET is issued against it.
+    same host bridge the roster uses, and the GET is issued against it.
     If the lookup fails, the given URL is used as-is (so a caller that really
     does have DNS still works).
+
+    The address book is a CACHE, never the truth:
+
+      * an EMPTY answer is never cached -- a lookup failure (or a Service with
+        no ClusterIP yet) must not pin ``""`` for the life of the process;
+      * a cached address expires after ``CLUSTER_IP_TTL`` seconds and is then
+        re-resolved, so a recreated Service picks up its new ClusterIP;
+      * if a GET against a cached address fails, the entry is dropped and the
+        address is resolved once more before falling back to the name -- the
+        address book was a lie;
+      * if the re-resolve fails while a not-yet-expired -- or stale-but-known --
+        address is on the books, the known address is still used: a bridge blip
+        must not lose a working endpoint.
     """
 
+    #: seconds a resolved ClusterIP is trusted (see the class docstring).
+    CLUSTER_IP_TTL = CLUSTER_IP_TTL
+
     def __init__(self, host_kubeconfig=None, bridge_image=None, timeout=None,
-                 runner=None):
+                 runner=None, retries=None, backoff=None, sleep=None,
+                 cluster_ip_ttl=None, now=None):
         kwargs = {}
         if host_kubeconfig is not None:
             kwargs["host_kubeconfig"] = host_kubeconfig
@@ -113,7 +174,18 @@ class AddressBookTransport(RealTransport):
             kwargs["timeout"] = timeout
         if runner is not None:
             kwargs["runner"] = runner
+        if retries is not None:
+            kwargs["retries"] = retries
+        if backoff is not None:
+            kwargs["backoff"] = backoff
+        if sleep is not None:
+            kwargs["sleep"] = sleep
         super().__init__(**kwargs)
+        ttl = self.CLUSTER_IP_TTL if cluster_ip_ttl is None else cluster_ip_ttl
+        self.cluster_ip_ttl = max(0.0, float(ttl))
+        #: injectable for tests: now() -> monotonic seconds
+        self._now = now or time.monotonic
+        #: service name -> (cluster_ip, resolved_at); never holds an empty ip
         self._cluster_ips = {}
 
     def http_get(self, url, timeout=None):
@@ -123,7 +195,17 @@ class AddressBookTransport(RealTransport):
         try:
             return super().http_get(target, timeout)
         except Exception:
-            # the address book was a lie -- fall back to the name as given.
+            # the address book was a lie -- drop it and resolve once more.
+            service = _service_name(url)
+            if service:
+                self._cluster_ips.pop(service, None)
+            retarget = self._resolve_url(url)
+            if retarget not in (target, url):
+                try:
+                    return super().http_get(retarget, timeout)
+                except Exception:
+                    pass
+            # last resort: the name as given (a caller with real DNS works)
             return super().http_get(url, timeout)
 
     def _resolve_url(self, url):
@@ -139,8 +221,16 @@ class AddressBookTransport(RealTransport):
                            parts.fragment))
 
     def _cluster_ip(self, service):
-        if service in self._cluster_ips:
-            return self._cluster_ips[service]
+        """The service's ClusterIP: cached while fresh, re-resolved when stale.
+
+        Never remembers an empty answer (that is what made a dead endpoint
+        permanent), but does keep serving a known address if the re-resolve
+        itself fails.
+        """
+        cached = self._cluster_ips.get(service)
+        if cached and cached[0] and (self._now() - cached[1]) <= self.cluster_ip_ttl:
+            return cached[0]
+        known = cached[0] if cached else ""
         address = ""
         try:
             stdout = self.host_command(
@@ -149,8 +239,21 @@ class AddressBookTransport(RealTransport):
             address = (stdout or "").strip()
         except Exception:
             address = ""
-        self._cluster_ips[service] = address
-        return address
+        if address:
+            self._cluster_ips[service] = (address, self._now())
+            return address
+        if known:
+            return known                        # a blip must not lose the reach
+        self._cluster_ips.pop(service, None)    # NEVER cache an empty answer
+        return ""
+
+
+def _service_name(url):
+    """The service host in ``url``, or "" when it is already an IP."""
+    host = urlsplit(url).netloc.partition(":")[0]
+    if not host or _is_ip(host):
+        return ""
+    return host
 
 
 def _is_ip(host):
@@ -218,15 +321,40 @@ def check_agent_live(sibling, n=None, mode="full", *, fleet=None):
     Same interface and same return shape as `comm_tools.check_agent`:
 
       full        the reference call, over RealTransport.http_get
-                  (the `-watch` sidecar's /events?n=N)
+                  (the `-watch` sidecar's /events?n=N). A payload with no valid
+                  event at all -- including the body of an HTTP error status (a
+                  503 page, a 404 from a proxy in front of a dead port) --
+                  raises SidecarDown ("it appears down") instead of coming back
+                  as a pile of raw pseudo-events.
       compressed  the same `kubectl exec ... -c watch -- tail/cat` read the
                   contract pins, against the kind-correct transcript path
     """
     fleet = live_fleet() if fleet is None else fleet
     if mode != "compressed":
-        return check_agent(sibling, n, mode, fleet=fleet)
+        try:
+            trail = check_agent(sibling, n, mode, fleet=fleet)
+        except urllib.error.HTTPError as exc:
+            # the door answered WITH AN ERROR STATUS: a 503/404 page is just a
+            # payload that is not ndjson, so read it and judge it like any other.
+            trail = _http_error_payload(exc)
+            if any(isinstance(item, dict) for item in _payload_items(trail)):
+                return trail            # an error status carrying real events
+            raise SidecarDown(sibling, invalid_lines(trail),
+                              status=exc.code) from exc
+        return require_live_sidecar(sibling, trail)
     entry = fleet.resolve(sibling)
     return _read_transcript(entry, n, fleet)
+
+
+def _http_error_payload(exc):
+    """An HTTP error response's body, as payload lines (may be empty)."""
+    try:
+        body = exc.read()
+    except Exception:
+        return []
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", "replace")
+    return str(body or "").splitlines()
 
 
 def _read_transcript(entry, n, fleet):
@@ -256,7 +384,61 @@ def _read_transcript(entry, n, fleet):
     raise TranscriptUnreadable(entry["sibling"], attempts)
 
 
-# --- rendering --------------------------------------------------------------
+# --- the raw payload: valid events vs a dead sidecar ------------------------
+
+def _payload_items(entries):
+    """Every usable item of a -watch payload, in stream order.
+
+    The real sidecar streams `application/x-ndjson` (one JSON object per line),
+    which RealTransport.http_get hands back as a list of LINES; the in-memory
+    fake in the tests hands back dicts directly. A JSON array is flattened to
+    its dict members. A line that is not JSON at all is kept as a stripped str,
+    so the caller can tell trailing noise from a dead sidecar.
+    """
+    items = []
+    for item in entries or []:
+        if isinstance(item, dict):
+            items.append(item)
+            continue
+        text = str(item).strip()
+        if not text:
+            continue
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            items.append(text)
+            continue
+        if isinstance(parsed, dict):
+            items.append(parsed)
+        elif isinstance(parsed, list):
+            items.extend(e for e in parsed if isinstance(e, dict))
+    return items
+
+
+def invalid_lines(entries):
+    """The payload's non-event lines, in stream order."""
+    return [item for item in _payload_items(entries) if not isinstance(item, dict)]
+
+
+def sidecar_is_down(entries):
+    """True when the payload carried content but not ONE valid event record.
+
+    A down / non-ndjson sidecar (a 503 page, an HTML error, a truncated stream)
+    must not be rendered as a pile of `{"event": "raw"}` pseudo-events that
+    looks like a real trail. A genuinely MIXED stream -- valid ndjson with a
+    stray trailing line -- is NOT down: it keeps its events, and the stray line
+    stays visible as `raw`.
+    """
+    items = _payload_items(entries)
+    return bool(items) and not any(isinstance(item, dict) for item in items)
+
+
+def require_live_sidecar(sibling, entries):
+    """Refuse a -watch payload that carries no valid event at all."""
+    if sidecar_is_down(entries):
+        raise SidecarDown(sibling, invalid_lines(entries))
+    return entries
+
 
 def normalize_events(entries):
     """Reduce the -watch payload to the contract's typed event records.
@@ -265,27 +447,19 @@ def normalize_events(entries):
     which RealTransport.http_get hands back as a list of LINES; the in-memory
     fake in the tests hands back dicts directly. Both shapes come out of here as
     the `{ts, conversation, event, ...}` records docs/check-agent-CONTRACT.md
-    describes.
+    describes. A stray non-JSON line in an otherwise-valid stream is kept as a
+    `{"event": "raw"}` record so nothing is silently dropped.
     """
     events = []
-    for item in entries or []:
+    for item in _payload_items(entries):
         if isinstance(item, dict):
             events.append(item)
-            continue
-        text = str(item).strip()
-        if not text:
-            continue
-        try:
-            parsed = json.loads(text)
-        except ValueError:
-            events.append({"event": "raw", "text": text})
-            continue
-        if isinstance(parsed, dict):
-            events.append(parsed)
-        elif isinstance(parsed, list):
-            events.extend(e for e in parsed if isinstance(e, dict))
+        else:
+            events.append({"event": "raw", "text": item})
     return events
 
+
+# --- rendering --------------------------------------------------------------
 
 def render_trail(sibling, events, n=None):
     """One line per event: time, kind, conversation, and the gist of it."""
@@ -293,11 +467,32 @@ def render_trail(sibling, events, n=None):
                                                         else f"n={DEFAULT_DEPTH}")
     lines = [f"# {sibling}: {len(events)} event"
              f"{'s' if len(events) != 1 else ''} (mode=full, {depth})"]
+    if not events:
+        lines.append("  (no events: the trail is empty at this depth -- the "
+                     "sibling has not recorded anything yet)")
     for event in events:
         lines.append(f"[{_clock(event.get('ts'))}] {_kind(event):<13} "
                      f"{_clip(str(event.get('conversation', '-')), 30):<30} "
                      f"{_gist(event)}")
     return "\n".join(lines)
+
+
+def render_transcript(sibling, lines, n=None):
+    """The plain chat read: the same header shape, and the same kind of
+    empty-trail note full mode gives -- an agent that has never spoken must be
+    visible, never silently blank."""
+    lines = list(lines or [])
+    head = [f"# {sibling}: {len(lines)} transcript line"
+            f"{'s' if len(lines) != 1 else ''} (mode=compressed, "
+            f"n={_depth_label(n)})"]
+    if not lines:
+        head.append("  (no transcript: the trail is empty -- the sibling has "
+                    "not spoken yet)")
+    elif not any(str(line).strip() for line in lines):
+        head.append("  (transcript present but blank -- no spoken lines)")
+    else:
+        head.extend(lines)
+    return "\n".join(head)
 
 
 def _kind(event):
@@ -351,9 +546,17 @@ def _transcript_command(sibling, n):
             f"{depth} <transcript>")
 
 
+def _sidecar_error_payload(sibling, mode, code, message, **extra):
+    """The machine-readable shape a --json caller gets when a sidecar is down."""
+    payload = {"sibling": sibling, "mode": mode, "error": code,
+               "message": message}
+    payload.update(extra)
+    return payload
+
+
 # --- cli --------------------------------------------------------------------
 
-def main(argv=None):
+def main(argv=None, fleet_factory=None):
     parser = argparse.ArgumentParser(
         description="Read a sibling agent's trail -- the full event stream "
                     "(default) or the compressed chat transcript.")
@@ -378,10 +581,20 @@ def main(argv=None):
               f"file); got {args.n}", file=sys.stderr)
         return 2
 
-    transport = AddressBookTransport(**({} if args.timeout is None
-                                        else {"timeout": args.timeout}))
+    # `fleet_factory` is the test seam: tests inject a fake fleet, production
+    # builds the real AddressBookTransport-backed one.
+    if fleet_factory is None:
+        transport = AddressBookTransport(**({} if args.timeout is None
+                                            else {"timeout": args.timeout}))
+        fleet = live_fleet(transport=transport)
+    else:
+        fleet = fleet_factory()
+        transport = getattr(fleet, "transport", None)
 
     if args.show_command:
+        if transport is None:
+            transport = AddressBookTransport(**({} if args.timeout is None
+                                                else {"timeout": args.timeout}))
         for command in transport.bridge_commands(
                 ["kubectl", "get", "services", "-n", "default"]):
             print(shlex.join(command))
@@ -393,7 +606,6 @@ def main(argv=None):
         print(f"compressed:   <bridge> {_transcript_command(args.sibling, args.n)}")
         return 0
 
-    fleet = live_fleet(transport=transport)
     try:
         trail = check_agent_live(args.sibling, args.n, args.mode, fleet=fleet)
     except SiblingNotFound as exc:
@@ -402,8 +614,29 @@ def main(argv=None):
     except AmbiguousSibling as exc:
         print(f"check-agent: {exc}", file=sys.stderr)
         return 1
+    except SidecarDown as exc:
+        if args.json:
+            extra = {"raw_lines": len(exc.invalid),
+                     "sample": exc.invalid[0] if exc.invalid else ""}
+            if exc.status is not None:
+                extra["http_status"] = exc.status
+            print(json.dumps(_sidecar_error_payload(
+                args.sibling, args.mode, "sidecar_down", str(exc), **extra),
+                indent=2))
+        print(f"check-agent: {exc}", file=sys.stderr)
+        return 1
     except HostBridgeError as exc:
         print(f"check-agent: could not reach the host: {exc}", file=sys.stderr)
+        return 1
+    except (urllib.error.URLError, OSError) as exc:
+        # the sidecar's door answered nothing at all: refused, reset, timed out
+        message = (f"{args.sibling}: the -watch sidecar could not be reached -- "
+                   f"it appears down: {exc}")
+        if args.json:
+            print(json.dumps(_sidecar_error_payload(
+                args.sibling, args.mode, "sidecar_unreachable", message),
+                indent=2))
+        print(f"check-agent: {message}", file=sys.stderr)
         return 1
     except TranscriptUnreadable as exc:
         print(f"check-agent: {exc}", file=sys.stderr)
@@ -411,13 +644,13 @@ def main(argv=None):
 
     if args.mode == "compressed":
         lines = list(trail)
+        if not any(str(line).strip() for line in lines):
+            print(f"check-agent: {args.sibling}: no transcript -- the trail is "
+                  f"empty (the sibling has not spoken yet).", file=sys.stderr)
         if args.json:
             print(json.dumps(lines, indent=2))
             return 0
-        print(f"# {args.sibling}: {len(lines)} transcript line"
-              f"{'s' if len(lines) != 1 else ''} (mode=compressed, "
-              f"n={_depth_label(args.n)})")
-        print("\n".join(lines))
+        print(render_transcript(args.sibling, lines, args.n))
         return 0
 
     events = normalize_events(trail)
