@@ -74,13 +74,23 @@ if ! is_root; then
   echo "→ Warming up sudo (you may be prompted once for your password)..."
   # Prime sudo non-interactively FIRST: succeeds when credentials are already
   # cached (passwordless sudo, or a recent sudo) without hanging on a hidden
-  # prompt. Only fall back to an interactive prompt when stdin is a real TTY;
-  # otherwise fail LOUD with the right command instead of dying cryptically.
+  # prompt. Only fall back to an interactive prompt (real TTY) or a password
+  # read from stdin (-S) when there is no cached credential; never hang.
   if ! sudo -n -v 2>/dev/null; then
     if [[ -t 0 ]]; then
       sudo -v || die "sudo authentication failed — this script needs sudo to install docker/k3s"
     else
-      die "sudo needs a password but there is no TTY and no cached credential. Run this script in a terminal (so sudo can prompt you), pre-authenticate with 'sudo -v', or run as root."
+      # No TTY + no cached credential: consume ONE line of stdin as the sudo
+      # password (so a piped / agent / CI run can still authenticate), then feed
+      # it to sudo -S. The remaining lines of stdin are the key prompts below.
+      IFS= read -r _SUDO_PW || true
+      if [[ -n "${_SUDO_PW:-}" ]]; then
+        printf '%s\n' "$_SUDO_PW" | sudo -S -v 2>/dev/null \
+          || die "sudo authentication failed (wrong password) — this script needs sudo to install docker/k3s"
+      else
+        die "sudo needs a password but none arrived on stdin (no TTY, no cached credential). Run in a terminal, pre-authenticate with 'sudo -v', or pipe the password as the first line of stdin."
+      fi
+      unset _SUDO_PW
     fi
   fi
   # Keep the sudo timestamp alive for the whole run: long docker/k3s installs +
