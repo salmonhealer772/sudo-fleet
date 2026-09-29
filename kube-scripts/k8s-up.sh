@@ -61,15 +61,23 @@ unset _wk
 # Re-seed the factory .env files so the `sudo bash up.sh` calls (sudo strips the
 # wrapper's exported env) still find their credentials. Idempotent.
 $SUDO mkdir -p "$LETTA_REPO/.sudo-letta"
+# Build the pre-seed .env in a user-owned temp file (never pipe into sudo, so
+# no hidden sudo prompt), then install it into place under sudo. The trailing
+# `|| true` keeps the group at exit 0 so `set -euo pipefail` cannot kill this
+# script when an optional key (e.g. PERPLEXITY_API_KEY) is unset.
+_env_tmp="$(mktemp)"
 {
   printf 'LLM_PROVIDER=%s\n' "$LLM_PROVIDER"
   printf 'API_KEY=%s\n' "$API_KEY"
   [[ -n "${LLM_BASE_URL:-}" ]] && printf 'LLM_BASE_URL=%s\n' "$LLM_BASE_URL"
   for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
-    [[ -n "${!_wk:-}" ]] && printf '%s=%s\n' "$_wk" "${!_wk}"
+    [[ -n "${!_wk:-}" ]] && printf '%s=%s\n' "$_wk" "${!_wk}" || true
   done
-} | $SUDO tee "$LETTA_REPO/.sudo-letta/.env" >/dev/null
+} > "$_env_tmp"
 unset _wk
+$SUDO install -m 600 "$_env_tmp" "$LETTA_REPO/.sudo-letta/.env" \
+  || { rm -f "$_env_tmp"; die "could not write $LETTA_REPO/.sudo-letta/.env"; }
+rm -f "$_env_tmp"
 # sudo-agent up.sh reads DEEPSEEK_API_KEY from $AGENT_REPO/.env (or env or prompt).
 # Upsert the key without clobbering a SUDO_PASSWORD line up.sh may have written.
 if $SUDO test -f "$AGENT_REPO/.env" && $SUDO grep -q '^DEEPSEEK_API_KEY=' "$AGENT_REPO/.env" 2>/dev/null; then

@@ -40,6 +40,23 @@ step() { echo ""; echo "── $* ──"; }
 ok()   { echo "✓ $*"; }
 warn() { echo "⚠ $*" >&2; }
 
+# _retry N "description" cmd [args...] — run cmd up to N times with backoff.
+# Returns 0 on the first success, 1 after N failures (caller decides to die).
+# Makes network/build steps survive transient failures instead of dying once.
+_retry() {
+  local n="$1" desc="$2"; shift 2
+  local i=1
+  while (( i <= n )); do
+    if "$@"; then
+      return 0
+    fi
+    warn "($desc) attempt $i/$n failed — retrying in ${i}s..."
+    sleep "$i"
+    (( i++ ))
+  done
+  return 1
+}
+
 # Read one full line from stdin and echo it back. tty-agnostic: no -s, no
 # /dev/tty, no echo suppression — so typed input is ALWAYS accepted. The keys
 # land in a chmod-600 file, so plain echo is safe and reliable.
@@ -162,9 +179,16 @@ ok "API keys validated + exported"
 
 # --- 2. Docker ------------------------------------------------------------------
 step "2/6 Bootstrap: Docker"
+_bootstrap_docker() {
+  curl -fsSL https://get.docker.com | $SUDO sh
+}
 if ! command -v docker >/dev/null 2>&1; then
   echo "→ installing Docker..."
-  curl -fsSL https://get.docker.com | $SUDO sh || die "Docker install failed"
+  if ! _retry 3 "docker install (get.docker.com)" _bootstrap_docker; then
+    warn "get.docker.com failed 3x — falling back to apt install docker.io..."
+    _retry 3 "docker install (apt)" $SUDO apt-get install -y -qq docker.io \
+      || die "Docker install failed (both get.docker.com and apt)"
+  fi
 else
   ok "docker binary present"
 fi
@@ -188,9 +212,33 @@ ok "Docker ready"
 # --- 3. k3s ---------------------------------------------------------------------
 step "3/6 Bootstrap: k3s (single node)"
 KUBECONFIG_PATH="/etc/rancher/k3s/k3s.yaml"
+_bootstrap_k3s() {
+  curl -sfL https://get.k3s.io | $SUDO sh -
+}
+# Direct-binary fallback: download the release binary and run `k3s server` from
+# it, mirroring get.k3s.io closely enough to recover from a blocked installer.
+_install_k3s_binary() {
+  local arch; arch="$(uname -m)"
+  case "$arch" in
+    x86_64|amd64)  arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+  esac
+  curl -sfL "https://github.com/k3s-io/k3s/releases/latest/download/k3s" -o /tmp/k3s \
+    && $SUDO install -m 755 /tmp/k3s /usr/local/bin/k3s
+}
 if [[ ! -f "$KUBECONFIG_PATH" ]]; then
   echo "→ installing k3s..."
-  curl -sfL https://get.k3s.io | $SUDO sh - || die "k3s install failed"
+  if ! _retry 3 "k3s install (get.k3s.io)" _bootstrap_k3s; then
+    warn "get.k3s.io failed 3x — falling back to direct binary download..."
+    _retry 3 "k3s install (direct binary)" _install_k3s_binary \
+      || die "k3s install failed (both get.k3s.io and direct binary)"
+    $SUDO /usr/local/bin/k3s server --write-kubeconfig-mode 644 >/tmp/k3s-server.log 2>&1 &
+    # Wait for the direct-binary server to write its kubeconfig.
+    for _i in $(seq 1 30); do
+      [[ -f "$KUBECONFIG_PATH" ]] && break
+      sleep 2
+    done
+  fi
 fi
 [[ -f "$KUBECONFIG_PATH" ]] || die "k3s kubeconfig missing at $KUBECONFIG_PATH"
 $SUDO chmod 644 "$KUBECONFIG_PATH" 2>/dev/null || warn "could not chmod $KUBECONFIG_PATH (continuing)"
@@ -202,15 +250,19 @@ ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | pa
 # --- 4. Repos (nested clones inside $FLEET_HOME) -------------------------------
 step "4/6 Repos (nested inside $FLEET_HOME)"
 $SUDO mkdir -p "$FLEET_HOME"
+_git_pull() {
+  local dir="$1" url="$2"
+  (cd "$dir" && $SUDO git remote set-url origin "$url" && $SUDO git pull --ff-only)
+}
 _clone_or_pull() {
   local url="$1" dir="$2"
   export GIT_TERMINAL_PROMPT=0
   if [[ -d "$dir/.git" ]]; then
     echo "→ $dir exists — git pull"
-    (cd "$dir" && $SUDO git remote set-url origin "$url" && $SUDO git pull --ff-only) || die "git pull failed in $dir"
+    _retry 3 "git pull $dir" _git_pull "$dir" "$url" || die "git pull failed in $dir"
   else
     echo "→ cloning $url"
-    $SUDO git clone "$url" "$dir" || die "git clone failed: $url"
+    _retry 3 "git clone $dir" $SUDO git clone "$url" "$dir" || die "git clone failed: $url"
   fi
 }
 _clone_or_pull "$GH/sudo-agent.git" "$AGENT_REPO"
@@ -226,15 +278,23 @@ ok "factory repos nested under $FLEET_HOME"
 # holding a non-empty `API_KEY=`. Pre-seeding that file skips the prompts.
 step "5/6 Non-interactive env-var bridge"
 $SUDO mkdir -p "$LETTA_REPO/.sudo-letta"
+# Build the pre-seed .env in a user-owned temp file (never pipe into sudo, so
+# no hidden sudo prompt), then install it into place under sudo. The trailing
+# `|| true` keeps the group at exit 0 so `set -euo pipefail` cannot kill this
+# script when an optional key (e.g. PERPLEXITY_API_KEY) is unset.
+_env_tmp="$(mktemp)"
 {
   printf 'LLM_PROVIDER=%s\n' "$LLM_PROVIDER"
   printf 'API_KEY=%s\n' "$API_KEY"
   [[ -n "${LLM_BASE_URL:-}" ]] && printf 'LLM_BASE_URL=%s\n' "$LLM_BASE_URL"
   for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
-    [[ -n "${!_wk:-}" ]] && printf '%s=%s\n' "$_wk" "${!_wk}"
+    [[ -n "${!_wk:-}" ]] && printf '%s=%s\n' "$_wk" "${!_wk}" || true
   done
-} | $SUDO tee "$LETTA_REPO/.sudo-letta/.env" >/dev/null
+} > "$_env_tmp"
 unset _wk
+$SUDO install -m 600 "$_env_tmp" "$LETTA_REPO/.sudo-letta/.env" \
+  || { rm -f "$_env_tmp"; die "could not write $LETTA_REPO/.sudo-letta/.env"; }
+rm -f "$_env_tmp"
 ok "pre-seeded $LETTA_REPO/.sudo-letta/.env (skips letta prompts)"
 
 # --- 6. Build images (factory setup.sh, non-interactive) -----------------------
