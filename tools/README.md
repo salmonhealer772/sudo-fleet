@@ -38,7 +38,40 @@ A tool is **finished** when its backend implements the `comm_tools` interface an
   `-watch` sidecar), so one transport serves all three tools — but only the
   list-siblings path is exercised by `tests/test_list_siblings.py` so far.
 
+- **check-agent** — `tools/check_agent.py` (runnable CLI + `check_agent_live()`),
+  the merged trail read (replaces check-agent-logs AND
+  check-what-agent-is-doing), on the same `real_transport.py` bridge.
+
+  ```sh
+  python3 tools/check_agent.py fa-glm-l                     # last 100 events
+  python3 tools/check_agent.py fa-glm-l --n 10              # the last 10 events
+  python3 tools/check_agent.py fa-glm-l --n -1              # the ENTIRE trail
+  python3 tools/check_agent.py fa-glm-l --mode compressed   # the plain chat log
+  python3 tools/check_agent.py fa-glm-l --json              # machine-readable
+  python3 tools/check_agent.py fa-glm-l --show-command      # the live reach it uses
+  ```
+
+  `full` (default) GETs the sibling's `-watch` `/events?n=N`; `compressed` reads
+  its `transcript.txt` directly over the bridge (`kubectl exec deploy/sudo-<name>
+  -c watch -- tail -n N <path>`, or `cat` for `n=-1`). The sibling name is
+  resolved live against the roster, exactly like list-siblings.
+
+  The live backend absorbs two cluster facts (both documented in the module):
+
+  - `sudo-<name>-watch` does NOT resolve inside an agent pod, so
+    `AddressBookTransport` reads the service's live ClusterIP off the host
+    (`kubectl get service <name> -o jsonpath={.spec.clusterIP}`, cached) and GETs
+    that.
+  - a sibling's `kind` is learned from its Deployment's `app` label
+    (`LiveFleet._kind_of`: `sudo-letta` -> planner, `sudo-agent` -> engineer),
+    because the two kinds keep their transcript at different paths:
+    `/home/node/.letta/watch/transcript.txt` (planner) vs
+    `/opt/data/watch/transcript.txt` (engineer).
+
+  Full mode returns the `-watch` trail; `normalize_events()` reduces the real
+  ndjson stream (a list of JSON lines) and the tests' list-of-dicts fake to the
+  same typed `{ts, conversation, event, ...}` records the contract describes.
+
 ## Still to build
 
 - `message-agent` backend (needs `RealTransport.mcp_call`)
-- `check-agent` backend (needs `RealTransport.http_get` + `host_command`)
