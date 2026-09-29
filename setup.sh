@@ -71,8 +71,25 @@ is_root() { [[ "$(id -u)" -eq 0 ]]; }
 SUDO=""
 if ! is_root; then
   SUDO="sudo"
-  echo "→ Warming up sudo (you may be prompted for your password once)..."
-  $SUDO -v || die "sudo failed — this script needs sudo to install docker/k3s"
+  echo "→ Warming up sudo (you may be prompted once for your password)..."
+  # Prime sudo non-interactively FIRST: succeeds when credentials are already
+  # cached (passwordless sudo, or a recent sudo) without hanging on a hidden
+  # prompt. Only fall back to an interactive prompt when stdin is a real TTY;
+  # otherwise fail LOUD with the right command instead of dying cryptically.
+  if ! sudo -n -v 2>/dev/null; then
+    if [[ -t 0 ]]; then
+      sudo -v || die "sudo authentication failed — this script needs sudo to install docker/k3s"
+    else
+      die "sudo needs a password but there is no TTY and no cached credential. Run this script in a terminal (so sudo can prompt you), pre-authenticate with 'sudo -v', or run as root."
+    fi
+  fi
+  # Keep the sudo timestamp alive for the whole run: long docker/k3s installs +
+  # image builds can outlive sudo's default 15-minute timeout, after which a
+  # later $SUDO call would re-prompt (and fail/hang when stdin is a pipe). Renew
+  # every 60s so the cache never expires mid-run.
+  ( while true; do sudo -n -v 2>/dev/null || break; sleep 60; done ) &
+  SUDO_KEEPALIVE_PID=$!
+  trap '[[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
 fi
 
 # --- 1. API keys — prompt at the gate (BEFORE any build work) ------------------
@@ -268,6 +285,13 @@ _clone_or_pull() {
 }
 _clone_or_pull "$GH/sudo-agent.git" "$AGENT_REPO"
 _clone_or_pull "$GH/sudo-letta.git" "$LETTA_REPO"
+# The nested clones ran under sudo -> they are root-owned. Chown them back to the
+# invoking user so later non-root steps (Command 2, git pulls, edits) don't hit
+# "Permission denied" or git "dubious ownership".
+if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
+  $SUDO chown -R "$TARGET_USER" "$AGENT_REPO" "$LETTA_REPO" 2>/dev/null \
+    || warn "could not chown nested repos to $TARGET_USER"
+fi
 ok "factory repos nested under $FLEET_HOME"
 
 # --- 5. Non-interactive env-var bridge (the exact mechanism) -------------------
