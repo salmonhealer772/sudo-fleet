@@ -5,8 +5,8 @@ These stand in for the real HTTP/MCP doors a tool reaches, with NO sockets:
 - FakeMcpSidecar  -> a sibling's "-mcp" service (records prompt-tool calls,
                      returns canned replies for letta_prompt / hermes_prompt
                      and *_queue_status).
-- FakeWatchSidecar -> a sibling's "-watch" HTTP tap (/status, /ps, /events,
-                     /stream).
+- FakeWatchSidecar -> a sibling's "-watch" HTTP tap (/events?n=N) -- the trail
+                     the merged check-agent tool reads.
 - FakeHostShell   -> the docker-socket + nsenter bridge (kubectl get services
                      for list-siblings, kubectl exec tail/cat for the
                      compressed transcript read).
@@ -100,24 +100,20 @@ class FakeMcpSidecar:
 
 
 class FakeWatchSidecar:
-    """A sibling's -watch HTTP tap: /status, /ps, /events?n=N, /stream."""
+    """A sibling's -watch HTTP tap: /events?n=N (the check-agent trail).
+
+    /status, /ps and /stream are deliberately absent -- the merged check-agent
+    tool has no status/ps/stream surface; the live "what is it doing now"
+    answer falls out of the freshest /events.
+    """
 
     def __init__(self, url):
         self.url = url
         self.requests = []          # list of requested paths (with query), in order
-        self.status = {}
-        self.ps = []
         self.events = []
-        self.stream = []
 
     def get(self, path):
         self.requests.append(path)
-        if path == "/status":
-            return self.status
-        if path == "/ps":
-            return self.ps
-        if path == "/stream":
-            return self.stream
         if path.startswith("/events"):
             return self._events_for(path)
         return None
@@ -170,7 +166,7 @@ class FakeTransport:
 
 
 def event(ts, conversation, kind, **fields):
-    """Build a typed full-mode event record (schema from check-agent-logs)."""
+    """Build a typed full-mode event record (schema from check-agent)."""
     record = {"ts": ts, "conversation": conversation, "event": kind}
     record.update(fields)
     return record

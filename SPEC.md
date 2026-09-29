@@ -6,7 +6,7 @@ The thing is three aspects, in one breath:
 
 1. **Glimors — the transportable agent.** A glimor is one complete save of an agent's setup AND its persistent state, the *entire* agent. This isn't new — you already move agents today via `docker commit`, PVC copies, the fabean snapshot pattern. The work here is **standardizing it**: one name, one format, one `save`/`pull`, so an agent is *reliably* movable instead of ad-hoc.
 
-2. **The social layer — agents see and talk to each other.** This is the genuinely new part. Agents can natively list, message, and check on one another (the four tools + four skills + persona: `list-siblings`, `message-agent`, `check-what-agent-is-doing`, `check-agent-logs`). This is what makes the room *not* just a pile of containers — it's a party.
+2. **The social layer — agents see and talk to each other.** This is the genuinely new part. Agents can natively list, message, and check on one another (the three tools + three skills + persona: `list-siblings`, `message-agent`, `check-agent`). This is what makes the room *not* just a pile of containers — it's a party.
 
 3. **The room itself — a disposable environment.** Stand it up, use it, **destroy it**, stand up a fresh one — and the glimors are already saved, so the party reconstitutes. The room is throwaway *because the agents aren't.* An ephemeral environment with durable people inside it.
 
@@ -25,7 +25,7 @@ The room currently hosts exactly **two kinds of guest**, and relies on the repo 
 When the three aspects are all real, the room is done:
 
 1. **Glimors are real.** Every agent is saved as a complete glimor — setup + persistent state, the *entire* agent — and the save **updates automatically once a save directory is given.** No agent hangs out in memory only; an agent *is* its stored glimor, kept perpetually current. (The steering law.)
-2. **The party talks.** The 4 tools + 4 skills + persona are built and baked into every spawned agent, so a new guest arrives already able to list, message, and check on its siblings — natively, no bridge, no hand-running.
+2. **The party talks.** The 3 tools + 3 skills + persona are built and baked into every spawned agent, so a new guest arrives already able to list, message, and check on its siblings — natively, no bridge, no hand-running.
 3. **The room is disposable.** You can stand up a room (`setup.sh`, reproducible + idempotent), use it, destroy it, and stand up another — and every agent comes back from its glimor. The router pair (psnvc + forge) pull and deploy agents by talking ("spawn X", "spawn N of X"), not by hand-running `up.sh`.
 
 The supporting cast (still required, in service of the three):
@@ -36,7 +36,7 @@ The supporting cast (still required, in service of the three):
 
 This is not a moonshot — it is *"the fleet I already rebuild by hand on kube every time, made good": `setup.sh` + save/pull so the room reproduces clean and fast instead of from memory. Done is small on purpose: you stop rebuilding by hand, and your agents come back talking.
 
-1. **Phase 1 — make the talky tools work.** Build the 4 tools + 4 skills + persona (aspect #2, the social layer) and prove a live pair actually talks on its own. This is the only genuinely-new, ready-to-build part, and the mechanism is ~90% already shipped (`letta mcp call` in the image, `-mcp`/`-watch` sidecars, Redis queue). Done = the four tools built + baked in + a live pair (fa-glm/ya-glm) messages and checks each other *unprompted*, not just invokable by hand.
+1. **Phase 1 — make the talky tools work.** Build the 3 tools + 3 skills + persona (aspect #2, the social layer) and prove a live pair actually talks on its own. This is the only genuinely-new, ready-to-build part, and the mechanism is ~90% already shipped (`letta mcp call` in the image, `-mcp`/`-watch` sidecars, Redis queue). Done = the three tools built + baked in + a live pair (fa-glm/ya-glm) messages and checks each other *unprompted*, not just invokable by hand.
 
 2. **Phase 2 — get glimors working well.** Save/pull/fork solidly (aspect #1, the transportable agent). This is the steering law — "agents are STORED, never memory-only" — and everything downstream (disposable room, forking N) assumes it. Done = save an agent on box A, destroy the room, stand up a fresh room on box B, pull, and the *same agent* returns mid-conversation and immediately messages its siblings.
 
@@ -173,10 +173,9 @@ The sidecars are the substrate; what we build is the **agent-facing layer that m
 | Surface | Tool (mechanism) | Skill (procedure) |
 |---|---|---|
 | **message-agent** | call a sibling's `-mcp` to send it a prompt / invoke a tool | the reach-and-message recipe (no-timeout, naming, quoting) |
-| **check-what-agent-is-doing** | read a sibling's live `-watch` stream (current turn / activity) | the "what is X doing right now" recipe |
-| **check-agent-logs** | tail a sibling's event/transcript history | the "read X's recent trail" recipe |
+| **check-agent** | read a sibling's trail at any depth — `GET ...-watch/events?n=N` or the compressed `transcript.txt` (`n=-1` = the whole file). ONE merged tool, replacing the separate check-what-agent-is-doing + check-agent-logs | the "what is X doing right now / read X's trail" recipe |
 
-**`message-agent` is BY FAR the most important** — it's the mesh's whole point; the two check tools are the observability that makes messaging safe.
+**`message-agent` is BY FAR the most important** — it's the mesh's whole point; check-agent is the observability that makes messaging safe.
 
 **Persona alignment (the third layer, mandatory):** every agent's persona is **tweaked to teach it that this functionality exists and when to use it** — so "all levels align": tool (mechanism) + skill (procedure) + persona (awareness/intent). A tool without persona awareness gets ignored (the psy-glm lesson); a persona that names the tools makes the agent actually reach for them. This is the difference between "the capability is in the plumbing" and "the agent uses it."
 
@@ -192,17 +191,14 @@ Each tool takes a sibling agent as target and does one thing. Contracts (backend
 - Sessions: planner sibling = stateful (resumes unless `new_chat`); engineer sibling = stateless one-shot.
 - Must be no-timeout (long jobs don't get cut — the `HERMES_STREAM_*_TIMEOUT=inf` lesson).
 
-**2. `check-what-agent-is-doing`**
-- Input: `sibling`.
-- Behavior: `GET http://sudo-{sibling}-watch:8000/status` → return `{active, current_conversation, last_event_ts, events_logged, uptime_s}` (is it alive + mid-run?).
-
-**3. `check-agent-logs`**
-- Input: `sibling`, optional `n` (last N events).
-- Behavior: `GET http://sudo-{sibling}-watch:8000/events?n=N` (or `/stream` for live tail) → return the trailing event trail.
+**2. `check-agent`** (the merged observability tool — replaces the separate check-what-agent-is-doing + check-agent-logs)
+- Input: `sibling`, optional `n` (trailing depth; `-1` = the whole file), optional `mode` (`full` = raw event trail, `compressed` = plain chat transcript).
+- Behavior: `mode=full` → `GET http://sudo-{sibling}-watch:8000/events?n=N` → the trailing event trail; `mode=compressed` → read the sibling's `transcript.txt` directly (`kubectl exec ... tail -n N`, or `cat` for `n=-1`). ONE read answers both "what has it been doing" and "what is it doing right now" (the freshest events carry the current conversation + the latest `process_state`).
+- Retired: the separate `GET /status` and `GET /ps` surface of check-what-agent-is-doing — the what-is-it-doing answer falls out of the trail.
 
 ### The skills — procedure (same three, written as Letta skills)
 
-Each tool has a matching skill documenting *when + how* to use it (the reach syntax, naming, quoting, which route maps to which intent). Pattern = the existing `reaching-my-engineer` skill, generalized to `reaching-any-sibling`. Skills live in the agent's MemFS `skills/` dir: `message-agent`, `check-what-agent-is-doing`, `check-agent-logs`.
+Each tool has a matching skill documenting *when + how* to use it (the reach syntax, naming, quoting, which route maps to which intent). Pattern = the existing `reaching-my-engineer` skill, generalized to `reaching-any-sibling`. Skills live in the agent's MemFS `skills/` dir: `message-agent`, `check-agent`.
 
 ### The persona layer — awareness (the alignment that makes them USE it)
 

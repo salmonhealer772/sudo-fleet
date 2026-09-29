@@ -8,15 +8,14 @@ Feature: The persona snippet makes agents aware of fleet communication
     Given an existing agent persona
     When the "Fleet communication" snippet is added to it
     Then the agent's existing identity remains intact
-    And the agent now knows about "list-siblings", "message-agent", "check-what-agent-is-doing", and "check-agent-logs"
+    And the agent now knows about "list-siblings", "message-agent", and "check-agent"
 
-  Scenario: Snippet names the four tools and their purpose
+  Scenario: Snippet names the three tools and their purpose
     Given an agent whose persona includes the snippet
     When the agent reads the snippet
     Then it learns "list-siblings" shows who else is in the fleet and how to reach them
     And "message-agent" sends a prompt to a sibling by name and returns its reply
-    And "check-what-agent-is-doing" reports whether a sibling is alive or mid-run
-    And "check-agent-logs" reads a sibling's recent event trail or live tail
+    And "check-agent" reads a sibling's trail — reporting both what it is doing right now (freshest events) and its recent history
 
   Scenario: Snippet teaches list-before-message
     Given an agent whose persona includes the snippet

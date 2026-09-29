@@ -178,39 +178,45 @@ class Distributor:
             del by[source]
 
 
-# --- check-what-agent-is-doing ---------------------------------------------
+# --- check-agent (merged: trail read + "what is it doing now") -------------
 
-def check_what_agent_is_doing(sibling, facet="status", *, fleet):
+DEFAULT_DEPTH = 100
+
+
+def check_agent(sibling, n=None, mode="full", *, fleet):
+    """Read a sibling's trail -- the ONE read that answers both "what has it
+    been doing" and "what is it doing right now" (from the freshest entries).
+
+    Merged tool: replaces the former check_agent_logs + check_what_agent_is_doing.
+    There is no /status or /ps read any more -- the live answer falls out of the
+    newest trail entries (current conversation + latest process_state).
+
+    mode="full"       -> GET http://sudo-{sibling}-watch:8000/events?n=N: every
+                         event (user/thinking/assistant/tool_call/tool_result/
+                         session/process_state) -- the raw, unabridged trail.
+    mode="compressed" -> read the sibling's transcript.txt file directly (the
+                         same read `stream.sh -t` does): plain chat only.
+
+    n: trailing depth, identical in both modes. None -> DEFAULT_DEPTH (100);
+    k>0 -> the last k; -1 -> the ENTIRE file, no depth cap (same semantics on
+    Letta planners and Hermes engineers).
+    """
     entry = fleet.resolve(sibling)
-    base = f"http://{entry['watch_host']}"
-    if facet == "processes":
-        return fleet.transport.http_get(base + "/ps")
-    return fleet.transport.http_get(base + "/status")
-
-
-# --- check-agent-logs ------------------------------------------------------
-
-def check_agent_logs(sibling, mode="full", n=None, stream=False, *, fleet):
-    entry = fleet.resolve(sibling)
-    base = f"http://{entry['watch_host']}"
     if mode == "compressed":
         return _compressed_logs(entry, n, fleet)
-    if stream:
-        return fleet.transport.http_get(base + "/stream")
-    if n is None:
-        path = "/events"
-    else:
-        path = f"/events?n={n}"
+    base = f"http://{entry['watch_host']}"
+    path = "/events" if n is None else f"/events?n={n}"
     return fleet.transport.http_get(base + path)
 
 
 def _compressed_logs(entry, n, fleet):
     path = HERMES_TRANSCRIPT_PATH if entry["kind"] == "hermes" else TRANSCRIPT_PATH
     deploy = f"deploy/sudo-{entry['sibling']}"
-    if n is None or n == -1:
+    if n == -1:
         argv = ["kubectl", "exec", deploy, "-c", "watch", "--", "cat", path]
     else:
+        depth = DEFAULT_DEPTH if n is None else n
         argv = ["kubectl", "exec", deploy, "-c", "watch", "--",
-                "tail", "-n", str(n), path]
+                "tail", "-n", str(depth), path]
     text = fleet.transport.host_command(argv)
     return text.splitlines()

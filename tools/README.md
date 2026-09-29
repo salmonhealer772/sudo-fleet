@@ -2,12 +2,11 @@
 
 The finished comm tools land here — one folder (or file) per tool. These are the real backends that satisfy the interfaces defined in `tests/comm_tools.py`.
 
-Currently four tools are the targets:
+Currently three tools are the targets:
 
 - `list-siblings`
 - `message-agent`
-- `check-what-agent-is-doing`
-- `check-agent-logs`
+- `check-agent`
 
 Each tool is specced two ways and tested one way:
 
