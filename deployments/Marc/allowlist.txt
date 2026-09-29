@@ -1,0 +1,5 @@
+lc-local-backend/agents/<b64url(agent-id)>.json   (record, name=Marc)
+lc-local-backend/memfs/<agent-id>/memory/          (brain: persona.md renamed, all scrubbed)
+settings.json                                      (resume pointer -> a290e69d)
+# Excluded: memory/.git + memory-worktrees/ (PII-bearing history),
+#           lc-local-backend/secrets/, conversations/ (recreated/never shipped).

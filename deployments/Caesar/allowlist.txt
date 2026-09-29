@@ -1,0 +1,7 @@
+SOUL.md          (identity: You are Caesar, planner Marc)
+config.yaml      (scrubbed; overridden at runtime by per-agent config/<name>.yaml)
+state.db         (scrubbed DB-aware: sessions/system_prompts/state_meta kept+scrubbed;
+                  messages emptied to stay public-safe and under git limits; FTS rebuilt; VACUUM)
+.hermes_history  (scrubbed)
+.local/          (bin/forge symlink + fastmcp cache, scrubbed)
+# Excluded: everything else under /opt/data (briefs, .venv, build dirs, other souls).

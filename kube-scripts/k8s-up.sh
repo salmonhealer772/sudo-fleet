@@ -7,12 +7,11 @@ set -euo pipefail
 # their PVCs and their identity, seeded as FULL GLIMORS from psnvc (-> Marc) and
 # forge (-> Caesar).
 #
-# Glimor seed: this script restores from a SAVED glimor directory on disk
-# ($FLEET_HOME/glimors/{psnvc,forge}/) — it does NOT copy from live pods, so it
-# works on a FRESH box (which has no psnvc/forge to copy FROM). If the saved
-# glimor dir is absent, Marc/Caesar deploy EMPTY (factory defaults) and we warn
-# loudly. Capture the glimors on a box that has the live pair with:
-#   bash kube-scripts/save-glimor.sh
+# Glimor seed: Marc and Caesar are seeded from the COMMITTED glimors in
+# $FLEET_HOME/deployments/{Marc,Caesar}/ by each factory's up.sh (via an
+# initContainer that copies the glimor into the PVC BEFORE the agent process
+# starts). There is no live-pod copy and no post-Ready `kubectl cp` — a missing
+# or invalid glimor fails the deploy loudly, never a blank Tutor / bare Hermes.
 #
 # Usage: bash k8s-up.sh
 
@@ -20,7 +19,7 @@ FLEET_HOME="${FLEET_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 FLEET_ENV="$FLEET_HOME/.env"
 AGENT_REPO="$FLEET_HOME/sudo-agent"
 LETTA_REPO="$FLEET_HOME/sudo-letta"
-GLIMOR_DIR="$FLEET_HOME/glimors"
+GLIMORS_DIR="$FLEET_HOME/deployments"
 
 KUBECONFIG_PATH="/etc/rancher/k3s/k3s.yaml"
 
@@ -77,7 +76,7 @@ if ! is_root; then
 fi
 
 # --- 1. Cluster -----------------------------------------------------------------
-step "1/5 Cluster"
+step "1/4 Cluster"
 [[ -f "$KUBECONFIG_PATH" ]] || die "kubeconfig missing at $KUBECONFIG_PATH — run setup.sh first"
 export KUBECONFIG="$KUBECONFIG_PATH"
 _retry 5 "kubectl cluster-info" kubectl cluster-info >/dev/null 2>&1 \
@@ -87,7 +86,7 @@ _retry 3 "wait node Ready" kubectl wait --for=condition=Ready node --all --timeo
 ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | paste -sd, -))"
 
 # --- 2. API keys (same non-interactive bridge as setup.sh) ---------------------
-step "2/5 API keys from $FLEET_ENV"
+step "2/4 API keys from $FLEET_ENV"
 [[ -f "$FLEET_ENV" ]] || die "No $FLEET_ENV — drop one with DEEPSEEK_API_KEY, LLM_PROVIDER, API_KEY before running."
 set +euo pipefail
 # shellcheck disable=SC1090
@@ -134,64 +133,26 @@ else
 fi
 ok "env sourced + factory .env files re-seeded"
 
-# --- 3. Deploy Marc (Letta planner) --------------------------------------------
-step "3/5 Deploy Marc (Letta planner) — factory up.sh"
+# --- 3. Deploy Marc (Letta planner) — seeded from the committed glimor --------
+step "3/4 Deploy Marc (Letta planner) — factory up.sh (seeded from $GLIMORS_DIR/Marc)"
 _retry 3 "deploy Marc" $SUDO bash "$LETTA_REPO/kube-scripts/up.sh" --marc \
-  || die "sudo-letta up.sh --marc failed"
+  --from-glimor "$GLIMORS_DIR/Marc" \
+  || die "sudo-letta up.sh --marc --from-glimor failed"
 
-# --- 4. Deploy Caesar (Hermes engineer) ----------------------------------------
-step "4/5 Deploy Caesar (Hermes engineer) — factory up.sh"
+# --- 4. Deploy Caesar (Hermes engineer) — seeded from the committed glimor ----
+step "4/4 Deploy Caesar (Hermes engineer) — factory up.sh (seeded from $GLIMORS_DIR/Caesar)"
 _retry 3 "deploy Caesar" $SUDO bash "$AGENT_REPO/kube-scripts/up.sh" --caesar \
-  || die "sudo-agent up.sh --caesar failed"
+  --from-glimor "$GLIMORS_DIR/Caesar" \
+  || die "sudo-agent up.sh --caesar --from-glimor failed"
 
-# --- 5. Seed glimors (restore from SAVED dir, portable to a fresh box) ---------
-step "5/5 Seed glimors (identity + live state)"
+# Seeding happens INSIDE each factory's up.sh via an initContainer that copies
+# the committed glimor into the PVC BEFORE the agent process starts. Wait for
+# the pods to become Ready — a missing/corrupt glimor keeps the pod in
+# Init:Error forever (the required fail-loudly, never a blank agent).
 _retry 5 "wait sudo-marc Ready" kubectl wait --for=condition=Ready pod -l agent=marc  --timeout=180s >/dev/null 2>&1 \
-  || die "sudo-marc pod not Ready"
+  || die "sudo-marc pod not Ready (initContainer may have failed to seed)"
 _retry 5 "wait sudo-caesar Ready" kubectl wait --for=condition=Ready pod -l agent=caesar --timeout=180s >/dev/null 2>&1 \
-  || die "sudo-caesar pod not Ready"
-
-# (a) Caesar <- forge (Hermes identity: SOUL.md + state.db + .hermes_history
-#     + .local + cache) into the sudo-caesar PVC at /opt/data/.
-if [[ -d "$GLIMOR_DIR/forge" ]]; then
-  CPOD="$(kubectl get pods -l agent=caesar -o jsonpath='{.items[0].metadata.name}')"
-  [[ -n "$CPOD" ]] || die "could not resolve sudo-caesar pod for seeding"
-  for f in SOUL.md state.db .hermes_history; do
-    if [[ -f "$GLIMOR_DIR/forge/$f" ]]; then
-      kubectl cp "$GLIMOR_DIR/forge/$f" "$CPOD:/opt/data/$f" || die "seed failed: forge/$f -> $CPOD:/opt/data/$f"
-      ok "seeded forge/$f -> sudo-caesar:/opt/data/$f"
-    else
-      warn "glimor missing $GLIMOR_DIR/forge/$f — skipping (Caesar will lack it)"
-    fi
-  done
-  for d in .local cache; do
-    if [[ -d "$GLIMOR_DIR/forge/$d" ]]; then
-      kubectl cp "$GLIMOR_DIR/forge/$d/." "$CPOD:/opt/data/$d/" || die "seed failed: forge/$d -> $CPOD:/opt/data/$d/"
-      ok "seeded forge/$d/ -> sudo-caesar:/opt/data/$d/"
-    else
-      warn "glimor missing $GLIMOR_DIR/forge/$d/ — skipping"
-    fi
-  done
-  ok "Caesar seeded from $GLIMOR_DIR/forge"
-else
-  warn "no $GLIMOR_DIR/forge — Caesar starts EMPTY (factory default SOUL)."
-  warn "  Capture it later on a box with sudo-forge: bash kube-scripts/save-glimor.sh"
-fi
-
-# (b) Marc <- psnvc (Letta brain: the whole LETTA_HOME tree) into the sudo-marc
-#     PVC at /home/node/.letta/ (the letta PVC mountPath — see factory up.sh).
-if [[ -d "$GLIMOR_DIR/psnvc" ]]; then
-  MPOD="$(kubectl get pods -l agent=marc -o jsonpath='{.items[0].metadata.name}')"
-  [[ -n "$MPOD" ]] || die "could not resolve sudo-marc pod for seeding"
-  kubectl cp "$GLIMOR_DIR/psnvc/." "$MPOD:/home/node/.letta/" || die "seed failed: psnvc tree -> $MPOD:/home/node/.letta/"
-  # The letta container runs as `node`; fix ownership so the brain is readable.
-  kubectl exec "$MPOD" -- chown -R node:node /home/node/.letta 2>/dev/null \
-    || warn "could not chown /home/node/.letta (may already be node-owned)"
-  ok "Marc seeded from $GLIMOR_DIR/psnvc"
-else
-  warn "no $GLIMOR_DIR/psnvc — Marc starts EMPTY (factory default persona)."
-  warn "  Capture it later on a box with sudo-psnvc: bash kube-scripts/save-glimor.sh"
-fi
+  || die "sudo-caesar pod not Ready (initContainer may have failed to seed)"
 
 # --- Verify ---------------------------------------------------------------------
 echo ""
