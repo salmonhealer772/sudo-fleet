@@ -93,13 +93,6 @@ if ! is_root; then
       unset _SUDO_PW
     fi
   fi
-  # Keep the sudo timestamp alive for the whole run: long docker/k3s installs +
-  # image builds can outlive sudo's default 15-minute timeout, after which a
-  # later $SUDO call would re-prompt (and fail/hang when stdin is a pipe). Renew
-  # every 60s so the cache never expires mid-run.
-  ( while true; do sudo -n -v 2>/dev/null || break; sleep 60; done ) &
-  SUDO_KEEPALIVE_PID=$!
-  trap '[[ -n "${SUDO_KEEPALIVE_PID:-}" ]] && kill "$SUDO_KEEPALIVE_PID" 2>/dev/null' EXIT
 fi
 
 # --- 1. API keys — prompt at the gate (BEFORE any build work) ------------------
@@ -277,10 +270,14 @@ ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | pa
 
 # --- 4. Repos (nested clones inside $FLEET_HOME) -------------------------------
 step "4/6 Repos (nested inside $FLEET_HOME)"
-$SUDO mkdir -p "$FLEET_HOME"
+mkdir -p "$FLEET_HOME"
+# Clone/pull the nested factories as the INVOKING user (never sudo): FLEET_HOME
+# is owned by whoever cloned this repo, so the nested repos stay user-owned and
+# git works on re-runs without a sudo credential (a `sudo git` in a subshell
+# does NOT share the sudo cache and dies with "a terminal is required").
 _git_pull() {
   local dir="$1" url="$2"
-  (cd "$dir" && $SUDO git remote set-url origin "$url" && $SUDO git pull --ff-only)
+  (cd "$dir" && git remote set-url origin "$url" && git pull --ff-only)
 }
 _clone_or_pull() {
   local url="$1" dir="$2"
@@ -290,18 +287,11 @@ _clone_or_pull() {
     _retry 3 "git pull $dir" _git_pull "$dir" "$url" || die "git pull failed in $dir"
   else
     echo "→ cloning $url"
-    _retry 3 "git clone $dir" $SUDO git clone "$url" "$dir" || die "git clone failed: $url"
+    _retry 3 "git clone $dir" git clone "$url" "$dir" || die "git clone failed: $url"
   fi
 }
 _clone_or_pull "$GH/sudo-agent.git" "$AGENT_REPO"
 _clone_or_pull "$GH/sudo-letta.git" "$LETTA_REPO"
-# The nested clones ran under sudo -> they are root-owned. Chown them back to the
-# invoking user so later non-root steps (Command 2, git pulls, edits) don't hit
-# "Permission denied" or git "dubious ownership".
-if [[ -n "${TARGET_USER:-}" && "$TARGET_USER" != "root" ]]; then
-  $SUDO chown -R "$TARGET_USER" "$AGENT_REPO" "$LETTA_REPO" 2>/dev/null \
-    || warn "could not chown nested repos to $TARGET_USER"
-fi
 ok "factory repos nested under $FLEET_HOME"
 
 # --- 5. Non-interactive env-var bridge (the exact mechanism) -------------------
@@ -336,6 +326,12 @@ ok "pre-seeded $LETTA_REPO/.sudo-letta/.env (skips letta prompts)"
 
 # --- 6. Build images (factory setup.sh, non-interactive) -----------------------
 step "6/6 Build images"
+# Renew the sudo timestamp before the long image builds (a bare box with
+# docker/k3s install + full builds can approach sudo's 15-minute timeout). Run in
+# the main shell — a background/subshell `sudo` does NOT share the cache.
+if ! is_root; then
+  sudo -n -v 2>/dev/null || warn "sudo credential expired mid-run — re-run after authenticating"
+fi
 echo "→ sudo-agent (Hermes) image — DEEPSEEK_API_KEY piped on stdin"
 printf '%s\n' "$DEEPSEEK_API_KEY" | $SUDO bash "$AGENT_REPO/setup.sh" \
   || die "sudo-agent setup.sh failed"
