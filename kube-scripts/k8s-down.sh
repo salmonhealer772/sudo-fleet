@@ -39,8 +39,34 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+is_root() { [[ "$(id -u)" -eq 0 ]]; }
 SUDO=""
-[[ "$(id -u)" -ne 0 ]] && SUDO="sudo"
+if ! is_root; then
+  SUDO="sudo"
+  echo "→ Warming up sudo (you may be prompted once for your password)..."
+  # Prime sudo non-interactively FIRST: succeeds when credentials are already
+  # cached (passwordless sudo, or a recent sudo) without hanging on a hidden
+  # prompt. Only fall back to an interactive prompt (real TTY) or a password
+  # read from stdin (-S) when there is no cached credential; never hang.
+  if ! sudo -n -v 2>/dev/null; then
+    if [[ -t 0 ]]; then
+      sudo -v || die "sudo authentication failed — this script needs sudo to stop Marc + Caesar"
+    else
+      # No TTY + no cached credential: consume ONE line of stdin as the sudo
+      # password (so a piped / agent / CI run can still authenticate), then feed
+      # it to sudo -S. There are no other stdin prompts in this script, so this
+      # is safe.
+      IFS= read -r _SUDO_PW || true
+      if [[ -n "${_SUDO_PW:-}" ]]; then
+        printf '%s\n' "$_SUDO_PW" | sudo -S -v 2>/dev/null \
+          || die "sudo authentication failed (wrong password) — this script needs sudo to stop Marc + Caesar"
+      else
+        die "sudo needs a password but none arrived on stdin (no TTY, no cached credential). Run in a terminal, pre-authenticate with 'sudo -v', or pipe the password as the first line of stdin."
+      fi
+      unset _SUDO_PW
+    fi
+  fi
+fi
 
 # kubeconfig auto-detect (mirrors the factory down.sh)
 if [[ -z "${KUBECONFIG:-}" ]]; then
@@ -51,8 +77,29 @@ fi
 [[ -n "${KUBECONFIG:-}" ]] || warn "no kubeconfig found — k3s may already be gone"
 
 step "Stop router pair"
-$SUDO bash "$LETTA_REPO/kube-scripts/down.sh" --marc  || warn "sudo-letta down.sh --marc failed"
-$SUDO bash "$AGENT_REPO/kube-scripts/down.sh" --caesar || warn "sudo-agent down.sh --caesar failed"
+marc_fail=0
+caesar_fail=0
+$SUDO bash "$LETTA_REPO/kube-scripts/down.sh" --marc   || marc_fail=$?
+$SUDO bash "$AGENT_REPO/kube-scripts/down.sh" --caesar || caesar_fail=$?
+
+# A failed factory down.sh must NOT be swallowed: fail loud, do not claim
+# "stopped" while either Marc or Caesar is still up.
+if (( marc_fail != 0 || caesar_fail != 0 )); then
+  die "stop FAILED: sudo-letta down.sh --marc exit=$marc_fail, sudo-agent down.sh --caesar exit=$caesar_fail — pods NOT stopped"
+fi
+
+# Verify the pods are actually GONE (not merely "delete requested"): wait out
+# the termination grace period, then require zero marc/caesar pods before we
+# claim success. Never print "deployments stopped" while a pod is still up.
+for ((_i = 0; _i < 30; _i++)); do
+  _remaining="$(kubectl get pods -A --no-headers 2>/dev/null | grep -cE 'sudo-(marc|caesar)-' || true)"
+  (( _remaining == 0 )) && break
+  sleep 2
+done
+_remaining="$(kubectl get pods -A --no-headers 2>/dev/null | grep -cE 'sudo-(marc|caesar)-' || true)"
+if (( _remaining > 0 )); then
+  die "stop FAILED: $_remaining marc/caesar pod(s) still present after down.sh — NOT stopped, refusing to claim teardown complete"
+fi
 ok "deployments stopped"
 
 if [[ "$PURGE" -eq 1 ]]; then
