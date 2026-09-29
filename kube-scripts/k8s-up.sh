@@ -54,7 +54,7 @@ set -euo pipefail
 export DEEPSEEK_API_KEY LLM_PROVIDER API_KEY
 [[ -n "${LLM_BASE_URL:-}" ]] && export LLM_BASE_URL
 for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
-  [[ -n "${!_wk:-}" ]] && export "$_wk"
+  [[ -n "${!_wk:-}" ]] && export "$_wk=${!_wk}"
 done
 unset _wk
 
@@ -62,16 +62,18 @@ unset _wk
 # wrapper's exported env) still find their credentials. Idempotent.
 $SUDO mkdir -p "$LETTA_REPO/.sudo-letta"
 # Build the pre-seed .env in a user-owned temp file (never pipe into sudo, so
-# no hidden sudo prompt), then install it into place under sudo. The trailing
-# `|| true` keeps the group at exit 0 so `set -euo pipefail` cannot kill this
-# script when an optional key (e.g. PERPLEXITY_API_KEY) is unset.
+# no hidden sudo prompt), then install it into place under sudo. An `if` guard
+# skips unset optional keys (e.g. PERPLEXITY_API_KEY) so `set -euo pipefail`
+# cannot kill this script on a missing key.
 _env_tmp="$(mktemp)"
 {
   printf 'LLM_PROVIDER=%s\n' "$LLM_PROVIDER"
   printf 'API_KEY=%s\n' "$API_KEY"
   [[ -n "${LLM_BASE_URL:-}" ]] && printf 'LLM_BASE_URL=%s\n' "$LLM_BASE_URL"
   for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
-    [[ -n "${!_wk:-}" ]] && printf '%s=%s\n' "$_wk" "${!_wk}" || true
+    if [[ -n "${!_wk:-}" ]]; then
+      printf '%s=%s\n' "$_wk" "${!_wk}"
+    fi
   done
 } > "$_env_tmp"
 unset _wk
