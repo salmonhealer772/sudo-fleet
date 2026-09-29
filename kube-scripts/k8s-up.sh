@@ -29,6 +29,24 @@ step() { echo ""; echo "── $* ──"; }
 ok()   { echo "✓ $*"; }
 warn() { echo "⚠ $*" >&2; }
 
+# _retry N "description" cmd [args...] — run cmd up to N times with backoff.
+# Makes the fragile deploy/readiness steps survive transient failures (pod not
+# Ready yet, kubectl still settling, image import racing) instead of dying on
+# the first failure — the "try excepts on all the bits that can have it" bar.
+_retry() {
+  local n="$1" desc="$2"; shift 2
+  local i=1
+  while (( i <= n )); do
+    if "$@"; then
+      return 0
+    fi
+    warn "($desc) attempt $i/$n failed — retrying in ${i}s..."
+    sleep "$i"
+    (( i++ ))
+  done
+  return 1
+}
+
 is_root() { [[ "$(id -u)" -eq 0 ]]; }
 SUDO=""
 if ! is_root; then
@@ -62,8 +80,9 @@ fi
 step "1/5 Cluster"
 [[ -f "$KUBECONFIG_PATH" ]] || die "kubeconfig missing at $KUBECONFIG_PATH — run setup.sh first"
 export KUBECONFIG="$KUBECONFIG_PATH"
-kubectl cluster-info >/dev/null 2>&1 || die "k3s not reachable — run setup.sh first"
-kubectl wait --for=condition=Ready node --all --timeout=180s >/dev/null 2>&1 \
+_retry 5 "kubectl cluster-info" kubectl cluster-info >/dev/null 2>&1 \
+  || die "k3s not reachable — run setup.sh first"
+_retry 3 "wait node Ready" kubectl wait --for=condition=Ready node --all --timeout=180s >/dev/null 2>&1 \
   || die "node not Ready"
 ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | paste -sd, -))"
 
@@ -117,16 +136,20 @@ ok "env sourced + factory .env files re-seeded"
 
 # --- 3. Deploy Marc (Letta planner) --------------------------------------------
 step "3/5 Deploy Marc (Letta planner) — factory up.sh"
-$SUDO bash "$LETTA_REPO/kube-scripts/up.sh" --marc || die "sudo-letta up.sh --marc failed"
+_retry 3 "deploy Marc" $SUDO bash "$LETTA_REPO/kube-scripts/up.sh" --marc \
+  || die "sudo-letta up.sh --marc failed"
 
 # --- 4. Deploy Caesar (Hermes engineer) ----------------------------------------
 step "4/5 Deploy Caesar (Hermes engineer) — factory up.sh"
-$SUDO bash "$AGENT_REPO/kube-scripts/up.sh" --caesar || die "sudo-agent up.sh --caesar failed"
+_retry 3 "deploy Caesar" $SUDO bash "$AGENT_REPO/kube-scripts/up.sh" --caesar \
+  || die "sudo-agent up.sh --caesar failed"
 
 # --- 5. Seed glimors (restore from SAVED dir, portable to a fresh box) ---------
 step "5/5 Seed glimors (identity + live state)"
-kubectl wait --for=condition=Ready pod -l agent=marc  --timeout=180s >/dev/null 2>&1 || die "sudo-marc pod not Ready"
-kubectl wait --for=condition=Ready pod -l agent=caesar --timeout=180s >/dev/null 2>&1 || die "sudo-caesar pod not Ready"
+_retry 5 "wait sudo-marc Ready" kubectl wait --for=condition=Ready pod -l agent=marc  --timeout=180s >/dev/null 2>&1 \
+  || die "sudo-marc pod not Ready"
+_retry 5 "wait sudo-caesar Ready" kubectl wait --for=condition=Ready pod -l agent=caesar --timeout=180s >/dev/null 2>&1 \
+  || die "sudo-caesar pod not Ready"
 
 # (a) Caesar <- forge (Hermes identity: SOUL.md + state.db + .hermes_history
 #     + .local + cache) into the sudo-caesar PVC at /opt/data/.
@@ -174,10 +197,12 @@ fi
 echo ""
 echo "→ Verifying PVCs + services..."
 for pvc in sudo-marc-data sudo-caesar-data; do
-  kubectl get pvc "$pvc" >/dev/null 2>&1 || die "PVC $pvc missing"
+  _retry 5 "verify PVC $pvc" kubectl get pvc "$pvc" >/dev/null 2>&1 \
+    || die "PVC $pvc missing"
 done
 for svc in sudo-marc-mcp sudo-marc-watch sudo-caesar-mcp sudo-caesar-watch; do
-  kubectl get svc "$svc" >/dev/null 2>&1 || die "Service $svc missing"
+  _retry 5 "verify Service $svc" kubectl get svc "$svc" >/dev/null 2>&1 \
+    || die "Service $svc missing"
 done
 
 ok "router pair running: sudo-marc (planner) + sudo-caesar (engineer)"
