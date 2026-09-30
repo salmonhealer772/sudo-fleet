@@ -4,6 +4,9 @@ set -uo pipefail
 # kube-scripts/up.sh — Deploy a sudo-agent to Kubernetes
 # Usage: bash kube-scripts/up.sh --name
 
+# Parse --name (required) and --from-glimor (optional seed dir). --from-glimor
+# takes its own argument, so it consumes two tokens; an unknown arg aborts with
+# usage because a guessed name would deploy the wrong agent.
 NAME=""
 KEY=""
 SUDO_PASS=""
@@ -17,6 +20,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Reject an empty name and the reserved `all` token, because `sudo-` and a
+# bulk-teardown name would each produce a broken or ambiguous deploy (see
+# rm-containers.sh for the real bulk path).
 if [[ -z "$NAME" ]]; then
   echo "Usage: bash kube-scripts/up.sh --name" >&2
   echo "Example: bash kube-scripts/up.sh --alice" >&2
@@ -129,6 +135,10 @@ if [[ -z "$KEY" ]]; then
 fi
 
 # ── Sudo password ──
+# The agent container is `privileged` and its shell relies on passwordless
+# sudo, so the deploy injects a SUDO_PASSWORD. Reuse the one already in .env
+# (so a re-deploy keeps the same password), otherwise generate a random one ONCE
+# and persist it — a per-deploy random would break any saved sudo contexts.
 if [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
   SUDO_PASS=$(grep '^SUDO_PASSWORD=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- || true)
 fi
@@ -712,6 +722,9 @@ _import_image hermes-agent:latest
 _import_image sudo-agent:latest
 
 # ── Apply ──
+# --validate=false lets the generated manifest through even when the local
+# kubectl schema predates a field in it; if apply itself fails, abort so the
+# operator is never told a broken apply "deployed".
 echo "→ Deploying..."
 if ! kubectl apply -f "$YAML" --validate=false; then
   echo "✗ kubectl apply failed. Check: kubectl cluster-info" >&2

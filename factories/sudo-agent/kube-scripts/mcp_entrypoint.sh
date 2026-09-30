@@ -46,7 +46,9 @@ set -u
 # /opt/data/skills, the PVC) and its identity from SOUL.md (also the PVC),
 # which start empty on a fresh engineer. A .comm-seeded marker makes this
 # idempotent: restarts skip it, and the agent's later edits to skills/ or
-# SOUL.md are preserved. Safe no-ops when a dir/file is absent.
+# SOUL.md are preserved. Safe no-ops when a dir/file is absent: every seeding
+# step is `|| true`, so a missing source or an unwritable PVC can never block
+# first boot — worst case the agent starts unseeded, still runs.
 if [ ! -f /opt/data/.comm-seeded ]; then
   mkdir -p /opt/data/skills 2>/dev/null || true
   if [ -d /opt/comm-skills ]; then
@@ -80,6 +82,10 @@ RPORT="${REDIS_PORT:-$(( 40000 + (PORT * 7) % 20000 ))}"
 # restart loop so a Redis crash cannot take the distributor down permanently.
 if [ -z "${REDIS_URL:-}" ]; then
   mkdir -p /opt/data/redis 2>/dev/null || true
+  # Restart loop: if redis-server crashes (OOM, AOF corruption, ...) the loop
+  # relaunches it after 2s, so a transient Redis death never takes the
+  # prompt-distributor queue down permanently — only this offline fallback
+  # path runs at all (the shared fleet Redis has no such in-pod loop).
   (
     while :; do
       HOME=/opt/data /command/s6-setuidgid hermes \
@@ -98,6 +104,10 @@ if [ -z "${REDIS_URL:-}" ]; then
   ) &
 fi
 
+# Start the MCP server in the background, in a restart loop, because it is a
+# sidecar to the gateway: if mcp_server.py crashes the loop relaunches it 2s
+# later, so the endpoint is never down permanently and one bad request can't
+# kill the whole pod's MCP surface.
 (
   while :; do
     HOME=/opt/data HERMES_HOME=/opt/data MCP_PORT="$PORT" REDIS_PORT="$RPORT" REDIS_URL="${REDIS_URL:-}" \
@@ -107,4 +117,8 @@ fi
   done
 ) &
 
+# exec (not run) the base image's entrypoint so `gateway run` REPLACES this
+# shell as the pod's main process; if the gateway exits, the container exits
+# with it and the background MCP loop dies as the container stops (no orphaned
+# MCP server left behind).
 exec /opt/hermes/docker/entrypoint-dispatch.sh "$@"

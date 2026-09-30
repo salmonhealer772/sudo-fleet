@@ -46,6 +46,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Resolve kubectl + kubeconfig, because this is called from setup.sh/up.sh
+# where $HOME may differ from the login shell; if none of the known configs
+# exist, kubectl's own error surfaces on the first call (nothing sane to
+# pre-check here).
 KUBECTL="kubectl"
 if [[ -n "${KUBECONFIG:-}" ]]; then
   :
@@ -66,6 +70,9 @@ PORT="${SUDO_AGENT_REDIS_PORT:-6380}"
 # foreign collision.
 _short_cid() { printf '%s' "${1#containerd://}" | cut -c1-12; }
 
+# Enumerate pids listening on the node port, so a foreign owner is detected
+# BEFORE deploying; if neither ss(8) nor netstat(8) exists, warn and fail-open
+# (deploy anyway) rather than block the whole fleet on a missing diagnostic.
 _listener_pids() {
   if command -v ss >/dev/null 2>&1; then
     ss -lntpH "sport = :$PORT" 2>/dev/null | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u
@@ -76,10 +83,16 @@ _listener_pids() {
   fi
 }
 
+# The container id of THIS deployment's redis pod (empty on first run), used
+# to tell "our own redis is already listening" (idempotent re-run) from a
+# genuine foreign collision.
 OUR_CID="$("$KUBECTL" get pods -l app=sudo-agent-redis \
              -o jsonpath='{.items[0].status.containerStatuses[0].containerID}' 2>/dev/null || true)"
 OUR_SHORT="$(_short_cid "$OUR_CID")"
 
+# Walk every listener pid and classify it: our own redis pod -> skip (this is
+# a harmless re-run); anything else -> record as a collider, because two redis
+# processes cannot share one node-global port.
 COLLIDERS=""
 for pid in $(_listener_pids); do
   [[ -z "$pid" ]] && continue
@@ -91,6 +104,9 @@ for pid in $(_listener_pids); do
   COLLIDERS+="    pid=$pid  cmd=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo '?')"$'\n'
 done
 
+# If any foreign collider was found, refuse to deploy (loudly, before the pod
+# starts) so the operator sees a clear port-collision error instead of a
+# crashlooping redis pod whose cause is buried in the pod logs.
 if [[ -n "$COLLIDERS" ]]; then
   cat >&2 <<EOF
 ✗ FATAL: node port $PORT is already taken by a process we do not own:
@@ -211,6 +227,9 @@ spec:
 YAML
 
 echo "→ sudo-agent-redis: waiting for pod readiness (rollout status)..."
+# Wait for the Deployment to roll out, because a Pending/NotReady pod is not
+# "the queue is up"; if it does not become ready within 120s, the ping check
+# below reports the failure and this script exits non-zero.
 $KUBECTL rollout status deployment/sudo-agent-redis --timeout=120s
 
 # Prove the port actually answers before returning success — callers treat a
@@ -232,4 +251,7 @@ else
   exit 1
 fi
 
+# Print the resulting objects, because a deploy that ends with a human-readable
+# summary is self-verifying (the operator sees pod/svc/pvc without a separate
+# `get`), and a zero exit here is the whole contract for callers like up.sh.
 $KUBECTL get deploy,svc,pvc -l app=sudo-agent-redis

@@ -8,17 +8,24 @@ echo "│  sudo-agent — Hermes Agent with root cage   │"
 echo "└─────────────────────────────────────────────┘"
 echo ""
 
-# --- Check Docker ---
+# Check the docker socket answers, because every later step (image builds,
+# image imports, and the deploy itself) goes through docker; if `docker info`
+# fails, abort NOW with the fix hint instead of failing mid-build with an
+# unhelpful socket error.
 if ! docker info &>/dev/null; then
   echo "Docker is not running or this user isn't in the docker group."
   echo "Fix: sudo usermod -aG docker \$USER && newgrp docker"
   exit 1
 fi
 
+# Resolve the factory root once, because the Dockerfile, .env and config.yaml
+# are all relative to THIS script's location, not the caller's cwd.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# _retry N "description" cmd [args...] — run cmd up to N times with backoff.
-# Makes network/build steps survive transient failures instead of dying once.
+# _retry N "description" cmd [args...] — run cmd up to N times with backoff,
+# because network/build steps fail transiently and should not die on the first
+# hiccup; if the command still fails after N attempts, _retry returns non-zero
+# so the caller can abort loudly instead of half-succeeding.
 _retry() {
   local n="$1" desc="$2"; shift 2
   local i=1
@@ -31,7 +38,14 @@ _retry() {
   return 1
 }
 
-# --- Build images ---
+# Build the two images if they are absent. Order matters: sudo-agent is
+# `FROM hermes-agent:latest`, so the base is built first. The sudo-agent
+# Dockerfile then (a) symlinks the base's off-PATH uv onto /usr/local/bin so
+# its `uv pip install` steps resolve, and (b) bakes the comm tools into
+# /opt/comm-tools/ at the IMAGE level (never shadowed by the /opt/data PVC —
+# that PVC only receives the comm skills + persona on first boot, see
+# mcp_entrypoint.sh). Each build retries transient network failures; if one
+# still fails after retries, abort — a missing image is fatal downstream.
 if ! docker image inspect hermes-agent:latest &>/dev/null; then
   echo "→ Building base Hermes Agent image (3-5 min)..."
   TMP_DIR=$(mktemp -d) || { echo "Failed to create temp dir"; exit 1; }
@@ -78,7 +92,11 @@ if [[ -z "$DEEPSEEK_KEY" ]]; then
   exit 1
 fi
 
-# Write .env — use sudo if dir is root-owned, otherwise direct
+# Persist the key to .env. The repo dir may be root-owned, so a direct append
+# is tried FIRST and only falls back to `sudo tee` when that is refused — the
+# sudo/exit-code trap: a root-owned repo is a normal state in this factory, not
+# an error. If BOTH paths fail, abort with the chown fix instead of continuing
+# with a key that only lives in this process's environment and is lost on exit.
 if ! echo "" >> "$ENV_FILE" 2>/dev/null; then
   echo "→ Repo is root-owned. Using sudo to save credentials..."
   { echo "# sudo-agent config (set by setup.sh)"; echo "DEEPSEEK_API_KEY=$DEEPSEEK_KEY"; } | sudo tee "$ENV_FILE" > /dev/null 2>&1 || {
@@ -91,7 +109,10 @@ else
 fi
 echo "✓ API key saved to $ENV_FILE"
 
-# --- Ensure config.yaml ---
+# Seed config.yaml from the inline template on first run, then pin the model /
+# provider / terminal backend on EVERY run (idempotent). A re-run must converge
+# to the same config, and a missing config.yaml must never block first boot; if
+# the heredoc write fails the later sed pins still apply (they are independent).
 if [[ ! -f "$CONFIG_FILE" ]]; then
   cat > "$CONFIG_FILE" << 'CONFIGEOF'
 model:
