@@ -572,9 +572,9 @@ PYEOF' || true
   # Comm-layer skills (list-siblings / message-agent / check-agent). The mods
   # above register the TOOLS into the agent's tool schema; these are the
   # per-agent MemFS procedure docs that make the agent actually reach for them.
-  # They ship as vendored packages in this repo's skills/ dir (canonical source:
-  # sudo-fleet branch comm-skills-tools -> skills/), are copied into the pod at
-  # deploy time exactly like mods/, and dropped into the agent's MemFS skills/
+  # They ship as first-class files in this repo's factories/sudo-letta/skills/
+  # dir (the canonical source on main), and are copied into the pod at deploy
+  # time exactly like mods/, and dropped into the agent's MemFS skills/
   # dir — the dir Letta auto-loads skills from, and the same dir the
   # --from-glimor seed populates from the glimor. Idempotent: re-copied every
   # deploy, and the MemFS is git-committed so the seeded skills actually load
