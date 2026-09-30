@@ -17,8 +17,8 @@ set -euo pipefail
 
 FLEET_HOME="${FLEET_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 FLEET_ENV="$FLEET_HOME/.env"
-AGENT_REPO="$FLEET_HOME/sudo-agent"
-LETTA_REPO="$FLEET_HOME/sudo-letta"
+AGENT_REPO="$FLEET_HOME/factories/sudo-agent"
+LETTA_REPO="$FLEET_HOME/factories/sudo-letta"
 GLIMORS_DIR="$FLEET_HOME/deployments"
 
 KUBECONFIG_PATH="/etc/rancher/k3s/k3s.yaml"

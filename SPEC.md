@@ -10,7 +10,7 @@ The whole agent fleet is **one entity** in one repo. This is the forward build: 
 
 1. **`setup.sh`** — idempotent, boots a bare Linux box into a running fleet: installs k3s, applies the stack, starts the router. Otherwise empty.
 
-2. **`sudo-letta`** (Letta factory — planners) + **`sudo-agent`** (Hermes factory — engineers). The two **default** agent kinds, shipped out of the box.
+2. **`factories/sudo-letta`** (Letta factory — planners) + **`factories/sudo-agent`** (Hermes factory — engineers). The two **default** agent kinds, shipped out of the box.
 
 3. **LiteLLM** — a kube container that is the fleet's shared model router/gateway (one gateway, not per-agent model wiring).
 
@@ -26,11 +26,11 @@ The whole agent fleet is **one entity** in one repo. This is the forward build: 
 
 ## An OPEN fleet (not a two-factory monoculture)
 
-`sudo-letta` and `sudo-agent` are the **defaults**, not the boundary. You can bring **any agent** and plug it in — as long as it is **set up compatibly**. The fleet is an interop surface, not a closed factory.
+`factories/sudo-letta` and `factories/sudo-agent` are the **defaults**, not the boundary. You can bring **any agent** and plug it in — as long as it is **set up compatibly**. The fleet is an interop surface, not a closed factory.
 
 **"Compatible" means the agent speaks the fleet's plug-in contract:**
 - Exposes the **`-mcp` surface** (the per-agent MCP server — `initialize` / `tools/list` / `tools/call`) so other agents and the router can reach and call it.
-- Obeys the **identity-package save/pull format** — a brought-in agent is saved and pulled by the *same* `save`/`pull` mechanism as a factory agent, so the identity package is a general spec, not an artifact only `sudo-letta`/`sudo-agent` know how to emit.
+- Obeys the **identity-package save/pull format** — a brought-in agent is saved and pulled by the *same* `save`/`pull` mechanism as a factory agent, so the identity package is a general spec, not an artifact only `factories/sudo-letta`/`factories/sudo-agent` know how to emit.
 - Holds to the **naming + deterministic-port scheme** so it's addressable the same way as every other node.
 
 The `-mcp`/`-watch` sidecars and the deterministic-port scheme are therefore the **plug-in interface** — the thing any external agent conforms to to become part of the fleet — not merely "the factory's own plumbing."
@@ -75,12 +75,12 @@ These turn the passive sidecar plumbing into an *active* agent capability:
 - **Save depth** = definition + full state, as a complete, printable, self-updating identity package. **A full save = PVC contents + kube manifests + secret references (three layers).**
 - **Save trigger** = **continuously updated as the agent is used** (piggybacked on the `-watch` tail), NOT a manual snapshot; `save <name>` still exists as an explicit force.
 - **Seed** = empty bones (psnvc + forge + router) only; save/pull is per-agent. (Fleet-level `pull --all` was discussed but **not chosen** — do not build unless reopened.)
-- **Open fleet** = `sudo-letta`/`sudo-agent` are the *defaults*, not the boundary; any compatible agent plugs in (see "An OPEN fleet" above).
+- **Open fleet** = `factories/sudo-letta`/`factories/sudo-agent` are the *defaults*, not the boundary; any compatible agent plugs in (see "An OPEN fleet" above).
 - **Traffic layer** = every agent gets monitoring + messaging skills/tools (watch siblings, message siblings), and **multiple simultaneous prompts to one agent are queued/sequenced, not dropped** (the prompt multiplexer).
 
 ## What exists already (~90% — slow the roll, don't rebuild)
 
-- `sudo-letta` + `sudo-agent` factories with `up.sh`/`down.sh` (deploy, PVC, deterministic ports).
+- `factories/sudo-letta` + `factories/sudo-agent` factories with `up.sh`/`down.sh` (deploy, PVC, deterministic ports).
 - Per-agent MCP service (`sudo-<name>-mcp:8000`, real streamable-http MCP with `initialize`/`tools/call`) — fleet-wide.
 - Per-agent `watch` observability sidecar (`letta-watch/1.0`, events.jsonl/state.json/transcript) — fleet-wide.
 - LiteLLM proven on fabean (`litellm.litellm.svc.cluster.local:4000`).
@@ -88,7 +88,7 @@ These turn the passive sidecar plumbing into an *active* agent capability:
 
 ## The actual NEW work (the glue, not the pieces)
 
-1. Repo layout uniting the two factory repos + kube + LiteLLM under one root with one `setup.sh`.
+1. Repo layout uniting the two factory trees (`factories/sudo-letta` + `factories/sudo-agent`) + kube + LiteLLM under one root with one `setup.sh`.
 2. `setup.sh` idempotency + portability (no Mac `/mnt/mac`, no fabean-only paths; detect bare-Linux and bootstrap k3s + the stack).
 3. The **save/pull system** (glimors) as a complete, printable, self-updating identity package in the host VM directory — and as a **general spec any agent can conform to** (factory or brought-in). A full save captures **PVC + manifests + secret refs**, and is **triggered live by agent use** (via the `-watch` tail), with a **fleet glimor snapshot** for disaster-recovery (`save all` → all PVCs + all manifests off-box).
 4. LiteLLM + the `-mcp`/`-watch` sidecars as first-class factory defaults (emitted by `setup.sh`, not post-deploy `letta install`) — AND as the documented **plug-in contract** an external agent must satisfy to join the fleet.
@@ -107,7 +107,7 @@ The goal: make cross-agent communication **native** — any agent messages any a
 
 ### Ground truth (the sidecars are a GIVEN — they live in each agent's directory)
 
-The sidecars are **already part of every agent**: the `watch` sidecar + the `-mcp` service live **inside each agent's directory** (co-located with its PVC/state, deployed by `up.sh` per agent). This is assumed — do NOT redesign or rebuild the sidecar itself. (The operator is building the Hermes-side sidecars in parallel; the Letta-side `watch_sidecar.py` + `letta_prompt` MCP already ship in `sudo-letta`.)
+The sidecars are **already part of every agent**: the `watch` sidecar + the `-mcp` service live **inside each agent's directory** (co-located with its PVC/state, deployed by `up.sh` per agent). This is assumed — do NOT redesign or rebuild the sidecar itself. (The operator is building the Hermes-side sidecars in parallel; the Letta-side `watch_sidecar.py` + `letta_prompt` MCP already ship in `factories/sudo-letta`.)
 
 - **Letta MCP**: `sudo-{name}-mcp:8000`, `/mcp`, one tool `letta_prompt(prompt, stream, json, new_chat)` — resumes the agent's persisted conversation (or `new_chat=true`). Source `kube-scripts/letta_prompt.py` + `mcp_server.py`.
 - **Letta watch sidecar**: `sudo-{name}-watch:8000`, routes `/healthz /status /ps /events?n=N /stream`. `kube-scripts/watch_sidecar.py`, stdlib-only, unprivileged (no docker socket). Writes `events.jsonl` + `transcript.txt` + `state.json` to the agent dir. Event schema `{ts, conversation, event}` (user/thinking/assistant/tool_call/tool_result/session/process_state); `process_state` captures idle↔active transitions.
@@ -176,7 +176,7 @@ So the shape is: seed the source from the first arrival, exhaust one source comp
 
 ### Remaining questions (the ONLY things not already in the shipped code)
 
-Most of the earlier "open questions" are answered by `sudo-letta`'s shipped sidecar/MCP (see "Ground truth" above). What genuinely remains to design for the **native mesh** (the new part beyond the per-pod plumbing):
+Most of the earlier "open questions" are answered by `factories/sudo-letta`'s shipped sidecar/MCP (see "Ground truth" above). What genuinely remains to design for the **native mesh** (the new part beyond the per-pod plumbing):
 
 1. **Cross-agent routing / discoverability** — the shipped MCP is **per-pod only**: `letta_prompt` prompts ITS OWN agent, and `--list`/cross-agent name-resolution is explicitly host-side (needs kubectl/kubeconfig), NOT exposed in-pod. For "any agent → any agent," an agent still needs to **know + reach a sibling's `-mcp` Service** (`http://sudo-{name}-mcp:8000/mcp`) and call `letta_prompt`/`hermes_prompt` on it. The native layer = bake that reach syntax + a sibling phonebook into skill/tool, over the per-pod MCP the repo already ships.
 2. **Concurrency/multiplexer — RESOLVED as the message queue (see "The message queue" above).** `letta_prompt`/`hermes_prompt` are synchronous and queue-less today; the fix is a Redis-backed queue in front of the MCP door that feeds the agent one-at-a-time, grouped by sender (first-in first, then drain-one-source-fully, then next most-recent source). This is the built answer to "second prompt MUST be handled."
