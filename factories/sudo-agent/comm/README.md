@@ -5,10 +5,10 @@ communication layer: three tools + three skills + a persona snippet, so every
 Hermes engineer (`sudo-agent`) is born able to talk to, and check on, any
 sibling agent.
 
-The canonical source of truth for these is the `sudo-fleet` repo, branch
-`comm-skills-tools` (tools + skills + persona + the Letta mod packages). This
-directory is what the `sudo-agent` factory ships so the SAME three abilities
-are a **spawn-time default for every Hermes engineer** — not a per-pod bolting.
+The canonical source of truth for these is this repo on `main`, at
+`factories/sudo-agent/comm/` (tools + skills + persona). This directory is what
+the `sudo-agent` factory ships so the SAME three abilities are a **spawn-time
+default for every Hermes engineer** — not a per-pod bolting.
 
 Three folders, three layers that must align:
 
