@@ -15,9 +15,11 @@ name.
 
 ## Tool
 
-This package registers one tool:
+This package registers two tools:
 
-- `message_agent(sibling, prompt, mode="direct", new_chat=false, json=false, source=null)`
+- `message_agent(sibling, prompt, mode="inbox", new_chat=false, json=false, source=null)`
+- `queue_status(sibling)` — the recipient's queue (pending + recent results);
+  how an inbox-mode reply is fetched.
 
 ## How it reaches the sibling
 
@@ -43,9 +45,9 @@ The sibling's kind is learned from its MCP tool list at initialize:
 - `sibling` (required string) -- bare name, e.g. `fa-glm-h`, `ms-glm-l`.
   Resolved exact -> case-insensitive -> unique substring -> error.
 - `prompt` (required string) -- the message.
-- `mode` (optional, "direct" | "inbox") -- "direct" (default) sends and waits
-  for the full reply (no timeout); "inbox" enqueues and returns a message id
-  immediately.
+- `mode` (optional, "direct" | "inbox") -- "inbox" (default) enqueues and
+  returns a message id immediately; "direct" sends and waits for the full
+  reply (no timeout, explicit opt-in).
 - `new_chat` (optional bool) -- planners only; true = fresh conversation.
 - `json` (optional bool) -- true = structured reply.
 - `source` (optional string) -- a stable tag grouping your messages in the
@@ -59,3 +61,24 @@ The sibling's kind is learned from its MCP tool list at initialize:
 - `requiresApproval: false`, `parallelSafe: true`.
 - The tool never throws: roster/bridge/MCP failures are returned as an error
   result with the underlying detail.
+
+## Prerequisite gate
+
+Both tools refuse to run until the `message-agent` skill has been loaded in
+the current conversation. The mod observes the `Skill` tool's `tool_start`
+event for that skill name (per conversation, in-memory) and, when the skill
+has not been loaded, returns:
+
+    BLOCKED: load the message-agent skill first (Skill tool), then retry.
+
+Each tool description begins with `REQUIRES: load the message-agent skill
+first.` A new conversation starts blocked again.
+
+## queue_status (fetch an inbox reply)
+
+`message_agent(mode="inbox")` returns a message id immediately. Fetch the
+reply later with `queue_status(sibling)` — it reads the recipient's prompt
+queue (pending + recent results, each with id/source/status/reply) by calling
+the sibling's `letta_queue_status` (planner) or `hermes_queue_status`
+(engineer), auto-detected from the sibling's tool list.
+

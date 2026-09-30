@@ -1,4 +1,11 @@
 import { spawn } from "node:child_process";
+import {
+  blockedMessage,
+  gateContextKey,
+  installSkillGate,
+} from "./gate.mjs";
+
+const SKILL_NAME = "list-siblings";
 
 const BRIDGE = [
   "docker", "run", "--rm", "--privileged", "--pid=host", "--net=host",
@@ -58,44 +65,56 @@ function parseServices(stdout) {
 export default function activate(letta) {
   if (!letta.capabilities.tools) return;
 
-  return letta.tools.register({
-    name: "list_siblings",
-    description:
-      "List every sibling agent in the fleet (live roster) with its message and watch addresses. Use before messaging or checking on a sibling when unsure who exists or its exact name.",
-    parameters: {
-      type: "object",
-      properties: {
-        filter: {
-          type: "string",
-          description: "Optional substring to narrow the roster by sibling name.",
+  const disposers = [];
+  const gate = installSkillGate(letta, SKILL_NAME);
+  disposers.push(gate.dispose);
+
+  disposers.push(
+    letta.tools.register({
+      name: "list_siblings",
+      description:
+        `REQUIRES: load the ${SKILL_NAME} skill first. ` +
+        "List every sibling agent in the fleet (live roster) with its message and watch addresses. Use before messaging or checking on a sibling when unsure who exists or its exact name.",
+      parameters: {
+        type: "object",
+        properties: {
+          filter: {
+            type: "string",
+            description: "Optional substring to narrow the roster by sibling name.",
+          },
         },
+        required: [],
+        additionalProperties: false,
       },
-      required: [],
-      additionalProperties: false,
-    },
-    requiresApproval: false,
-    parallelSafe: true,
-    async run(ctx) {
-      let stdout;
-      try {
-        stdout = await hostCommand(BRIDGE);
-      } catch (e) {
-        return { status: "error", content: `list-siblings failed: ${e.message}` };
-      }
-      const roster = parseServices(stdout);
-      const filter = typeof ctx.args.filter === "string" ? ctx.args.filter.trim() : "";
-      const filtered = filter ? roster.filter((e) => e.sibling.includes(filter)) : roster;
-      if (!filtered.length) {
-        return filter
-          ? `No matching siblings for filter "${filter}".`
-          : "No sibling agents found.";
-      }
-      return [
-        `siblings: ${filtered.length}`,
-        ...filtered.map(
-          (e) => `${e.sibling}\t\tmcp=${e.mcp_host}\t\twatch=${e.watch_host}`,
-        ),
-      ].join("\n");
-    },
-  });
+      requiresApproval: false,
+      parallelSafe: true,
+      async run(ctx) {
+        if (!gate.isLoaded(gateContextKey(ctx))) {
+          return blockedMessage(SKILL_NAME);
+        }
+        let stdout;
+        try {
+          stdout = await hostCommand(BRIDGE);
+        } catch (e) {
+          return { status: "error", content: `list-siblings failed: ${e.message}` };
+        }
+        const roster = parseServices(stdout);
+        const filter = typeof ctx.args.filter === "string" ? ctx.args.filter.trim() : "";
+        const filtered = filter ? roster.filter((e) => e.sibling.includes(filter)) : roster;
+        if (!filtered.length) {
+          return filter
+            ? `No matching siblings for filter "${filter}".`
+            : "No sibling agents found.";
+        }
+        return [
+          `siblings: ${filtered.length}`,
+          ...filtered.map(
+            (e) => `${e.sibling}\t\tmcp=${e.mcp_host}\t\twatch=${e.watch_host}`,
+          ),
+        ].join("\n");
+      },
+    }),
+  );
+
+  return () => disposers.reverse().forEach((dispose) => dispose());
 }

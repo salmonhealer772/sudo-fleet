@@ -525,9 +525,9 @@ PYEOF' || true
   # check the npm mods use. Each entry is "<local-package-dir>|<verify-string>".
   # Canonical source + packaging spec: sudo-fleet/docs/comm-mods-PACKAGING.md.
   COMM_MODS=(
-    "mods/list-siblings|npm:@letta-ai/list-siblings@0.1.0"
-    "mods/check-agent|npm:@letta-ai/check-agent@0.1.0"
-    "mods/message-agent|npm:@letta-ai/message-agent@0.1.0"
+    "mods/list-siblings|npm:@letta-ai/list-siblings@0.2.0"
+    "mods/check-agent|npm:@letta-ai/check-agent@0.2.0"
+    "mods/message-agent|npm:@letta-ai/message-agent@0.2.0"
   )
 
   LETTA_JS="/usr/local/lib/node_modules/@letta-ai/letta-code/letta.js"

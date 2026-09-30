@@ -31,6 +31,13 @@
 // argv passed as an ARRAY to spawn (no shell), so there is no quoting surface.
 
 import { spawn } from "node:child_process";
+import {
+  blockedMessage,
+  gateContextKey,
+  installSkillGate,
+} from "./gate.mjs";
+
+const SKILL_NAME = "check-agent";
 
 // --- the host bridge: docker -> host namespaces -> host kubectl ------------
 
@@ -240,6 +247,7 @@ function errorResult(content) {
 }
 
 const DESCRIPTION =
+  `REQUIRES: load the ${SKILL_NAME} skill first. ` +
   "Read a sibling agent's trail — the ONE observability read that answers both " +
   "\"what has it been doing\" and \"what is it doing right now\". " +
   "mode=\"full\" (default) returns the sibling's raw event stream over HTTP " +
@@ -254,7 +262,11 @@ const DESCRIPTION =
 export default function activate(letta) {
   if (!letta.capabilities.tools) return;
 
-  return letta.tools.register({
+  const disposers = [];
+  const gate = installSkillGate(letta, SKILL_NAME);
+  disposers.push(gate.dispose);
+
+  disposers.push(letta.tools.register({
     name: "check_agent",
     description: DESCRIPTION,
     parameters: {
@@ -283,6 +295,9 @@ export default function activate(letta) {
     requiresApproval: false,
     parallelSafe: true,
     async run(ctx) {
+      if (!gate.isLoaded(gateContextKey(ctx))) {
+        return blockedMessage(SKILL_NAME);
+      }
       const args = (ctx && ctx.args) || {};
 
       // --- inputs ---
@@ -376,7 +391,9 @@ export default function activate(letta) {
       if (!text) return `sibling ${entry.sibling}: no events (GET ${url}).`;
       return text;
     },
-  });
+  }));
+
+  return () => disposers.reverse().forEach((dispose) => dispose());
 }
 
 export const __test = {

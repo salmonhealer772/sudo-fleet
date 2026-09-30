@@ -77,3 +77,16 @@ Deployment (`app` label / first container name):
   result carrying the underlying stderr/message.
 - Nothing outside the roster Services, the target Deployment label, the
   `-watch` HTTP tap, and the sibling transcript file is read.
+
+## Prerequisite gate
+
+`check_agent` refuses to run until the `check-agent` skill has been loaded in
+the current conversation. The mod observes the `Skill` tool's `tool_start`
+event for that skill name (per conversation, in-memory) and, when the skill
+has not been loaded, returns:
+
+    BLOCKED: load the check-agent skill first (Skill tool), then retry.
+
+The tool description begins with `REQUIRES: load the check-agent skill
+first.` A new conversation starts blocked again.
+

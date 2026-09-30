@@ -18,6 +18,13 @@
 // not cut); inbox mode returns the enqueued message id immediately.
 
 import { spawn } from "node:child_process";
+import {
+  blockedMessage,
+  gateContextKey,
+  installSkillGate,
+} from "./gate.mjs";
+
+const SKILL_NAME = "message-agent";
 
 // The host bridge: docker -> host namespaces -> host kubectl.
 const BRIDGE_CMD = "docker";
@@ -271,9 +278,14 @@ function shapeResult(text, { json, mode }) {
 export default function activate(letta) {
   if (!letta.capabilities.tools) return;
 
-  return letta.tools.register({
+  const disposers = [];
+  const gate = installSkillGate(letta, SKILL_NAME);
+  disposers.push(gate.dispose);
+
+  disposers.push(letta.tools.register({
     name: "message_agent",
     description:
+      `REQUIRES: load the ${SKILL_NAME} skill first. ` +
       "Message any sibling agent in this sudo-fleet by bare name and return its reply. This is the PRIMARY way agents work together -- delegate, ask, coordinate, hand off. Resolves the sibling from the live cluster roster (exact -> case-insensitive -> unique substring -> error), reaches its -mcp door over MCP, and calls its prompt tool (letta_prompt for a Letta planner, hermes_prompt for a Hermes engineer -- auto-detected). mode='inbox' (default) sends and returns a message id immediately; mode='direct' waits for the full reply with no timeout (explicit opt-in). new_chat=true starts a fresh conversation (planners only; ignored for engineers). json=true returns the structured reply. source tags the message for group-by-source ordering in the recipient's queue.",
     parameters: {
       type: "object",
@@ -315,6 +327,9 @@ export default function activate(letta) {
     requiresApproval: false,
     parallelSafe: true,
     async run(ctx) {
+      if (!gate.isLoaded(gateContextKey(ctx))) {
+        return blockedMessage(SKILL_NAME);
+      }
       const args = (ctx && ctx.args) || {};
       const sibling = args.sibling;
       const prompt = args.prompt;
@@ -359,7 +374,73 @@ export default function activate(letta) {
         return `message_agent: ${toolName} on ${entry.sibling} failed: ${error.message}`;
       }
     },
-  });
+  }));
+
+  // queue_status — fetch the reply to an inbox-mode message. The recipient
+  // sibling's -mcp door exposes its prompt distributor's queue (pending +
+  // recent results) as letta_queue_status (Letta planner) or
+  // hermes_queue_status (Hermes engineer); auto-detected from the sibling's
+  // tool list, same as message_agent.
+  disposers.push(letta.tools.register({
+    name: "queue_status",
+    description:
+      `REQUIRES: load the ${SKILL_NAME} skill first. ` +
+      "Read the recipient sibling's prompt queue: pending messages plus recent results (each with id, source, status, and reply). Use this to fetch the reply to a message_agent call you made with mode='inbox' (you got back a message id) by reading the recipient's queue. Resolves the sibling live, reaches its -mcp door over MCP, and calls its queue-status tool (letta_queue_status for a planner, hermes_queue_status for an engineer).",
+    parameters: {
+      type: "object",
+      properties: {
+        sibling: {
+          type: "string",
+          description:
+            "The sibling agent whose queue to read, by bare name (the same name you passed to message_agent).",
+        },
+      },
+      required: ["sibling"],
+      additionalProperties: false,
+    },
+    requiresApproval: false,
+    parallelSafe: true,
+    async run(ctx) {
+      if (!gate.isLoaded(gateContextKey(ctx))) {
+        return blockedMessage(SKILL_NAME);
+      }
+      const args = (ctx && ctx.args) || {};
+      const sibling = args.sibling;
+      if (!sibling) {
+        return "queue_status requires `sibling`.";
+      }
+
+      const bridge = await runBridge();
+      if (!bridge.ok) {
+        const detail = (bridge.stderr || bridge.error || "").trim().slice(0, 1500);
+        return `queue_status could not read the cluster: ${detail || "unknown error"}`;
+      }
+
+      let entry;
+      try {
+        entry = resolveSibling(parseRoster(bridge.stdout), sibling);
+      } catch (error) {
+        return `queue_status: ${error.message}`;
+      }
+
+      let conn;
+      try {
+        conn = await connect(entry);
+      } catch (error) {
+        return `queue_status: could not reach ${entry.sibling} at ${entry.mcpHost}: ${error.message}`;
+      }
+
+      const statusTool = conn.kind === "hermes" ? "hermes_queue_status" : "letta_queue_status";
+      try {
+        const text = await callPrompt(conn, statusTool, {});
+        return text;
+      } catch (error) {
+        return `queue_status: ${statusTool} on ${entry.sibling} failed: ${error.message}`;
+      }
+    },
+  }));
+
+  return () => disposers.reverse().forEach((dispose) => dispose());
 }
 
 export const __test = { BRIDGE_ARGS, runBridge, parseRoster, resolveSibling };
