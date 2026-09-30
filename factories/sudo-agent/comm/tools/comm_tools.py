@@ -112,8 +112,14 @@ def list_siblings(filter=None, *, fleet):
 
 # --- message-agent ---------------------------------------------------------
 
-def message_agent(sibling, prompt, mode="direct", new_chat=False, json=False,
+def message_agent(sibling, prompt, mode="inbox", new_chat=False, json=False,
                   source=None, *, fleet):
+    """Send a prompt to a sibling agent and return its reply.
+
+    mode "inbox" (default): enqueue and return a message id immediately.
+    mode "direct": enqueue and WAIT for the reply (explicit opt-in,
+        no timeout).
+    """
     entry = fleet.resolve(sibling)
     url = f"http://{entry['mcp_host']}/mcp"
     if entry["kind"] == "hermes":

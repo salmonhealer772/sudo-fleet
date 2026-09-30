@@ -18,12 +18,12 @@ prompt at a time. N rapid prompts = N queued runs, never N parallel runs
 racing the same agent state.
 
 Tool surface:
-    hermes_prompt(prompt, json=False, mode="direct", source="")
-        mode "direct": enqueue and WAIT for the reply (synchronous, no
-                       timeout — long jobs are fine).
-        mode "inbox":  enqueue and return a message id immediately. The id
-                       is stable and referenceable, so a check(message_id)
+    hermes_prompt(prompt, json=False, mode="inbox", source="")
+        mode "inbox" (default): enqueue and return a message id immediately.
+                       The id is stable and referenceable, so a check(message_id)
                        tool can be added later without breaking changes.
+        mode "direct": enqueue and WAIT for the reply (synchronous, no
+                       timeout — long jobs are fine; explicit opt-in).
         source:       id of the MCP client/session that enqueued (used for
                        the group-by-source ordering rule; defaults to the
                        FastMCP session id, or "default").
@@ -318,7 +318,7 @@ def _session_source():
 def hermes_prompt(
     prompt: str,
     json: bool = False,
-    mode: str = "direct",
+    mode: str = "inbox",
     source: str = "",
 ) -> str:
     """Send a prompt to THIS sudo-agent agent through the prompt distributor.
@@ -332,11 +332,11 @@ def hermes_prompt(
         prompt: The message to send.
         json: Pretty-print the reply as JSON when stdout is valid JSON,
             otherwise pass the raw text through unchanged.
-        mode: "direct" (default) — enqueue and WAIT for the reply (no
-            timeout, safe for long jobs). "inbox" — enqueue and return the
-            message id immediately; the id is stable and can be looked up
-            later via hermes_queue_status (a check(message_id) tool can be
-            added without breaking changes).
+        mode: "inbox" (default) — enqueue and return the message id
+            immediately; the id is stable and can be looked up later via
+            hermes_queue_status (a check(message_id) tool can be added
+            without breaking changes). "direct" — enqueue and WAIT for the
+            reply (no timeout, safe for long jobs; explicit opt-in).
         source: Id of the enqueuing MCP client/session (the ordering rule
             groups by source: the first source's backlog is drained fully
             before the next most recent source). Defaults to the FastMCP
@@ -352,7 +352,7 @@ def hermes_prompt(
     if mode != "direct":
         raise ValueError(f"unknown mode {mode!r} (expected 'direct' or 'inbox')")
 
-    # direct: enqueue + WAIT for the reply. No timeout — long jobs are fine.
+    # direct (explicit opt-in): enqueue + WAIT for the reply. No timeout — long jobs are fine.
     while True:
         raw = r.get(_res_key(msg_id))
         if raw:

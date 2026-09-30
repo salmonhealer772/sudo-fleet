@@ -20,10 +20,10 @@ racing the same agent state.
 
 Tool surface:
     letta_prompt(prompt, stream=False, json=False, new_chat=False,
-                 mode="direct", source="")
+                 mode="inbox", source="")
+        mode "inbox" (default): enqueue and return a message id immediately.
         mode "direct": enqueue and WAIT for the reply (synchronous, no
-                       timeout — long jobs are fine).
-        mode "inbox":  enqueue and return a message id immediately.
+                       timeout — long jobs are fine; explicit opt-in).
         source:        id of the MCP client/session that enqueued (used for
                        the group-by-source ordering rule; defaults to "default").
 
@@ -271,7 +271,7 @@ def letta_prompt(
     stream: bool = False,
     json: bool = False,
     new_chat: bool = False,
-    mode: str = "direct",
+    mode: str = "inbox",
     source: str = "",
 ) -> str:
     """Send a prompt to THIS sudo-letta agent through the prompt distributor.
@@ -285,9 +285,10 @@ def letta_prompt(
         stream: Select the --stream path (stream-json deltas, returned joined).
         json: Return the raw JSON object from --output-format json.
         new_chat: Start a fresh conversation (--new) instead of resuming.
-        mode: "direct" (default) — enqueue and WAIT for the reply (no timeout,
-            safe for long jobs). "inbox" — enqueue and return the message id
+        mode: "inbox" (default) — enqueue and return the message id
             immediately; fetch the reply later via letta_queue_status.
+            "direct" — enqueue and WAIT for the reply (no timeout, safe for
+            long jobs; explicit opt-in).
         source: Id of the enqueuing MCP client/session (ordering rule b/c
             groups by source). Defaults to the FastMCP session id, or
             "default" when none is available.
@@ -302,7 +303,7 @@ def letta_prompt(
     if mode != "direct":
         raise ValueError(f"unknown mode {mode!r} (expected 'direct' or 'inbox')")
 
-    # direct: enqueue + WAIT for the reply. No timeout — long jobs are fine.
+    # direct (explicit opt-in): enqueue + WAIT for the reply. No timeout — long jobs are fine.
     while True:
         raw = r.get(_res_key(msg_id))
         if raw:
