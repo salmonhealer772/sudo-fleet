@@ -90,6 +90,29 @@ _apply_fleet_block() {
 _apply_fleet_block /opt/data/SOUL.md /opt/comm/PERSONA-SNIPPET.md
 chown 10000:10000 /opt/data/SOUL.md 2>/dev/null || true
 
+# First-boot gap: on a FRESH no-glimor pod SOUL.md does not exist yet when this
+# entrypoint runs — the gateway creates its default 514-byte SOUL.md only AFTER
+# we exec it below, so the synchronous apply above no-oped (file absent) and the
+# block would stay missing until the next restart. Close the gap with a one-shot
+# background watcher: poll for SOUL.md to appear and apply the managed block the
+# moment it does. Idempotent (the gateway never rewrites an existing SOUL.md, so
+# one apply per boot is enough), and only spawned when the file is absent now —
+# on restarts/glimes the synchronous apply above already handled it.
+if [ ! -f /opt/data/SOUL.md ]; then
+  (
+    _fc_n=0
+    while [ "$_fc_n" -lt 300 ]; do
+      [ -f /opt/data/SOUL.md ] && [ -s /opt/data/SOUL.md ] && break
+      sleep 1
+      _fc_n=$((_fc_n+1))
+    done
+    if [ -f /opt/data/SOUL.md ] && [ -s /opt/data/SOUL.md ]; then
+      _apply_fleet_block /opt/data/SOUL.md /opt/comm/PERSONA-SNIPPET.md
+      chown 10000:10000 /opt/data/SOUL.md 2>/dev/null || true
+    fi
+  ) &
+fi
+
 PORT="${MCP_PORT:-8000}"
 
 # Offline-fallback Redis port: derived from MCP_PORT so it is unique per agent.

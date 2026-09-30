@@ -582,6 +582,12 @@ PYEOF' || true
   # initContainer commits). On a brand-new no-glimor deploy the MemFS does not
   # exist until the agent is first created, so a missing dir is a WARN here, not
   # a fatal (the skills land on the next deploy or the first --from-glimor fork).
+  # NOTE: this repo's skills/ dir also carries a top-level README.md (repo docs).
+  # It MUST NOT be copied into the MemFS skills/ dir: the MemFS pre-commit hook
+  # rejects a bare file under skills/ ("skills must be folders") and silently
+  # aborts the git commit, leaving the skills + persona uncommitted (lost on
+  # glimor save). So the copy below uses the `*/` glob to take ONLY the skill
+  # subdirectories, never the loose files.
   if [[ ! -d "$REPO_DIR/skills" ]]; then
     echo "✗ FATAL: $REPO_DIR/skills missing — comm skills cannot be seeded; aborting deploy" >&2
     exit 1
@@ -593,7 +599,7 @@ PYEOF' || true
   fi
   _memfs_memory="$(kubectl exec "$POD" -- bash -c 'for d in /home/node/.letta/lc-local-backend/memfs/*/memory; do [ -d "$d" ] && { echo "$d"; break; }; done' 2>/dev/null)"
   if [[ -n "$_memfs_memory" ]]; then
-    if ! kubectl exec "$POD" -- bash -c "mkdir -p '$_memfs_memory/skills' && cp -a /tmp/comm-skills/. '$_memfs_memory/skills/' && chown -R node:node '$_memfs_memory/skills'"; then
+    if ! kubectl exec "$POD" -- bash -c "mkdir -p '$_memfs_memory/skills' && cp -a /tmp/comm-skills/*/ '$_memfs_memory/skills/' && chown -R node:node '$_memfs_memory/skills'"; then
       echo "✗ FATAL: could not seed comm skills into agent MemFS — aborting deploy" >&2
       exit 1
     fi
