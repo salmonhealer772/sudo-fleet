@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/message-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Letta Code mod package that adds an agent-callable message_agent tool for messaging any sibling agent in the sudo-fleet by name and reading its reply.",
   "author": "forge",
   "license": "MIT",
@@ -25,7 +25,8 @@
       "./mods/index.mjs"
     ],
     "capabilities": [
-      "tools"
+      "tools",
+      "events.tools"
     ],
     "engines": {
       "lettaCodeCli": ">=0.27.14"

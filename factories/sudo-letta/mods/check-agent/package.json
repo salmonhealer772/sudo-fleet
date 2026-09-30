@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/check-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Letta Code mod package that adds check_agent: read a sibling agent's trail (full event stream or compressed transcript) at any depth.",
   "author": "ya-glm-h",
   "license": "MIT",
@@ -23,7 +23,8 @@
       "./mods/index.mjs"
     ],
     "capabilities": [
-      "tools"
+      "tools",
+      "events.tools"
     ],
     "engines": {
       "lettaCodeCli": ">=0.27.14"

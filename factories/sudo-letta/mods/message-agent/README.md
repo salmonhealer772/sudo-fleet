@@ -1,7 +1,9 @@
 # @letta-ai/message-agent
 
-A Letta Code mod package that gives an agent one extra tool: **`message_agent`** --
-message any sibling agent in the sudo-fleet by bare name and read its reply.
+A Letta Code mod package that gives an agent two extra tools: **`message_agent`** --
+message any sibling agent in the sudo-fleet by bare name and read its reply --
+and **`queue_status`** -- read a recipient sibling's prompt queue to fetch an
+inbox-mode reply by id.
 
 ## What it does
 
@@ -20,9 +22,9 @@ Ask the agent to message a sibling:
 
 ## Delivery modes
 
-- `direct` (default) -- send and WAIT for the full reply (no timeout).
-- `inbox` -- enqueue and return a message id immediately; fetch the reply
-  later via the sibling's `*_queue_status` tool.
+- `inbox` (default) -- enqueue and return a message id immediately; fetch the
+  reply later via `queue_status(sibling)` (reads the recipient's queue).
+- `direct` -- send and WAIT for the full reply (no timeout, explicit opt-in).
 
 ## Install (per agent pod)
 
