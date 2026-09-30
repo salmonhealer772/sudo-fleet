@@ -1,11 +1,9 @@
 ---
 name: check-agent
-description: Read a sibling agent's trail — what it has been doing and what it is doing right now, from the same trail. Use when you want to catch up on a sibling before messaging it, or to see its current state (idle vs active). This is the ONE observability read for the fleet.
+description: Read a sibling agent's trail — what it has been doing and what it is doing right now, from the same trail. Use when you want to catch up on a sibling before messaging it, or to see its current state (idle vs active). This is the ONE observability read for the fleet. Load this skill before calling check-agent — the tool is blocked until it is loaded this conversation.
 ---
 
 # check-agent
-
-> **THIS IS A START, NOT A FULL PRODUCT.** It contains the critical info — what the tool does and every way to call it — so it is immediately usable. It is not yet the polished procedural guidance (when-to-use nuance, examples, gotchas) a finished skill will have.
 
 ## What it does
 

@@ -1,11 +1,9 @@
 ---
 name: list-siblings
-description: See every sibling agent in the fleet and how to reach them. Use when you need to know who else exists, confirm a sibling's exact name, or get the message/watch addresses to reach or observe another agent. Call this FIRST before messaging or checking on a sibling whose name you are not sure of.
+description: See every sibling agent in the fleet and how to reach them. Use when you need to know who else exists, confirm a sibling's exact name, or get the message/watch addresses to reach or observe another agent. Call this FIRST before messaging or checking on a sibling whose name you are not sure of. Load this skill before calling list-siblings — the tool is blocked until it is loaded this conversation.
 ---
 
 # list-siblings
-
-> **THIS IS A START, NOT A FULL PRODUCT.** It contains the critical info — what the tool does and every way to call it — so it is immediately usable. It is not yet the polished procedural guidance (when-to-use nuance, examples, gotchas) a finished skill will have.
 
 ## What it does
 

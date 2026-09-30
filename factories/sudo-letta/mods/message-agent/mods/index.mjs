@@ -303,7 +303,7 @@ export default function activate(letta) {
           type: "string",
           enum: ["direct", "inbox"],
           description:
-            "'inbox' (default) = send and return a message id immediately (fire-and-forget; fetch the reply later via the sibling's queue_status tool). 'direct' = send and WAIT for the full reply (no timeout, safe for long jobs) -- an explicit opt-in.",
+            "'inbox' (default) = send and return a message id immediately (fire-and-forget; fetch the reply later via the queue_status tool). 'direct' = send and WAIT for the full reply (no timeout, safe for long jobs) -- an explicit opt-in.",
         },
         new_chat: {
           type: "boolean",
