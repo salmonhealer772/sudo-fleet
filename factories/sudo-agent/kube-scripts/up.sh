@@ -169,6 +169,8 @@ fi
 #      the failure this repo refuses to accept.
 WATCH_PLUGIN_KEY="sudo-watch-stream"
 WATCH_PLUGIN_DIR="$SCRIPT_DIR/watch_plugin"
+COMM_GATE_KEY="sudo-comm-gate"
+COMM_GATE_DIR="$SCRIPT_DIR/comm_gate"
 if ! command -v python3 >/dev/null 2>&1; then
   echo "✗ python3 is required to enable $WATCH_PLUGIN_KEY in $PER_AGENT_CONFIG" >&2
   echo "  (kube-scripts/watch_plugin_enable.py). Install python3 and re-run." >&2
@@ -189,6 +191,25 @@ if ! python3 "$SCRIPT_DIR/watch_plugin_enable.py" "$PER_AGENT_CONFIG" "$WATCH_PL
   exit 1
 fi
 
+# ── Comm-gate plugin (the "load the comm skill first" prerequisite gate) ────
+# Same ConfigMap-shipped, plugins.enabled wiring as the watch plugin, but it
+# registers NO stream hooks (only on_skill_lifecycle + pre_tool_call), so it
+# does NOT need plugins.stream_reasoning_deltas. It records comm-skill loads
+# per session and blocks a comm CLI until its matching skill was loaded.
+for _f in plugin.yaml __init__.py; do
+  if [[ ! -f "$COMM_GATE_DIR/$_f" ]]; then
+    echo "✗ Missing $COMM_GATE_DIR/$_f (the $COMM_GATE_KEY plugin)" >&2
+    echo "  The comm-skill prerequisite gate would be dead without it. Aborted." >&2
+    exit 1
+  fi
+done
+echo "→ Enabling $COMM_GATE_KEY in $PER_AGENT_CONFIG..."
+if ! python3 "$SCRIPT_DIR/comm_gate_enable.py" "$PER_AGENT_CONFIG" "$COMM_GATE_KEY"; then
+  echo "✗ FAILED to enable $COMM_GATE_KEY in $PER_AGENT_CONFIG." >&2
+  echo "  Fix the config (or the helper) and re-run." >&2
+  exit 1
+fi
+
 # Content digest of everything shipped via ConfigMap into the pod (the sidecar
 # daemon + the plugin). A ConfigMap-only change does NOT roll a Deployment, and
 # a running process never re-imports a module it already loaded — so without
@@ -196,7 +217,8 @@ fi
 # running the OLD code in every live pod. It goes on the pod template, so
 # `kubectl apply` recreates the pod exactly when those files change.
 WATCH_SCRIPTS_SHA="$(sha256sum "$WATCH_SIDECAR" \
-    "$WATCH_PLUGIN_DIR/plugin.yaml" "$WATCH_PLUGIN_DIR/__init__.py" 2>/dev/null \
+    "$WATCH_PLUGIN_DIR/plugin.yaml" "$WATCH_PLUGIN_DIR/__init__.py" \
+    "$COMM_GATE_DIR/plugin.yaml" "$COMM_GATE_DIR/__init__.py" 2>/dev/null \
   | awk '{print $1}' | sha256sum | awk '{print $1}')"
 if [[ -z "$WATCH_SCRIPTS_SHA" ]]; then
   echo "✗ could not compute the watch-scripts digest — refusing to deploy an" >&2
@@ -276,7 +298,7 @@ _HD_BACKTICKS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\`//g' | grep -c '`' || tru
 #    the hazard without tripping the guard.
 _HD_SUBS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\\$[(]//g' \
              | grep -o '\$(' | wc -l | tr -d ' ')"
-_HD_KNOWN_SUBS=3
+_HD_KNOWN_SUBS=5
 if [[ "$_HD_BACKTICKS" -ne 0 || "$_HD_SUBS" -ne "$_HD_KNOWN_SUBS" ]]; then
   echo "✗ FATAL: the manifest heredoc in $0 contains a command the shell would" >&2
   echo "  EXECUTE on every deploy (unescaped backticks: $_HD_BACKTICKS; command" >&2
@@ -414,6 +436,11 @@ $EXTRA_ENV
         - name: watch-plugin
           mountPath: /opt/data/plugins/$WATCH_PLUGIN_KEY
           readOnly: true
+        # Comm-gate plugin: same discovery dir, mounted read-only (it writes
+        # its per-session ledger to /opt/data/comm-gate/state.json instead).
+        - name: comm-gate-plugin
+          mountPath: /opt/data/plugins/$COMM_GATE_KEY
+          readOnly: true
         - name: docker-sock
           mountPath: /var/run/docker.sock
       # ── Observer sidecar container ────────────────────────────────────────
@@ -448,6 +475,9 @@ $EXTRA_ENV
         - name: watch-plugin
           mountPath: /opt/data/plugins/$WATCH_PLUGIN_KEY
           readOnly: true
+        - name: comm-gate-plugin
+          mountPath: /opt/data/plugins/$COMM_GATE_KEY
+          readOnly: true
       volumes:
       - name: data
         persistentVolumeClaim:
@@ -468,6 +498,10 @@ $SEED_VOLUME
       - name: watch-plugin
         configMap:
           name: $DEPLOY-watch-plugin
+          defaultMode: 0755
+      - name: comm-gate-plugin
+        configMap:
+          name: $DEPLOY-comm-gate-plugin
           defaultMode: 0755
 ---
 # ── Observer sidecar (watch) ──────────────────────────────────────────────
@@ -513,6 +547,22 @@ data:
 $(sed 's/^/    /' "$WATCH_PLUGIN_DIR/plugin.yaml")
   __init__.py: |
 $(sed 's/^/    /' "$WATCH_PLUGIN_DIR/__init__.py")
+---
+# ── Comm-gate plugin (the "load the comm skill first" gate) ───────────────
+# Mounted into BOTH containers: the agent loads it as a plugin; the watch
+# container gets the same path so the deploy probe can prove it is installed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: $DEPLOY-comm-gate-plugin
+  labels:
+    app: sudo-agent
+    agent: $NAME
+data:
+  plugin.yaml: |
+$(sed 's/^/    /' "$COMM_GATE_DIR/plugin.yaml")
+  __init__.py: |
+$(sed 's/^/    /' "$COMM_GATE_DIR/__init__.py")
 ---
 apiVersion: v1
 kind: Service
@@ -574,17 +624,18 @@ _manifest_check() {
   for kind in PersistentVolumeClaim Deployment; do
     grep -qx "kind: ${kind}" "$YAML" || missing+=("kind: ${kind}")
   done
-  for kind in ConfigMap Service; do
-    n="$(grep -cx "kind: ${kind}" "$YAML" || true)"
-    [[ "${n:-0}" -eq 2 ]] || missing+=("2x kind: ${kind} (found ${n:-0})")
-  done
+  n="$(grep -cx "kind: ConfigMap" "$YAML" || true)"
+  [[ "${n:-0}" -eq 3 ]] || missing+=("3x kind: ConfigMap (found ${n:-0})")
+  n="$(grep -cx "kind: Service" "$YAML" || true)"
+  [[ "${n:-0}" -eq 2 ]] || missing+=("2x kind: Service (found ${n:-0})")
   # The ConfigMap payloads are produced by `sed` command substitutions: if one
   # of those fails, bash substitutes an empty string and the pod would mount an
   # empty sidecar/plugin. Prove the bodies are really there.
   local pat
   for pat in 'watch_sidecar.py: |' 'plugin.yaml: |' '__init__.py: |' \
              '"stream_file"' "sudo-agent/watch-scripts-sha: \"$WATCH_SCRIPTS_SHA\"" \
-             "hostPath:" "claimName: $DEPLOY-data"; do
+             "name: $DEPLOY-comm-gate-plugin" "hostPath:" \
+             "claimName: $DEPLOY-data"; do
     grep -qF -- "$pat" "$YAML" || missing+=("$pat")
   done
   if (( ${#missing[@]} == 0 )); then
@@ -777,6 +828,37 @@ else
     echo "  Check the $DEPLOY-watch-plugin ConfigMap, its mount at" >&2
     echo "  /opt/data/plugins/$WATCH_PLUGIN_KEY, and plugins.enabled in $PER_AGENT_CONFIG." >&2
     echo "  Override (leaves the stream unverified): SUDO_AGENT_SKIP_STREAM_PROBE=1" >&2
+    exit 1
+  fi
+fi
+
+# ── Prove the comm-gate hooks actually registered ───────────────────────────
+# on_skill_lifecycle is registered ONLY by sudo-comm-gate, so a count of 0
+# means the plugin was not discovered/enabled and the "load the comm skill
+# first" gate would silently never arm. Reuses the rollout already waited on.
+COMM_GATE_PROBE='from hermes_cli import plugins as p
+p._ensure_plugins_discovered(force=True)
+n = len(p.iter_hook_callbacks("on_skill_lifecycle"))
+print("on_skill_lifecycle=%d" % n)
+raise SystemExit(0 if n >= 1 else 4)'
+
+if [[ "${SUDO_AGENT_SKIP_COMM_GATE_PROBE:-}" == "1" ]]; then
+  echo "⚠ SUDO_AGENT_SKIP_COMM_GATE_PROBE=1 — NOT proving the $COMM_GATE_KEY hooks" >&2
+else
+  CG_PROBE_CMD=(/opt/hermes/.venv/bin/python -c "$COMM_GATE_PROBE")
+  if kubectl exec "deploy/$DEPLOY" -c sudo-agent -- runuser -u hermes -- true >/dev/null 2>&1; then
+    CG_PROBE_CMD=(runuser -u hermes -- /opt/hermes/.venv/bin/python -c "$COMM_GATE_PROBE")
+  fi
+  _cg_out="$(kubectl exec "deploy/$DEPLOY" -c sudo-agent -- "${CG_PROBE_CMD[@]}" 2>&1)"
+  _cg_rc=$?
+  echo "   $COMM_GATE_KEY hooks: ${_cg_out##*$'\n'}"
+  if [[ $_cg_rc -ne 0 ]]; then
+    echo "✗ FATAL: $COMM_GATE_KEY did NOT register on_skill_lifecycle in $DEPLOY." >&2
+    echo "  probe said: $_cg_out" >&2
+    echo "  The comm-skill prerequisite gate would silently never arm. Check the" >&2
+    echo "  $DEPLOY-comm-gate-plugin ConfigMap, its mount at" >&2
+    echo "  /opt/data/plugins/$COMM_GATE_KEY, and plugins.enabled in $PER_AGENT_CONFIG." >&2
+    echo "  Override (leaves the gate unverified): SUDO_AGENT_SKIP_COMM_GATE_PROBE=1" >&2
     exit 1
   fi
 fi

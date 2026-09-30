@@ -1,6 +1,6 @@
 ---
 name: message-agent
-description: Send a prompt to any sibling agent by name and get its reply. This is the PRIMARY way agents in the fleet work together — delegate, ask, coordinate, hand off. Use whenever you need another agent to do or answer something.
+description: Send a prompt to any sibling agent by name and get its reply. This is the PRIMARY way agents in the fleet work together — delegate, ask, coordinate, hand off. Use whenever you need another agent to do or answer something. Load this skill before running message_agent.py — the tool is blocked until it is loaded this session.
 ---
 
 # message-agent
