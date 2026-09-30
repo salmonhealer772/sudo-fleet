@@ -11,8 +11,8 @@ Feature: Message a sibling agent
   message at a time, drops nothing, and never races the agent's state.
 
   Delivery has TWO modes, matching the shipped mcp_server on both factories:
-    - direct (default) — send and WAIT for the reply (no timeout; long jobs fine)
-    - inbox — send and return a message id immediately; fetch the reply later
+    - inbox (default) — send and return a message id immediately; fetch the reply later
+    - direct — send and WAIT for the reply (no timeout; long jobs fine; explicit opt-in)
   A "source" tag groups messages for the group-by-source ordering rule.
 
   A sibling is addressed by its bare name (the deployment name minus the
@@ -33,11 +33,11 @@ Feature: Message a sibling agent
     Then it calls letta_prompt with prompt "Who are you?", json=false, new_chat=false, mode="direct"
     And it waits for and returns the plain-text reply string from "fa-glm-l"
 
-  Scenario: Default mode is direct (send and wait)
+  Scenario: Default mode is inbox (send and return an id)
     Given agent "fa-glm-l" is reachable at "sudo-fa-glm-l-mcp:8000"
     When I call message-agent with sibling "fa-glm-l" and prompt "hi" (no mode given)
-    Then it calls letta_prompt with mode "direct"
-    And it returns the full reply, however long the job takes (no 120s cutoff)
+    Then it calls letta_prompt with mode "inbox"
+    And it returns a JSON object with a message "id" and status "pending"
 
   Scenario: inbox mode enqueues and returns a message id immediately
     Given agent "fa-glm-l" is reachable at "sudo-fa-glm-l-mcp:8000"
@@ -78,8 +78,8 @@ Feature: Message a sibling agent
   Scenario: Message an engineer sibling (stateless one-shot)
     Given agent "fa-glm-h" is reachable at "sudo-fa-glm-h-mcp:8000"
     When I call message-agent with sibling "fa-glm-h" and prompt "say hi"
-    Then it calls hermes_prompt with prompt "say hi", json=false, and mode direct
-    And it returns the reply string from "fa-glm-h"
+    Then it calls hermes_prompt with prompt "say hi", json=false, and mode inbox
+    And it returns a message id immediately instead of blocking
 
   Scenario: Engineer sibling has no new_chat mode
     Given agent "fa-glm-h" is reachable at "sudo-fa-glm-h-mcp:8000"
@@ -115,7 +115,7 @@ Feature: Message a sibling agent
 
   Scenario: Long job is not cut off (direct mode)
     Given agent "fa-glm-l" is reachable at "sudo-fa-glm-l-mcp:8000"
-    When I call message-agent with sibling "fa-glm-l" and a prompt that takes longer than 120s
+    When I call message-agent with sibling "fa-glm-l", mode "direct", and a prompt that takes longer than 120s
     Then the call is not cut off at 120s
     And I eventually get the full reply
 
