@@ -3,8 +3,9 @@ set -euo pipefail
 
 # sudo-fleet/setup.sh — Command 1 of 2 (bootstrap ONLY).
 # Bootstraps a bare Linux box: docker + k3s (single node), prompts for the API
-# keys FIRST (writes them to sudo-fleet/.env), clones the two factory repos
-# NESTED inside this one folder, and builds both factory images non-interactively.
+# keys FIRST (writes them to sudo-fleet/.env), uses the two factory trees
+# vendored at factories/ inside this folder, and builds both factory images
+# non-interactively.
 # It does NOT deploy agents — that is Command 2.
 #
 #   Command 1 (run from ANY directory — clone + cd + this script):
@@ -29,10 +30,8 @@ set -euo pipefail
 FLEET_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLEET_ENV="$FLEET_HOME/.env"
 
-AGENT_REPO="$FLEET_HOME/sudo-agent"
-LETTA_REPO="$FLEET_HOME/sudo-letta"
-
-GH="https://github.com/salmonhealer772"
+AGENT_REPO="$FLEET_HOME/factories/sudo-agent"
+LETTA_REPO="$FLEET_HOME/factories/sudo-letta"
 
 die()  { echo "✗ $*" >&2; exit 1; }
 step() { echo ""; echo "── $* ──"; }
@@ -96,7 +95,7 @@ if ! is_root; then
 fi
 
 # --- 1. API keys — prompt at the gate (BEFORE any build work) ------------------
-step "1/6 API keys (prompt)"
+step "1/5 API keys (prompt)"
 _source_env() {
   set +euo pipefail
   # shellcheck disable=SC1090
@@ -197,7 +196,7 @@ unset _wk
 ok "API keys validated + exported"
 
 # --- 2. Docker ------------------------------------------------------------------
-step "2/6 Bootstrap: Docker"
+step "2/5 Bootstrap: Docker"
 _bootstrap_docker() {
   curl -fsSL https://get.docker.com | $SUDO sh
 }
@@ -231,7 +230,7 @@ $SUDO docker info >/dev/null 2>&1 || die "docker daemon is not usable even with 
 ok "Docker ready"
 
 # --- 3. k3s ---------------------------------------------------------------------
-step "3/6 Bootstrap: k3s (single node)"
+step "3/5 Bootstrap: k3s (single node)"
 KUBECONFIG_PATH="/etc/rancher/k3s/k3s.yaml"
 _bootstrap_k3s() {
   curl -sfL https://get.k3s.io | $SUDO sh -
@@ -268,51 +267,14 @@ kubectl wait --for=condition=Ready node --all --timeout=180s >/dev/null 2>&1 \
   || warn "node not Ready within 180s (check: kubectl get nodes)"
 ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | paste -sd, -))"
 
-# --- 4. Repos (nested clones inside $FLEET_HOME) -------------------------------
-step "4/6 Repos (nested inside $FLEET_HOME)"
-mkdir -p "$FLEET_HOME"
-# Self-heal ownership: a `sudo git clone` leaves FLEET_HOME root-owned, so the
-# nested as-user clones below would die with Permission denied. If we're non-root
-# and the folder isn't writable by us, take it back for the invoking user via
-# sudo. Recursive so any pre-existing root-owned subdirs (a half-finished clone)
-# are covered too. No-op when already writable; never touches anything outside
-# $FLEET_HOME; never clobbers ownership the user already has.
-if ! is_root && [[ ! -w "$FLEET_HOME" ]]; then
-  warn "repo is root-owned from sudo clone — taking ownership for $TARGET_USER"
-  $SUDO chown -R "$TARGET_USER" "$FLEET_HOME" \
-    || die "could not chown $FLEET_HOME to $TARGET_USER — nested clones would fail"
-fi
-# Clone/pull the nested factories as the INVOKING user (never sudo): FLEET_HOME
-# is owned by whoever cloned this repo, so the nested repos stay user-owned and
-# git works on re-runs without a sudo credential (a `sudo git` in a subshell
-# does NOT share the sudo cache and dies with "a terminal is required").
-_git_pull() {
-  local dir="$1" url="$2"
-  (cd "$dir" && git remote set-url origin "$url" && git pull --ff-only)
-}
-_clone_or_pull() {
-  local url="$1" dir="$2"
-  export GIT_TERMINAL_PROMPT=0
-  if [[ -d "$dir/.git" ]]; then
-    echo "→ $dir exists — git pull"
-    _retry 3 "git pull $dir" _git_pull "$dir" "$url" || die "git pull failed in $dir"
-  else
-    echo "→ cloning $url"
-    _retry 3 "git clone $dir" git clone "$url" "$dir" || die "git clone failed: $url"
-  fi
-}
-_clone_or_pull "$GH/sudo-agent.git" "$AGENT_REPO"
-_clone_or_pull "$GH/sudo-letta.git" "$LETTA_REPO"
-ok "factory repos nested under $FLEET_HOME"
-
-# --- 5. Non-interactive env-var bridge (the exact mechanism) -------------------
-# sudo-agent/setup.sh has an UNCONDITIONAL `read -r -p "Paste your DeepSeek API
+# --- 4. Non-interactive env-var bridge (the exact mechanism) -------------------
+# factories/sudo-agent/setup.sh has an UNCONDITIONAL `read -r -p "Paste your DeepSeek API
 # key: "`. Neither an env var nor a pre-seeded .env can skip it — the ONLY way
 # to make it non-interactive is to feed the key on STDIN, which `read` consumes.
 #
-# sudo-letta/setup.sh gates its `read` prompts on `.sudo-letta/.env` NOT already
+# factories/sudo-letta/setup.sh gates its `read` prompts on `.sudo-letta/.env` NOT already
 # holding a non-empty `API_KEY=`. Pre-seeding that file skips the prompts.
-step "5/6 Non-interactive env-var bridge"
+step "4/5 Non-interactive env-var bridge"
 $SUDO mkdir -p "$LETTA_REPO/.sudo-letta"
 # Build the pre-seed .env in a user-owned temp file (never pipe into sudo, so
 # no hidden sudo prompt), then install it into place under sudo. An `if` guard
@@ -335,8 +297,8 @@ $SUDO install -m 600 "$_env_tmp" "$LETTA_REPO/.sudo-letta/.env" \
 rm -f "$_env_tmp"
 ok "pre-seeded $LETTA_REPO/.sudo-letta/.env (skips letta prompts)"
 
-# --- 6. Build images (factory setup.sh, non-interactive) -----------------------
-step "6/6 Build images"
+# --- 5. Build images (factory setup.sh, non-interactive) -----------------------
+step "5/5 Build images"
 # Renew the sudo timestamp before the long image builds (a bare box with
 # docker/k3s install + full builds can approach sudo's 15-minute timeout). Run in
 # the main shell — a background/subshell `sudo` does NOT share the cache.

@@ -2,14 +2,14 @@
 
 A disposable room you stand up anywhere: saved agents are pulled in, talk to each other, and survive the room's destruction. The full spec lives in `SPEC.md`.
 
-Everything lives inside ONE folder — `sudo-fleet/`. The two factory repos (`sudo-agent`, `sudo-letta`), your `.env` secrets, and the committed `deployments/{Marc,Caesar}/` glimors are all nested inside it. No siblings, nothing outside it.
+Everything lives inside ONE folder — `sudo-fleet/`. The two factory trees (`factories/sudo-agent`, `factories/sudo-letta`), your `.env` secrets, and the committed `deployments/{Marc,Caesar}/` glimors are all nested inside it. No siblings, nothing outside it.
 
 ## Your fleet is up (two commands)
 
 On a bare Linux box (systemd + curl/wget/git/tailscale — no docker/k3s yet):
 
-**Command 1 — bootstrap** (prompts for keys, installs docker + k3s, clones the
-factories INSIDE `sudo-fleet/`, builds images). Run it from ANY directory:
+**Command 1 — bootstrap** (prompts for keys, installs docker + k3s, builds both
+factory images from the vendored `factories/`). Run it from ANY directory:
 
 ```bash
 git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet && bash setup.sh
@@ -36,8 +36,9 @@ LLM_BASE_URL=$LLM_BASE_URL           # defaulted to https://api.deepseek.com/v1 
 TAVILY_API_KEY=$TAVILY_API_KEY       # may be empty
 ```
 
-> `sudo-fleet/.env`, `sudo-fleet/sudo-agent/` and `sudo-fleet/sudo-letta/` are
-> gitignored — secrets and the nested clone trees stay out of the repo.
+> `sudo-fleet/.env` is gitignored — the secrets stay out of the repo.
+> The two factories are IN the repo at `factories/sudo-agent/` and
+> `factories/sudo-letta/` (their own live `.env`/`deployments/` stay untracked).
 > `sudo-fleet/deployments/{Marc,Caesar}/` (the committed glimors) ARE tracked.
 
 **Command 2 — bring up the cluster + stand up Marc + Caesar:**
@@ -55,14 +56,15 @@ and they diverge independently from there.
 
 ```
 sudo-fleet/
-├── setup.sh              # Command 1 — prompt keys, docker+k3s, clone factories, build images
+├── setup.sh              # Command 1 — prompt keys, docker+k3s, build images from factories/
 ├── README.md
 ├── SPEC.md
 ├── .gitignore
 ├── down.sh               # thin pointer -> kube-scripts/k8s-down.sh
 ├── .env                  # your keys (gitignored, written by setup.sh)
-├── sudo-agent/           # Hermes engineer factory (nested clone, gitignored)
-├── sudo-letta/           # Letta planner factory (nested clone, gitignored)
+├── factories/            # the two default agent factories (in-repo)
+│   ├── sudo-agent/       # Hermes engineer factory
+│   └── sudo-letta/       # Letta planner factory
 ├── deployments/          # committed glimors (the router pair's identity)
 │   ├── Marc/             # Letta planner (renamed from psnvc)
 │   └── Caesar/           # Hermes engineer (renamed from forge)

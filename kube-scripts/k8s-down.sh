@@ -10,8 +10,8 @@ set -euo pipefail
 #  down.sh is now a thin pointer that execs this script.)
 
 FLEET_HOME="${FLEET_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-AGENT_REPO="$FLEET_HOME/sudo-agent"
-LETTA_REPO="$FLEET_HOME/sudo-letta"
+AGENT_REPO="$FLEET_HOME/factories/sudo-agent"
+LETTA_REPO="$FLEET_HOME/factories/sudo-letta"
 
 die()  { echo "✗ $*" >&2; exit 1; }
 step() { echo ""; echo "── $* ──"; }
