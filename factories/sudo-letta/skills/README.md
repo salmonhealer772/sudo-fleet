@@ -18,7 +18,6 @@ callable nobody uses.
 the agent's MemFS `memory/skills/` on every deploy (see the "comm-layer skills"
 block there), so every planner is born able to list/message/check its siblings.
 
-CANONICAL SOURCE: `sudo-fleet` repo, `skills/<name>/` (comm-skills-tools branch).
-This `skills/` dir is a vendored snapshot for the factory deploy — when the
-skills change in `sudo-fleet`, re-vendor them here (byte-exact) so the factory
-and the canonical source stay in lockstep.
+CANONICAL SOURCE: this repo on `main`, at `factories/sudo-letta/skills/`.
+These are first-class files, not a vendored snapshot — edit them here; the
+factory deploy ships them directly.
