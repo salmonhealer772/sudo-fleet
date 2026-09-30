@@ -58,6 +58,10 @@
 #   with no plugin" is loud, never a silent empty screen.
 set -u
 
+# Paths inside the watch container (all on the agent's /opt/data PVC): the
+# token tape (stream.jsonl), the pre-token event tape (events.jsonl), the
+# human-readable transcript, and the plugin manifest used to prove the plugin
+# is installed. The filter is a temp Python file written on THIS host.
 STREAM_FILE="/opt/data/watch/stream.jsonl"
 EVENTS_FILE="/opt/data/watch/events.jsonl"
 TRANSCRIPT_FILE="/opt/data/watch/transcript.txt"
@@ -65,6 +69,10 @@ PLUGIN_MANIFEST="/opt/data/plugins/sudo-watch-stream/plugin.yaml"
 FILTER="$(mktemp /tmp/stream-filter.XXXXXX.py)"
 STREAM_OUT=""
 
+# die() and cleanup() implement the exit-code/Ctrl-C contract: die() tears down
+# the temp files and exits non-zero; cleanup() is the trap that kills the
+# background kubectl + renderer on INT/TERM/EXIT so Ctrl-C returns to the
+# prompt instantly, with no hanging children or leaked FIFO.
 die() { rm -f "$FILTER" "${FIFO:-}" 2>/dev/null; printf '%s\n' "$*" >&2; exit 1; }
 cleanup() {
   trap - INT TERM EXIT
@@ -87,6 +95,9 @@ if [[ -z "${KUBECONFIG:-}" ]]; then
   done
 fi
 
+# list_agents() enumerates running sudo-agent deployments (stripping the
+# `sudo-` prefix); usage() reprints this file's own header block (lines 2-29),
+# so `--help` can never drift from the doc comment at the top.
 list_agents() {
   kubectl get deploy -l app=sudo-agent \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null \
@@ -596,6 +607,11 @@ else
 fi
 KCTL_PID=$!
 wait -n 2>/dev/null
+# Reap: wait for the FIRST child to exit (kubectl or the filter); when either
+# ends, signal ourselves INT so the trap runs cleanup() and tears down the
+# other child. The trailing wait drains the remaining child and rm removes the
+# FIFO — this is what guarantees no background process or FIFO outlives a
+# Ctrl-C or a timeout.
 kill -INT $$ 2>/dev/null
 wait
 rm -f "$FIFO"
