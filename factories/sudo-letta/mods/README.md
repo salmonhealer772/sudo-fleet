@@ -10,8 +10,6 @@ These are installed at deploy time by `kube-scripts/up.sh` (see the `NPM_MODS` /
 `COMM_MODS` block) via `kubectl cp` + `letta install <path>`, and verified at
 their exact pinned version the same way the official npm mods are.
 
-CANONICAL SOURCE: `sudo-fleet` repo, `mods/<name>/` (comm-skills-tools branch),
-with the packaging spec at `docs/comm-mods-PACKAGING.md`. This `mods/` dir is a
-vendored snapshot for the factory image/deploy — when the packages change in
-`sudo-fleet`, re-vendor them here and bump the versions in both `package.json`
-and `up.sh` together.
+CANONICAL SOURCE: this repo on `main`, at `factories/sudo-letta/mods/`. These
+are first-class files, not a vendored snapshot — edit them here, and bump the
+versions in both `package.json` and `up.sh` together.
