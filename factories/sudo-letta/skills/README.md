@@ -1,4 +1,4 @@
-# sudo-letta comm skills (vendored)
+# sudo-letta comm skills
 
 The three comm-tool skills an agent is born with, one directory per skill (each
 is a single `SKILL.md`, matching the MemFS layout Letta auto-loads from

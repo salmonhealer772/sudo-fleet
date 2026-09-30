@@ -38,7 +38,7 @@ python3 /opt/comm-tools/message_agent.py fa-glm-l "do X" --source me      # tag 
 |---|---|---|
 | `sibling` (positional) | — | which sibling to message, by bare name (the `sibling` field off `list-siblings`). |
 | `prompt` (positional) | — | the message text to send. |
-| `--mode` | `inbox` | `inbox` = send and return a message `id` immediately (fire-and-forget; fetch later via the sibling's queue-status). `direct` = send and WAIT for the full reply (no timeout) — for recall/read answers ONLY (see the warning below); never for work. |
+| `--mode` | `inbox` | `inbox` = send and return a message `id` immediately (fire-and-forget; fetch the reply later with `--queue`). `direct` = send and WAIT for the full reply (no timeout) — for recall/read answers ONLY (see the warning below); never for work. |
 | `--new-chat` | off | **planners only.** Start a fresh conversation instead of resuming. Ignored for engineers. |
 | `--json` | off | Structured reply — planners return a JSON object; engineers pretty-print valid JSON (else raw text). |
 | `--source` | none | a stable tag (e.g. your own name) so the recipient groups your messages together — the group-by-source ordering rule. |
@@ -60,12 +60,26 @@ The sharp rule:
   instant recall/read answers.
 - **`inbox` (default)** = the sibling has to **go DO work** — run a build, touch
   a box, search, anything that takes steps. Enqueue and return a message `id`
-  immediately (fire-and-forget); fetch the result later, by id, via the
-  sibling's `*_queue_status` tool.
+  immediately (fire-and-forget); fetch the result later with `--queue`.
 
-**If the sibling must do ANYTHING, use `inbox` + `queue_status`.** Reserve
+**If the sibling must do ANYTHING, use `inbox` + `--queue`.** Reserve
 `direct` for the one case where the answer is already sitting in the sibling's
 memory and comes back instantly — never for work, and never for an engineer.
+
+## Fetching an inbox reply
+
+Sent a message with the default `inbox` mode and got a message `id` back? Fetch
+the reply later by reading the sibling's inbox with the `--queue` flag (no
+`prompt` argument):
+
+```sh
+python3 /opt/comm-tools/message_agent.py <sibling> --queue
+```
+
+```sh
+python3 /opt/comm-tools/message_agent.py fa-glm-l --queue
+# → pending + recent results, each {id, source, status, reply}
+```
 
 ## Planner vs engineer (the one behavioral split)
 

@@ -1,11 +1,9 @@
 ---
 name: message-agent
-description: Send a prompt to any sibling agent by name and get its reply. This is the PRIMARY way agents in the fleet work together — delegate, ask, coordinate, hand off. Use whenever you need another agent to do or answer something.
+description: Send a prompt to any sibling agent by name and get its reply. This is the PRIMARY way agents in the fleet work together — delegate, ask, coordinate, hand off. Use whenever you need another agent to do or answer something. Load this skill before calling message-agent — the tool is blocked until it is loaded this conversation.
 ---
 
 # message-agent
-
-> **THIS IS A START, NOT A FULL PRODUCT.** It contains the critical info — what the tool does and every way to call it — so it is immediately usable. It is not yet the polished procedural guidance (when-to-use nuance, examples, gotchas) a finished skill will have.
 
 ## What it does
 
@@ -82,14 +80,26 @@ Exact match → case-insensitive → unique substring → **ambiguous** (errors,
 
 ## Fetching an inbox reply — `queue_status`
 
-Sent a message with `mode="inbox"` and got back an id? Fetch the result later:
+Sent a message with `mode="inbox"` and got back a message `id`? Fetch the reply
+later with the `queue_status` tool — it is registered in the same mod as
+`message_agent`, so it is your tool, not the recipient's:
 
 ```python
 queue_status(sibling)
-# → the recipient's queue: pending + recent results (id, source, status, reply)
 ```
 
-This is the *recipient's* tool, used to read back an inboxed message by id.
+- `sibling` (required) — the bare name of the agent whose inbox to read (the
+  same name you passed to `message_agent`).
+
+```python
+queue_status("fa-glm-l")
+# → pending + recent results, each {id, source, status, reply}
+```
+
+`queue_status` resolves the sibling live, reaches its `-mcp` door over MCP, and
+reads its prompt queue for you — calling the sibling's own queue-status tool
+(`letta_queue_status` on a planner, `hermes_queue_status` on an engineer). You
+never touch those names directly; `queue_status(sibling)` is the whole call.
 
 ## When to reach for it first
 

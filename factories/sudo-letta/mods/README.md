@@ -1,4 +1,4 @@
-# sudo-letta comm mods (vendored)
+# sudo-letta comm mods
 
 The three comm-tool mod packages an agent is born with:
 

@@ -5,9 +5,9 @@ packages**, exactly like `@letta-ai/web-search`. This file is the packaging
 spec: the package shape, the install-source forms `letta install` accepts, and
 why the local `./path` form is the one `up.sh` pins.
 
-Canonical source of the packages: `mods/<name>/` in this repo (`sudo-fleet`).
-The factory (`sudo-letta`) vendors a copy under its own `mods/` so `up.sh` can
-ship them at deploy time — this repo is the source of truth.
+Canonical source of the packages: `factories/sudo-letta/mods/<name>/` in this
+repo (`sudo-fleet`). They are first-class files here (not a vendored copy), so
+`up.sh` ships them at deploy time — this repo is the source of truth.
 
 ## Package shape
 
