@@ -76,6 +76,7 @@ from comm_tools import (DEFAULT_DEPTH, HERMES_TRANSCRIPT_PATH,  # noqa: E402
                         TRANSCRIPT_PATH, AmbiguousSibling, SiblingNotFound,
                         check_agent)
 from real_transport import HostBridgeError, RealTransport  # noqa: E402
+from comm_gate import gate  # noqa: E402
 
 LETTA = "letta"
 HERMES = "hermes"
@@ -559,7 +560,9 @@ def _sidecar_error_payload(sibling, mode, code, message, **extra):
 def main(argv=None, fleet_factory=None):
     parser = argparse.ArgumentParser(
         description="Read a sibling agent's trail -- the full event stream "
-                    "(default) or the compressed chat transcript.")
+                    "(default) or the compressed chat transcript.",
+        epilog="Requires the check-agent skill to be loaded this session "
+               "(load it with skill_view first); the tool is blocked otherwise.")
     parser.add_argument("sibling",
                         help="sibling agent name (bare), e.g. fa-glm-l")
     parser.add_argument("--n", type=int, default=None, metavar="N",
@@ -575,6 +578,8 @@ def main(argv=None, fleet_factory=None):
     parser.add_argument("--timeout", type=float, default=None,
                         help="per-call timeout in seconds (default 60)")
     args = parser.parse_args(argv)
+
+    gate("check-agent")
 
     if args.n is not None and args.n != N_WHOLE_FILE and args.n <= 0:
         print(f"check-agent: n must be a positive integer or -1 (the entire "

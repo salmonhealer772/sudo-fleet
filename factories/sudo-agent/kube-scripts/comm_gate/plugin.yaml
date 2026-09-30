@@ -1,0 +1,8 @@
+name: sudo-comm-gate
+version: "1.0.0"
+description: "Deterministic prerequisite gate for the comm tools. Records, per session, that a comm skill was loaded (on_skill_lifecycle) and blocks a terminal command that runs a comm CLI until its matching skill was loaded this session (pre_tool_call). Stdlib-only, observer + block, never raises into the agent."
+author: forge-3
+kind: standalone
+hooks:
+  - on_skill_lifecycle
+  - pre_tool_call

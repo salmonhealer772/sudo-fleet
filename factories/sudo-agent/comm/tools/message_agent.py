@@ -68,6 +68,7 @@ from comm_tools import (AmbiguousSibling, SiblingNotFound,  # noqa: E402
                         message_agent, queue_status)
 from check_agent import AddressBookTransport, LiveFleet  # noqa: E402
 from real_transport import HostBridgeError  # noqa: E402
+from comm_gate import gate  # noqa: E402
 
 #: direct mode must never cut a long job (the contract's "no timeout"), so the
 #: per-call timeout is set generously. A down sidecar still fails fast:
@@ -147,7 +148,9 @@ def render_reply(result):
 
 def main(argv=None, fleet_factory=None):
     parser = argparse.ArgumentParser(
-        description="Message a sibling agent by name and get its reply.")
+        description="Message a sibling agent by name and get its reply.",
+        epilog="Requires the message-agent skill to be loaded this session "
+               "(load it with skill_view first); the tool is blocked otherwise.")
     parser.add_argument("sibling",
                         help="sibling agent name (bare), e.g. caesar or marc")
     parser.add_argument("prompt", nargs="?", default=None,
@@ -172,6 +175,8 @@ def main(argv=None, fleet_factory=None):
                         help="per-call timeout in seconds (default: effectively "
                              "no timeout for direct mode)")
     args = parser.parse_args(argv)
+
+    gate("message-agent")
 
     if not args.queue and args.prompt is None:
         print("message-agent: a prompt is required (or use --queue to read the "

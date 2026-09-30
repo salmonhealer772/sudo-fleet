@@ -40,6 +40,7 @@ import shlex  # noqa: E402
 
 from comm_tools import list_siblings  # noqa: E402  (tests/comm_tools.py)
 from real_transport import HostBridgeError, RealTransport, live_fleet  # noqa: E402
+from comm_gate import gate  # noqa: E402
 
 SIBLING = "sibling"
 MCP_HOST = "mcp_host"
@@ -83,7 +84,9 @@ def _fleet_with(transport):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="List every sibling agent in the fleet and how to reach it.")
+        description="List every sibling agent in the fleet and how to reach it.",
+        epilog="Requires the list-siblings skill to be loaded this session "
+               "(load it with skill_view first); the tool is blocked otherwise.")
     parser.add_argument("--filter", default=None, metavar="SUBSTRING",
                         help="narrow the roster to bare names containing SUBSTRING")
     parser.add_argument("--json", action="store_true",
@@ -93,6 +96,8 @@ def main(argv=None):
     parser.add_argument("--timeout", type=float, default=None,
                         help="per-command timeout in seconds (default 60)")
     args = parser.parse_args(argv)
+
+    gate("list-siblings")
 
     if args.show_command:
         transport = RealTransport(**({} if args.timeout is None else {"timeout": args.timeout}))
