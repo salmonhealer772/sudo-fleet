@@ -40,29 +40,55 @@
 
 set -u
 
-# Comm layer: seed the fleet comm skills + persona snippet on FIRST boot
-# only. The tools are baked into the image (Dockerfile COPY ->
-# /opt/comm-tools/), but Hermes reads skills from $HERMES_HOME/skills (=
-# /opt/data/skills, the PVC) and its identity from SOUL.md (also the PVC),
-# which start empty on a fresh engineer. A .comm-seeded marker makes this
-# idempotent: restarts skip it, and the agent's later edits to skills/ or
-# SOUL.md are preserved. Safe no-ops when a dir/file is absent: every seeding
-# step is `|| true`, so a missing source or an unwritable PVC can never block
-# first boot — worst case the agent starts unseeded, still runs.
+# Comm layer: two distinct concerns, split on purpose.
+#
+#   (1) SKILLS — seeded into $HERMES_HOME/skills (the PVC) on FIRST boot only,
+#       guarded by a .comm-seeded marker. The tool backends are baked into the
+#       image (Dockerfile COPY -> /opt/comm-tools/), but Hermes reads skills
+#       from the PVC and the agent may edit them later, so a re-seed every
+#       boot would clobber its edits. Safe no-ops when a dir/file is absent:
+#       every seeding step is `|| true`, so a missing source or an unwritable
+#       PVC can never block first boot — worst case the agent starts unseeded.
+#
+#   (2) PERSONA — the fleet-comm awareness snippet, applied to SOUL.md as a
+#       FACTORY-MANAGED BLOCK on EVERY boot (not first-boot-only). It lives
+#       between fixed BEGIN/END markers; on each boot we replace the content
+#       between the markers (or insert the block if absent) so the agent can
+#       never permanently lose or stale its fleet awareness, and a rebuilt
+#       image ships a fresh snippet on the next restart. Nothing outside the
+#       markers is ever touched.
 if [ ! -f /opt/data/.comm-seeded ]; then
   mkdir -p /opt/data/skills 2>/dev/null || true
   if [ -d /opt/comm-skills ]; then
     cp -a /opt/comm-skills/. /opt/data/skills/ 2>/dev/null || true
   fi
-  if [ -f /opt/comm/PERSONA-SNIPPET.md ] \
-     && [ -f /opt/data/SOUL.md ] \
-     && ! grep -q "Fleet communication" /opt/data/SOUL.md 2>/dev/null; then
-    printf "\n" >> /opt/data/SOUL.md 2>/dev/null || true
-    cat /opt/comm/PERSONA-SNIPPET.md >> /opt/data/SOUL.md 2>/dev/null || true
-  fi
-  chown -R 10000:10000 /opt/data/skills /opt/data/SOUL.md 2>/dev/null || true
+  chown -R 10000:10000 /opt/data/skills 2>/dev/null || true
   touch /opt/data/.comm-seeded 2>/dev/null || true
 fi
+
+# Fleet-comm awareness block: applied to SOUL.md on EVERY boot (managed block).
+# _apply_fleet_block <target> <snippet>: replace the content between the
+# BEGIN/END markers in place, or append the whole block if absent. Idempotent;
+# never touches anything outside the markers.
+_apply_fleet_block() {
+  _fc_target="$1"; _fc_snippet="$2"
+  _fc_begin='<!-- FLEET-COMM-AWARENESS-BEGIN -->'
+  _fc_end='<!-- FLEET-COMM-AWARENESS-END -->'
+  [ -f "$_fc_target" ] || return 0
+  [ -f "$_fc_snippet" ] || return 0
+  if ! grep -qF "$_fc_begin" "$_fc_target" || ! grep -qF "$_fc_end" "$_fc_target"; then
+    { printf '\n'; printf '%s\n' "$_fc_begin"; cat "$_fc_snippet"; printf '%s\n' "$_fc_end"; } >> "$_fc_target"
+  else
+    awk -v b="$_fc_begin" -v e="$_fc_end" -v s="$_fc_snippet" '
+      $0 == b { print; skip=1; emitted=0; next }
+      $0 == e { print; skip=0; next }
+      skip { if (!emitted) { while ((getline l < s) > 0) print l; close(s); emitted=1 } next }
+      { print }
+    ' "$_fc_target" > "$_fc_target.tmp" && mv "$_fc_target.tmp" "$_fc_target"
+  fi
+}
+_apply_fleet_block /opt/data/SOUL.md /opt/comm/PERSONA-SNIPPET.md
+chown 10000:10000 /opt/data/SOUL.md 2>/dev/null || true
 
 PORT="${MCP_PORT:-8000}"
 

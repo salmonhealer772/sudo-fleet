@@ -51,10 +51,12 @@ RUN chmod +x /opt/hermes-mcp/mcp_entrypoint.sh && \
     chown -R hermes:hermes /opt/hermes-mcp
 
 # Comm layer: the 3 native cross-agent tools (list-siblings, message-agent,
-# check-agent) + their skills + persona snippet. The tool backends are baked
-# into the image here (image-level, NOT shadowed by the /opt/data PVC); the
-# skills + persona are staged in the image and seeded into the PVC on first
-# boot by mcp_entrypoint.sh (see the seed block there).
+# check-agent) + their skills + the shared persona snippet. The tool backends
+# are baked into the image here (image-level, NOT shadowed by the /opt/data
+# PVC). The skills are staged here and seeded into the PVC on FIRST boot by
+# mcp_entrypoint.sh; the persona snippet is the ONE shared fleet-comm
+# awareness text (byte-identical to the sudo-letta side) and is applied to
+# SOUL.md as a factory-managed block on EVERY boot (see mcp_entrypoint.sh).
 COPY comm/tools/ /opt/comm-tools/
 COPY comm/skills/ /opt/comm-skills/
 COPY comm/PERSONA-SNIPPET.md /opt/comm/PERSONA-SNIPPET.md

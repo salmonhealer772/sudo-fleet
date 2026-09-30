@@ -604,6 +604,61 @@ PYEOF' || true
   else
     echo "⚠ no MemFS memory dir found (agent not created yet) — comm skills will land on the next deploy or the first --from-glimor fork" >&2
   fi
+
+  # Fleet-comm awareness: the shared persona snippet, applied as a
+  # factory-managed block (fixed BEGIN/END markers) to the agent's
+  # system/persona.md on EVERY deploy — the SAME snippet (byte-identical) the
+  # Hermes sudo-agent side bakes into its image and applies to SOUL.md. The
+  # snippet is the ONE shared source at factories/sudo-agent/comm/
+  # PERSONA-SNIPPET.md, copied into the pod here exactly like mods/ and
+  # skills/. It is ALSO persisted to the PVC (not /tmp) so the boot-time
+  # entrypoint can re-apply the same block on a plain restart. Idempotent:
+  # replaces the content between the markers in place, or appends the block if
+  # absent; never touches anything outside the markers. The MemFS is
+  # git-committed after the write (an uncommitted MemFS is silently ignored —
+  # the same reason the glimor seed initContainer and the skills seed above
+  # commit). A missing MemFS is a WARN, not a fatal (the same brand-new
+  # no-glimor case as the skills seed).
+  _fc_snippet="$REPO_DIR/../sudo-agent/comm/PERSONA-SNIPPET.md"
+  _fc_pod_snippet="/home/node/.letta/fleet-comm-snippet.md"
+  if [[ ! -f "$_fc_snippet" ]]; then
+    echo "✗ FATAL: shared fleet-comm snippet missing at $_fc_snippet — aborting deploy" >&2
+    exit 1
+  fi
+  kubectl exec "$POD" -- bash -c "rm -f '$_fc_pod_snippet'" 2>/dev/null || true
+  if ! kubectl cp "$_fc_snippet" "$POD:$_fc_pod_snippet"; then
+    echo "✗ FATAL: could not copy fleet-comm snippet into pod — aborting deploy" >&2
+    exit 1
+  fi
+  if [[ -n "$_memfs_memory" ]]; then
+    kubectl exec -i "$POD" -- bash -s -- "$_memfs_memory" <<'FLEETBLOCK'
+_memfs_memory="$1"
+_persona="$_memfs_memory/system/persona.md"
+_snippet="/home/node/.letta/fleet-comm-snippet.md"
+_begin='<!-- FLEET-COMM-AWARENESS-BEGIN -->'
+_end='<!-- FLEET-COMM-AWARENESS-END -->'
+if [ -f "$_persona" ] && [ -f "$_snippet" ]; then
+  if ! grep -qF "$_begin" "$_persona" || ! grep -qF "$_end" "$_persona"; then
+    { printf '\n'; printf '%s\n' "$_begin"; cat "$_snippet"; printf '%s\n' "$_end"; } >> "$_persona"
+  else
+    awk -v b="$_begin" -v e="$_end" -v s="$_snippet" '
+      $0 == b { print; skip=1; emitted=0; next }
+      $0 == e { print; skip=0; next }
+      skip { if (!emitted) { while ((getline l < s) > 0) print l; close(s); emitted=1 } next }
+      { print }
+    ' "$_persona" > "$_persona.tmp" && mv "$_persona.tmp" "$_persona"
+  fi
+  chown node:node "$_persona" 2>/dev/null || true
+fi
+git -C "$_memfs_memory" init -q -b main 2>/dev/null
+git -C "$_memfs_memory" add -A 2>/dev/null && git -C "$_memfs_memory" -c user.email=factory@localhost -c user.name=factory commit -q -m 'seed fleet-comm persona' >/dev/null 2>&1 || true
+FLEETBLOCK
+    echo "→ fleet-comm persona block seeded into agent MemFS"
+  else
+    echo "⚠ no MemFS memory dir found (agent not created yet) — fleet-comm persona will land on the next deploy" >&2
+  fi
+  unset _fc_snippet _fc_pod_snippet
+
   unset _memfs_memory
 
   echo "→ Letta configured"
