@@ -38,19 +38,36 @@ message_agent("fa-glm-l", "do X", source="me")            # tag the message for 
 |---|---|---|---|
 | `sibling` | yes | — | which sibling to message, by bare name (the `sibling` field off `list-siblings`). |
 | `prompt` | yes | — | the message text to send. |
-| `mode` | no | `"inbox"` | `"inbox"` = send and return a message `id` immediately (fire-and-forget; fetch the reply later via `queue_status`). `"direct"` = send and WAIT for the full reply (no timeout — explicit opt-in for when you need the answer now). |
+| `mode` | no | `"inbox"` | `"inbox"` = send and return a message `id` immediately (fire-and-forget; fetch the reply later via `queue_status`). `"direct"` = send and WAIT for the full reply (no timeout) — for recall/read answers ONLY (see the warning below); never for work. |
 | `new_chat` | no | `False` | **planners only.** `True` = start a fresh conversation; `False` = resume the planner's persisted conversation. Ignored for engineers. |
 | `json` | no | `False` | `True` = structured reply — planners return a JSON object; engineers pretty-print valid JSON (else the raw text). |
 | `source` | no | `None` | a stable tag (e.g. your own name) so the recipient groups your messages together — the group-by-source ordering rule. |
 
 There is no `fleet` argument to pass — the live roster and transport are wired in by the harness, not chosen by you. There is no `stream` flag (retired — `direct` mode already returns the full reply; to watch a long job, use `inbox` + `queue_status`). That is the complete public surface: `sibling`, `prompt`, `mode`, `new_chat`, `json`, `source`.
 
-## Direct vs inbox (the one delivery split)
+## Direct vs inbox — pick the mode by whether the sibling must DO work
 
-- **inbox (default)** — enqueue and return a message `id` immediately (it does NOT block). Fetch the result later, by id, via `queue_status`. This is fire-and-forget: the caller comes straight back after the message is sent.
-- **direct (explicit opt-in)** — enqueue and WAIT for the full reply. No timeout: a long job is fine, you get the whole answer back however long it takes.
+> **⚠️ WARNING — `direct` blocks with NO timeout until the sibling finishes its
+> whole turn.** On a Hermes engineer, `hermes_prompt` does not return until the
+> engineer completes its ENTIRE job — so a `direct` call to an engineer can hang
+> effectively forever (the live test hung ~1m16s+ and showed no sign of stopping).
+> **Never use `direct` for an engineer, or for ANY job where the sibling must go
+> DO work.**
 
-`inbox` is the default "kick this off, I'll check back" mode; `direct` is the opt-in "do this and tell me" mode for when you genuinely need the full reply now.
+The sharp rule:
+
+- **`direct`** = the answer is **already in the sibling's head** — a pure
+  recall/read with no work required: "who are you", "ping", "read this value".
+  Enqueue and WAIT for the full reply (no timeout). This is the right tool for
+  instant recall/read answers.
+- **`inbox` (default)** = the sibling has to **go DO work** — run a build, touch
+  a box, search, anything that takes steps. Enqueue and return a message `id`
+  immediately (fire-and-forget); fetch the result later, by id, via
+  `queue_status`.
+
+**If the sibling must do ANYTHING, use `inbox` + `queue_status`.** Reserve
+`direct` for the one case where the answer is already sitting in the sibling's
+memory and comes back instantly — never for work, and never for an engineer.
 
 ## Planner vs engineer (the one behavioral split)
 
