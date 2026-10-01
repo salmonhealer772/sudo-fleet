@@ -1,7 +1,17 @@
 ---
 name: talk-to-my-engineer
-description: Reach my engineer, forge, and message it — say hi, ask a question, dispatch a job, or check on it. Use when the person says "say hi to forge", "talk to your engineer", or any time I need to message forge. This is THE skill for reaching forge; load this (not cross-host-execution) for any forge interaction.
+description: "DEPRECATED (archived 2026-10-01) - retired. Retired nsenter/kubectl-exec/hermes-z host bridge for reaching an engineer. Use message-agent / check-agent / list-siblings."
 ---
+
+# DEPRECATED — talk-to-my-engineer (archived 2026-10-01)
+
+> **DEPRECATED / ARCHIVED (not deleted).** This skill taught the OLD
+> `nsenter ... kubectl exec ... hermes -z` host-bridge mechanism for reaching an
+> engineer. That mechanism is RETIRED and must no longer be used.
+>
+> **Use instead:** `message-agent` (send a prompt to any sibling), `check-agent`
+> (read a sibling's trail), `list-siblings` (see the fleet). Load those skills.
+> The fleet-comm awareness block in your persona/SOUL is the canonical guidance.
 
 # Talk To My Engineer
 
