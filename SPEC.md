@@ -94,7 +94,9 @@ These turn the passive sidecar plumbing into an *active* agent capability:
 4. LiteLLM + the `-mcp`/`-watch` sidecars as first-class factory defaults (emitted by `setup.sh`, not post-deploy `letta install`) — AND as the documented **plug-in contract** an external agent must satisfy to join the fleet.
 5. The **monitor/message skills + the prompt multiplexer** — the traffic layer that turns passive sidecars into active in-fleet monitoring/messaging, plus the store-and-forward queue that sequences simultaneous prompts. (The multiplexer replaces the old "multi-message queue" open question below as a *built* requirement.)
 
-## Native cross-agent communication (the mesh) — SPEC IN PROGRESS, testbed = fa-glm + ya-glm
+## Native cross-agent communication (the mesh) — BUILT + rolled fleet-wide (2026-10-01); see "As-built" below
+
+> **As-built (2026-10-01).** The contracts below were the design. What actually shipped differs in three places: (1) `check-what-agent-is-doing` + `check-agent-logs` were **merged into one tool, `check-agent`** (`sibling`, `n`, `mode=full|compressed`; the freshest events answer "what is it doing now"); (2) a third tool, **`list-siblings`**, was added (the live roster; call it first when unsure of a name); (3) `message-agent` **defaults to `mode="inbox"`** (fire-and-forget, returns a message id, fetch via `queue_status`), with `direct` as the explicit opt-in for instant recall/read answers only. The shipped tool set is `list-siblings` / `message-agent` / `check-agent` (+ `queue_status`), each behind the load-skill-first gate. Contracts: `factories/sudo-agent/comm/docs/`. Session record: `logs/2026-10-01-session-closeout.md`.
 
 The goal: make cross-agent communication **native** — any agent messages any agent, and any agent checks on any agent, without psnvc/forge hand-running a bridge each time. The `-mcp` + `-watch` sidecars already exist fleet-wide (the plumbing); this spec turns them into a native capability.
 
@@ -203,6 +205,10 @@ Most of the earlier "open questions" are answered by `factories/sudo-letta`'s sh
 ### Deliverable
 
 Extend this `sudo-fleet` spec into the definitive native cross-agent-communication contract (mesh + monitoring + multiplexing), with the per-agent messaging + check-on skills specced at the same level as the existing Reaching-my-engineer skill. Test on fa-glm/ya-glm, then record the verified mechanics here.
+
+## Session log
+
+Dated close-out records of what was built live in `logs/` (one file per session, `YYYY-MM-DD-<slug>.md`). Latest: `logs/2026-10-01-session-closeout.md`.
 
 ## Open / not settled
 
