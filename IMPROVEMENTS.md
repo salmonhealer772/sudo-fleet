@@ -33,3 +33,23 @@ mcp_entrypoint.sh, the watch sidecars, etc.) needs richer inline documentation.
       handling, swallowed errors, exit-code traps) so the next reader sees the
       intent, not just the mechanism
 
+
+## 3. Backup / save scripts in kube-scripts/
+
+We want first-class scripts that take a full backup of either the **entire
+fleet** or **one agent**, so the fleet can be rebuilt exactly as it is. The
+first fleet backup was done by hand by forge on 2026-10-01
+(`/opt/backups/fleet-20261001-004811/`, report in forge's
+`/opt/data/fleet-backup-result.md`). That procedure becomes a few scripts in
+`sudo-fleet/kube-scripts/`.
+
+- [ ] Document exactly how forge took the 2026-10-01 backup (what it captured,
+      commands, order, sqlite-consistent copy, checksums, restore test) — this
+      is the source spec for the scripts
+- [ ] `kube-scripts/backup-agent.sh --<name>` — back up one agent (PVC data,
+      its k8s objects, per-agent config, glimor if any)
+- [ ] `kube-scripts/backup-fleet.sh` — back up every agent + cluster-wide
+      objects + repo (git bundle) + images + MANIFEST.md
+- [ ] Matching restore path (one agent / whole fleet), proven by a
+      throwaway restore test
+- [ ] Off-box copy (Google) with secrets (.env) excluded or encrypted
