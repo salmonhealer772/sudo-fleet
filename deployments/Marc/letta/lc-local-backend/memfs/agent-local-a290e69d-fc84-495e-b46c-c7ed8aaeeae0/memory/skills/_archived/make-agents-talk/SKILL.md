@@ -1,8 +1,17 @@
 ---
 name: make-agents-talk
-description: Author the inter-agent relay for a planner+engineer pair so they can actually reach and message each other BOTH DIRECTIONS, including the three ask-engineer skills (bounded ask, unlimited ask, and read-the-result check — never a blocking ask for a status question). Use whenever building a Letta-planner + Hermes-engineer pair (or any two agents that must message). Distilled from the ms-glm + sbaco failures of 2026-09-08 and the lb-glm check-vs-ask fix of 2026-09-15.
-version: 0.3.0
+description: "DEPRECATED (archived 2026-10-01) - retired. Retired recipe for authoring the nsenter/kubectl-exec/hermes-z relay into a planner+engineer pair. Use message-agent / check-agent / list-siblings."
 ---
+
+# DEPRECATED — make-agents-talk (archived 2026-10-01)
+
+> **DEPRECATED / ARCHIVED (not deleted).** This skill taught the OLD
+> `nsenter ... kubectl exec ... hermes -z` host-bridge mechanism for reaching an
+> engineer. That mechanism is RETIRED and must no longer be used.
+>
+> **Use instead:** `message-agent` (send a prompt to any sibling), `check-agent`
+> (read a sibling's trail), `list-siblings` (see the fleet). Load those skills.
+> The fleet-comm awareness block in your persona/SOUL is the canonical guidance.
 
 # Make Agents Talk To Each Other
 
