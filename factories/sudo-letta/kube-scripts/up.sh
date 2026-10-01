@@ -56,6 +56,24 @@ if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
   WATCH_PORT=$(( MCP_PORT + 1 ))
 fi
 
+# Docker-socket group gid (runtime, per-node). The image no longer bakes a
+# hardcoded docker gid (the old `groupadd --gid 109` only matched hosts whose
+# docker group happened to be gid 109; it silently broke the comm host bridge —
+# list-siblings / message-agent / check-agent — on hosts with a different gid,
+# e.g. Blake's 986). We read the REAL gid off the host socket here and grant it
+# to the pod via securityContext.supplementalGroups. That is the Letta-side
+# equivalent of the sudo-agent a4df988 runtime gid-arm: unlike the Hermes side
+# there is no s6-setuidgid privilege drop in this container (it runs directly as
+# the image USER node), so a pod-level supplemental group is NOT wiped by
+# initgroups() and works as intended. Emitted only when the socket is present.
+DOCKER_SOCK_GID="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
+if [[ -n "$DOCKER_SOCK_GID" ]]; then
+  POD_SECURITY_CONTEXT="      securityContext:
+        supplementalGroups: [${DOCKER_SOCK_GID}]"
+else
+  POD_SECURITY_CONTEXT=""
+fi
+
 # If repo is root-owned and we're not root, bail early
 if [[ ! -w "$REPO_DIR" ]] && [[ "$(id -u)" != "0" ]]; then
   echo "Repo is root-owned. Run with: sudo bash kube-scripts/up.sh --$NAME" >&2
@@ -231,6 +249,7 @@ spec:
     spec:
       shareProcessNamespace: true
       hostNetwork: true
+$POD_SECURITY_CONTEXT
       hostAliases:
       - ip: "127.0.0.1"
         hostnames:
@@ -242,13 +261,6 @@ $SEED_INITCONTAINERS
         imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
-          # Root at entrypoint: mcp_entrypoint.sh arms the node user with the
-          # host's REAL docker-socket gid (varies per node) at runtime, then
-          # drops to node. Without runAsUser: 0 the image USER node would run
-          # the entrypoint non-root and could not groupadd/usermod the socket
-          # gid — the comm host bridge would be denied on any node whose docker
-          # gid isn't the one the image used to bake in.
-          runAsUser: 0
         env:
 $ENV_YAML
         volumeMounts:
