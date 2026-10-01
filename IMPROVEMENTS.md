@@ -3,6 +3,22 @@
 Running list of things to do. Each item gets broken into dispatchable parts
 before it goes to an engineer. Status: [ ] todo · [/] in-progress · [x] done.
 
+## Next priority — independent fleets per namespace
+
+Direction agreed 2026-10-01; see [NEXT.md](NEXT.md) for intent, boundaries and
+the first implementation slice. The usable fleet is the base for Docket Atlas;
+the next enabling capability is multiple separate project fleets in one cluster.
+
+- [ ] Trace and scope factory, discovery, queue, networking and state assumptions
+      by fleet/namespace; preserve the existing single-fleet path.
+- [ ] Define and implement project pause/resume without deleting persistent work.
+- [ ] Decide the optional shared namespace's permitted services and access rules.
+- [ ] Prove two isolated fleets, repeated agent names, independent pause/resume,
+      safe work recovery and fleet save/restore using throwaway test projects.
+
+These are future work, not completed features. Existing backlog entries below
+remain historical context and should be checked against code/build records.
+
 ---
 
 ## 1. Consolidate the 3-repo system into one repo
@@ -92,4 +108,3 @@ remote exists on lima or fabean; needs a GCS bucket + service-account key (or
 `gcloud auth application-default login`), then `gsutil -m rsync`. `k8s/` and
 `repo/` must be encrypted before any off-box copy. Whole-fleet restore (path C)
 is derived from the tested per-agent path, not itself tested.
-

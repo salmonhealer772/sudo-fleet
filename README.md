@@ -2,6 +2,11 @@
 
 A disposable room you stand up anywhere: saved agents are pulled in, talk to each other, and survive the room's destruction. The full spec lives in `SPEC.md`.
 
+**Next direction (2026-10-01):** [multiple independent project fleets in one
+cluster](NEXT.md), with namespace-scoped agents/state and fleet pause/resume.
+An optional shared-services namespace is under consideration. This is the next
+planned capability, not something the current setup commands already implement.
+
 Everything lives inside ONE folder — `sudo-fleet/`. The two factory trees (`factories/sudo-agent`, `factories/sudo-letta`), your `.env` secrets, and the committed `deployments/{Marc,Caesar}/` glimors are all nested inside it. No siblings, nothing outside it.
 
 ## Your fleet is up (two commands)
