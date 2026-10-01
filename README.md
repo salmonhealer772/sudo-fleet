@@ -118,11 +118,39 @@ cd kube-scripts && bash k8s-down.sh --teardown-k3s   # uninstall k3s too
 
 (The repo-root `down.sh` is a thin pointer to `kube-scripts/k8s-down.sh`.)
 
+## Durable cluster (comes back on its own)
+
+The two commands above are the *only* commands you ever run. After that the
+cluster is durable:
+
+- **k3s starts on boot** — `setup.sh` ensures `k3s.service` + `docker.service`
+  are enabled (and, on WSL2, writes `/etc/wsl.conf` `[boot] systemd=true` so
+  systemd actually boots).
+- **Images survive a restart** — the agent images are imported into the k3s
+  containerd store, which lives on disk, so no pod ever needs to pull a
+  local-only image.
+- **Everything up.sh created is recreated on boot** — `setup.sh` installs a
+  oneshot systemd unit (`sudo-fleet-boot.service`) that runs
+  `kube-scripts/k8s-auto-up.sh` on every boot: it waits for k3s to be Ready,
+  re-imports any missing images, and re-runs the idempotent bring-up.
+- **Pods restart themselves on crash/hang** — every agent and watch container
+  ships a `startupProbe` + `readinessProbe` + `livenessProbe`, so a crashed or
+  hung pod is restarted by kubelet without any operator action.
+
+The result: reboot the box (or your WSL2 distro) and the fleet is simply back,
+with memory intact and zero commands run.
+
+> WSL2 note: Linux cannot force Windows to start WSL2 itself. The one manual
+> step — run once, from an admin PowerShell — is:
+> `schtasks /create /tn "WSL2-sudo-fleet" /tr "wsl.exe -d <distro>" /sc onlogon /rl highest`
+> (`setup.sh` prints this too.)
+
 ## What setup.sh touches on your box (outside sudo-fleet/)
 
 `setup.sh` (Command 1) is a bootstrap and by design writes system-wide. FLEET_HOME is now the `sudo-fleet/` folder itself, so the repos, `.env`, and `deployments/` glimors all live INSIDE it — nothing fleet-related is written outside `sudo-fleet/`. What it does touch outside `sudo-fleet/` is limited to the system-level tooling:
 
 - **Docker** (get.docker.com): `/usr/bin/` docker binaries, `/etc/systemd/system/docker.service` + `containerd.service`, `/var/lib/docker` (images), `/var/lib/containerd`, adds the invoking user to the `docker` group, `/etc/docker/`.
 - **k3s** (get.k3s.io): `/usr/local/bin/k3s` (+ `kubectl`/`crictl`/`ctr` symlinks), `/etc/systemd/system/k3s.service`, `/var/lib/rancher/k3s/` (all cluster data), `/etc/rancher/k3s/k3s.yaml` (kubeconfig), `/var/lib/kubelet`.
+- **Durable boot** (new): `/etc/systemd/system/sudo-fleet-boot.service` (a oneshot unit that re-runs the bring-up on every boot) and, on WSL2, `/etc/wsl.conf` `[boot] systemd=true`.
 - **`/etc/hosts`** may be touched by docker/k3s (rare); docker also installs its own iptables rules.
 - **Hidden/other**: `~/.docker` (docker CLI config). `~/.kube` is NOT created by us — the fleet scripts use `/etc/rancher/k3s/k3s.yaml`.

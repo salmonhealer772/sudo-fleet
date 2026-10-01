@@ -468,6 +468,27 @@ $EXTRA_ENV
           readOnly: true
         - name: docker-sock
           mountPath: /var/run/docker.sock
+        # ── Self-repair probes: restart on crash/hang ───────────────────────
+        # The agent's MCP server (gateway run) listens on MCP_PORT (0.0.0.0).
+        # startupProbe gives it a generous window to boot; livenessProbe
+        # restarts a hung-but-alive agent (listener gone/stuck); readinessProbe
+        # keeps a not-yet-serving agent out of Service rotation. Process crash
+        # is already handled by restartPolicy: Always (the default).
+        startupProbe:
+          tcpSocket:
+            port: $MCP_PORT
+          periodSeconds: 5
+          failureThreshold: 30
+        readinessProbe:
+          tcpSocket:
+            port: $MCP_PORT
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          tcpSocket:
+            port: $MCP_PORT
+          periodSeconds: 20
+          failureThreshold: 3
       # ── Observer sidecar container ────────────────────────────────────────
       # Monitors the agent container (shared PID namespace), captures every
       # message from the Hermes SQLite store into <PVC>/watch/events.jsonl,
@@ -503,6 +524,27 @@ $EXTRA_ENV
         - name: comm-gate-plugin
           mountPath: /opt/data/plugins/$COMM_GATE_KEY
           readOnly: true
+        # ── Self-repair probes: the sidecar serves GET /healthz -> 200 on
+        # WATCH_PORT (binds 0.0.0.0). livenessProbe restarts a hung sidecar;
+        # readinessProbe gates Service rotation on the tap being up.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: $WATCH_PORT
+          periodSeconds: 3
+          failureThreshold: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: $WATCH_PORT
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: $WATCH_PORT
+          periodSeconds: 15
+          failureThreshold: 3
       volumes:
       - name: data
         persistentVolumeClaim:

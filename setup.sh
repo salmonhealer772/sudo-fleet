@@ -65,6 +65,44 @@ _ask() {
   printf '%s' "$REPLY"
 }
 
+# --- Durability helpers ---------------------------------------------------------
+# The cluster must come back on its own after a VM/WSL2 restart (zero manual
+# commands) and self-repair after that. These helpers implement the host-layer
+# half of that: WSL2 must boot systemd for the already-enabled k3s.service /
+# docker.service to fire, and both must be explicitly enabled + verified.
+
+# _detect_wsl2 — true when running under WSL2 (vs a native Linux / Lima VM).
+# WSL2 boots into init by default, NOT systemd; systemd only boots when
+# /etc/wsl.conf has [boot] systemd=true. A native/Lima box boots systemd directly.
+_detect_wsl2() {
+  [[ -n "${WSL_INTEROP:-}" ]] && return 0
+  grep -qi microsoft /proc/version 2>/dev/null && return 0
+  uname -r 2>/dev/null | grep -qi microsoft && return 0
+  return 1
+}
+
+# _ensure_systemd_on_wsl2 — on WSL2, write /etc/wsl.conf [boot] systemd=true
+# (idempotent, preserving any other sections) so k3s.service/docker.service
+# actually auto-start when the WSL2 VM boots. No-op on native/Lima boxes.
+_ensure_systemd_on_wsl2() {
+  if ! _detect_wsl2; then
+    ok "not WSL2 — systemd is the native init (no /etc/wsl.conf needed)"
+    return 0
+  fi
+  warn "WSL2 detected — ensuring systemd boots (k3s.service/docker.service need it)"
+  local wsl_conf="/etc/wsl.conf"
+  if $SUDO grep -qE '^systemd[[:space:]]*=[[:space:]]*true' "$wsl_conf" 2>/dev/null; then
+    ok "$wsl_conf already has systemd=true"
+    return 0
+  fi
+  if $SUDO grep -q '^\[boot\]' "$wsl_conf" 2>/dev/null; then
+    $SUDO sed -i '/^\[boot\]/a systemd=true' "$wsl_conf"
+  else
+    printf '\n[boot]\nsystemd=true\n' | $SUDO tee -a "$wsl_conf" >/dev/null
+  fi
+  ok "wrote $wsl_conf [boot] systemd=true — run 'wsl --shutdown' from Windows once to apply"
+}
+
 # --- root/sudo -----------------------------------------------------------------
 is_root() { [[ "$(id -u)" -eq 0 ]]; }
 SUDO=""
@@ -267,6 +305,23 @@ kubectl wait --for=condition=Ready node --all --timeout=180s >/dev/null 2>&1 \
   || warn "node not Ready within 180s (check: kubectl get nodes)"
 ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | paste -sd, -))"
 
+# --- Durability: ensure systemd boots on WSL2 + k3s/docker are enabled ---------
+# The durable-cluster contract: k3s starts on boot with zero manual commands.
+# On a native/Lima box systemd is PID 1 and get.k3s.io's implicit enable is
+# enough; on WSL2 systemd does NOT boot by default, so we write /etc/wsl.conf
+# first, then verify k3s+docker are actually enabled rather than trusting the
+# installer's implicit enable alone.
+_ensure_systemd_on_wsl2
+if command -v systemctl >/dev/null 2>&1; then
+  $SUDO systemctl enable k3s    >/dev/null 2>&1 || warn "could not enable k3s.service"
+  $SUDO systemctl enable docker  >/dev/null 2>&1 || warn "could not enable docker.service"
+  if [[ "$(systemctl is-enabled k3s 2>/dev/null)" == "enabled" ]]; then
+    ok "k3s.service enabled — will auto-start on boot"
+  else
+    warn "k3s.service is NOT enabled — the cluster will NOT survive a reboot. Fix: systemctl enable k3s"
+  fi
+fi
+
 # --- 4. Non-interactive env-var bridge (the exact mechanism) -------------------
 # factories/sudo-agent/setup.sh has an UNCONDITIONAL `read -r -p "Paste your DeepSeek API
 # key: "`. Neither an env var nor a pre-seeded .env can skip it — the ONLY way
@@ -311,6 +366,50 @@ printf '%s\n' "$DEEPSEEK_API_KEY" | $SUDO bash "$AGENT_REPO/setup.sh" \
 echo "→ sudo-letta (Letta) image — .env pre-seeded, prompts skipped"
 printf '%s\n%s\n%s\n' "$LLM_PROVIDER" "$API_KEY" "${LLM_BASE_URL:-}" \
   | $SUDO bash "$LETTA_REPO/setup.sh" || die "sudo-letta setup.sh failed"
+
+# --- Durability: auto bring-up on boot ---------------------------------------
+# Install a oneshot systemd unit that re-runs the idempotent bring-up on every
+# boot (wait for k3s Ready, re-import any missing images, re-apply the workload),
+# so a cluster stood up by sudo-fleet comes back on its own after a VM/WSL2
+# restart with zero manual commands. This is NOT a third command — it runs
+# automatically; the operator contract stays "two commands".
+step "Durability (auto bring-up on boot)"
+AUTO_UP="$FLEET_HOME/kube-scripts/k8s-auto-up.sh"
+BOOT_UNIT="/etc/systemd/system/sudo-fleet-boot.service"
+if [[ -f "$AUTO_UP" ]]; then
+  $SUDO tee "$BOOT_UNIT" >/dev/null <<UNIT
+[Unit]
+Description=sudo-fleet auto bring-up (idempotent; survives VM/WSL2 restart)
+After=network-online.target docker.service k3s.service
+Wants=docker.service k3s.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/env bash $AUTO_UP
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  $SUDO systemctl daemon-reload
+  if $SUDO systemctl enable sudo-fleet-boot.service >/dev/null 2>&1; then
+    ok "sudo-fleet-boot.service installed + enabled (fleet auto-recovers on boot)"
+  else
+    warn "could not enable sudo-fleet-boot.service — install it manually to get boot recovery"
+  fi
+else
+  warn "$AUTO_UP missing — boot-time auto bring-up NOT installed (pull a newer repo)"
+fi
+
+if _detect_wsl2; then
+  echo ""
+  echo "⚠ WSL2 only: this box auto-starts when WSL2 itself starts. Linux cannot"
+  echo "  force Windows to launch WSL2 — that is the ONE manual step, run once from"
+  echo "  an ADMIN PowerShell on the Windows host:"
+  echo '    schtasks /create /tn "WSL2-sudo-fleet" /tr "wsl.exe -d <distro>" /sc onlogon /rl highest'
+fi
 
 echo ""
 ok "Bootstrap complete (docker + k3s + repos + images)."
