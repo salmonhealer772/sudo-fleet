@@ -78,6 +78,14 @@ RUN chmod +x /opt/letta-mcp/mcp_entrypoint.sh && \
     pip3 install --no-cache-dir --break-system-packages fastmcp==4.0.9 redis==5.2.1 && \
     chown -R node:node /opt/letta-mcp
 
+# Rich full-fidelity tap for stream.sh RICH mode: stdlib-only, read-only
+# file placed OUTSIDE the agent PVC mount (/home/node/.letta) so the PVC can
+# never shadow it. Driven only by kube-scripts/stream.sh via `kubectl exec -c
+# watch`; the watch sidecar is unaffected. Shipped exactly like
+# watch_sidecar.py (kept as its OWN layer, after the pip RUN, so adding it
+# does not invalidate the cached image layers).
+COPY --chmod=0755 kube-scripts/rich_tap.py /opt/letta-watch/rich_tap.py
+
 USER node
 
 WORKDIR /home/node/.letta
