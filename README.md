@@ -89,6 +89,25 @@ deploys an **initContainer** that copies the glimor into the PVC *before* the
 agent process starts. A missing or invalid glimor fails the deploy loudly — a
 blank Tutor / bare Hermes can never come up.
 
+## Native comm layer (every agent is born able to talk)
+
+Both factories ship three comm abilities as a spawn-time default — `list-siblings`
+(the live roster), `message-agent` (message any sibling by name), `check-agent`
+(read a sibling's trail) — each as a tool + skill + a shared persona-awareness
+block. Two mechanisms make them stick:
+
+- **Load-skill-first gate** — a tool refuses to run until its matching skill is
+  loaded in the current conversation (Hermes: `comm_gate.py` exit 69 + the
+  `sudo-comm-gate` plugin; Letta: each comm mod's `gate.mjs`). Fail-closed in a
+  session, fail-open for a human/script.
+- **Factory-managed FLEET-COMM-AWARENESS block** — the shared awareness text
+  (`factories/sudo-agent/comm/PERSONA-SNIPPET.md`) is applied to `SOUL.md`
+  (Hermes) / `system/persona.md` (Letta) on EVERY boot, between fixed BEGIN/END
+  markers, so an agent can't permanently lose or stale its fleet awareness.
+
+The full contract is in `SPEC.md` ("Native cross-agent communication"); the
+known gaps are in `KNOWN-ISSUES.md`.
+
 ## Tear down
 
 ```bash

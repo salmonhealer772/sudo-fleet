@@ -16,7 +16,7 @@ Three folders, three layers that must align:
 |---|---|---|
 | **Tool** | `tools/` | the mechanism — the Python CLI backends (baked into the image at `/opt/comm-tools/`) |
 | **Skill** | `skills/` | the procedure — when + how to call each tool (seeded into `$HERMES_HOME/skills/` on first boot) |
-| **Persona** | `PERSONA-SNIPPET.md` | the awareness — appended to `SOUL.md` on first boot so the agent knows it has these |
+| **Persona** | `PERSONA-SNIPPET.md` | the awareness — applied to `SOUL.md` as a factory-managed block on every boot so the agent knows it has these |
 
 ## The three tools
 
@@ -33,10 +33,18 @@ Three folders, three layers that must align:
 - **tools** → `Dockerfile` copies `comm/tools/` into the image at
   `/opt/comm-tools/` (not shadowed by the `/opt/data` PVC), so every engineer
   image has them.
-- **skills + persona** → `mcp_entrypoint.sh` seeds them into `/opt/data/skills/`
-  and appends the persona snippet to `/opt/data/SOUL.md` on first boot only
-  (idempotent `.comm-seeded` marker), because Hermes reads skills from
-  `$HERMES_HOME/skills` (the PVC) and identity from `SOUL.md` (the PVC).
+- **skills** → `mcp_entrypoint.sh` seeds `comm/skills/` into `/opt/data/skills/`
+  on FIRST boot only (idempotent `.comm-seeded` marker), because Hermes reads
+  skills from `$HERMES_HOME/skills` (the PVC) and the agent may edit them later
+  — a re-seed every boot would clobber its edits.
+- **persona** → `mcp_entrypoint.sh` applies `PERSONA-SNIPPET.md` to
+  `/opt/data/SOUL.md` as a **factory-managed block on EVERY boot** (not
+  first-boot-only). The block lives between
+  `<!-- FLEET-COMM-AWARENESS-BEGIN -->` / `<!-- FLEET-COMM-AWARENESS-END -->`
+  markers; each boot replaces the content between them (or inserts the block if
+  absent), so the agent can never permanently lose or stale its fleet
+  awareness, and a rebuilt image ships a fresh snippet on the next restart.
+  Nothing outside the markers is ever touched.
 
 A fresh engineer is therefore born able to list, message, and check its
 siblings — no post-deploy install, no one-off.
