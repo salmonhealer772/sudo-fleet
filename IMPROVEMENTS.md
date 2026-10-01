@@ -43,9 +43,8 @@ first fleet backup was done by hand by forge on 2026-10-01
 `/opt/data/fleet-backup-result.md`). That procedure becomes a few scripts in
 `sudo-fleet/kube-scripts/`.
 
-- [ ] Document exactly how forge took the 2026-10-01 backup (what it captured,
-      commands, order, sqlite-consistent copy, checksums, restore test) — this
-      is the source spec for the scripts
+- [x] Document exactly how forge took the 2026-10-01 backup (summary below;
+      full detail + restore procedure in the backup's own MANIFEST.md)
 - [ ] `kube-scripts/backup-agent.sh --<name>` — back up one agent (PVC data,
       its k8s objects, per-agent config, glimor if any)
 - [ ] `kube-scripts/backup-fleet.sh` — back up every agent + cluster-wide
@@ -53,3 +52,44 @@ first fleet backup was done by hand by forge on 2026-10-01
 - [ ] Matching restore path (one agent / whole fleet), proven by a
       throwaway restore test
 - [ ] Off-box copy (Google) with secrets (.env) excluded or encrypted
+
+### How forge took the 2026-10-01 backup (the source spec for the scripts)
+
+Read-only capture from the forge pod through the docker+nsenter host bridge —
+no agent stopped, restarted or redeployed. Output:
+`/opt/backups/fleet-<UTC ts>/` (7.1 GiB), with `backup.log` timestamping each phase.
+
+1. **Phase 0 — cluster snapshot:** text listings of every object (`all-wide`,
+   pods, deployments, pvcs, nodes) → `k8s/*.txt`, plus `agent-inventory.txt`
+   (each agent's name, kind, image).
+2. **Phase 1 — k8s yaml export:** `kubectl get -o yaml` of deployments, services,
+   configmaps, pvcs, pvs, secrets, namespaces, nodes, kube-system, dashboard →
+   `k8s/*.yaml`. Contains API keys in plaintext (deployment env) — sensitive.
+3. **Phase 2/3 — per-PVC capture (all 42 PVCs):** read straight from the
+   local-path storage root `/var/lib/rancher/k3s/storage/pvc-<uid>_<ns>_<name>`:
+   - every sqlite `.db` gets a consistent `sqlite3 .backup` snapshot →
+     `pvcs/<name>.sqlite.tar.gz`
+   - the raw directory (db + wal + shm together) → `pvcs/<name>.tar.gz`
+   - `sudo-letta-redis` has no PVC (ephemeral) — only its yaml is captured.
+4. **Images:** `docker save | gzip` of sudo-agent, sudo-letta, hermes-agent
+   (base), node:22-bookworm-slim, redis:7-alpine, alpine → `images/` +
+   `digests.txt`.
+5. **Repo:** `git bundle create --all` of sudo-fleet (all refs incl. stash), a
+   working-tree tar (this is the ONLY place the gitignored `.env` secrets are
+   captured), a glimors tar, and HEAD/branch refs → `repo/`.
+6. **Integrity:** `SHA256SUMS` over every file (206), verified with
+   `sha256sum -c`; `git bundle verify` must run from inside a git repo.
+7. **Restore test:** fa-glm-h → throwaway `sudo-restoretest-h` and fa-glm-l →
+   `sudo-restoretest-l`: `up.sh --<new>` → empty its PVC dir → `cp -a` the
+   extracted tar in → `chown` (10000 hermes / 1000 letta) → `rollout restart`.
+   Both came up 2/2 with the right identity (SOUL.md / persona.md,
+   `lastAgent` pin) and `state.db` passed `integrity_check`; then fully deleted.
+8. **MANIFEST.md:** contents, cluster facts, image digests, repo SHA, and the
+   step-by-step restore (code+images, one agent, whole fleet).
+
+**Gaps found:** no Google upload — no credentialed gcloud account or rclone
+remote exists on lima or fabean; needs a GCS bucket + service-account key (or
+`gcloud auth application-default login`), then `gsutil -m rsync`. `k8s/` and
+`repo/` must be encrypted before any off-box copy. Whole-fleet restore (path C)
+is derived from the tested per-agent path, not itself tested.
+
