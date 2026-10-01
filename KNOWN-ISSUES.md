@@ -26,14 +26,39 @@ is actually run with its skill unloaded (e.g. a scripted call). The Letta side
 is symmetric — its comm tools ARE native mod tools, so the same prompt cleanly
 hits the gate's BLOCKED. (Phase 7.)
 
-### 3. Hermes pods run `hermes` without the docker group active — the comm bridge fails
+### 3. ~~Hermes pods run `hermes` without the docker group active~~ — RESOLVED (a4df988)
 
-`hermes` (uid 10000) is listed in gid 109 (`hostdocker`) in `/etc/group`, but the
-running process's supplementary groups are only `[10000]` — gid 109 is not
-active — so `/var/run/docker.sock` (root:109, mode 660) is denied and the
-docker+nsenter host bridge all three comm tools depend on fails. The Letta pod's
-`node` process DOES carry 109 (`dockerhost`) active, which is why the identical
-bridge works there. Fix: enumerate the hermes user's supplementary groups at
-process start (`initgroups` / add gid 109) so gid 109 is active, matching the
-Letta pod. (Phase 7; reported to `sudo-agent-maintainer-h` via message_agent
-inbox, id `msg-5d591bde955b`.)
+Fixed by `fix(comm): arm the docker-socket group before the first privilege drop`
+(`kube-scripts/mcp_entrypoint.sh`), image rebuilt + re-imported (containerd
+manifest `827fdada`).
+
+Root cause was not a missing `initgroups` — the drop already uses
+`s6-setuidgid hermes`, which does call initgroups — it was ORDER. Our entrypoint
+drops the MCP server (and the offline-fallback Redis) to hermes BEFORE the BASE
+image's `stage2-hook.sh` has run, and it is stage2-hook — reached only via the
+`entrypoint-dispatch.sh` exec on our entrypoint's LAST line — that inspects the
+bind-mounted `/var/run/docker.sock`, creates the `hostdocker` group and adds
+`hermes` to it. initgroups rebuilds the supplementary list from `/etc/group` AS
+IT IS AT THAT MOMENT, so the drop yielded `[10000]` only; the MCP server — and
+every `hermes -z` session it spawns, i.e. the whole fleet traffic path — was
+denied `/var/run/docker.sock`. The supervised gateway escaped only because
+`main-wrapper.sh` drops to hermes AFTER stage2-hook has run.
+`securityContext.supplementalGroups` would NOT have helped: s6-setuidgid
+rewrites the list from `/etc/group` regardless.
+
+The entrypoint now mirrors stage2-hook's socket block before the first drop,
+idempotently, and logs the outcome (`[sudo-agent] docker-socket gid 109 armed for
+hermes (comm host bridge OK)`), warning loudly on failure.
+
+Verified clean-room (brand-new agent + brand-new PVC, `sudo-clean-gid-test`):
+`mcp_server` supplementary groups `109 10000`; a real MCP-driven `hermes -z`
+session reports `groups=10000(hermes),109(hostdocker)` and
+`python3 /opt/comm-tools/list_siblings.py --filter gid` reaches the host bridge
+and returns the roster. Before the fix the same call failed with
+`could not reach the host ... docker permission denied`.
+
+Residual papercut: the `watch` sidecar container overrides the image entrypoint
+(`command: [python3, /opt/watch-sidecar/watch_sidecar.py]`) and runs as
+`runAsUser: 10000`, so gid 109 is NOT active there. It touches no docker today
+(verified: zero docker/nsenter references in `watch_sidecar.py`), but anything
+docker-ish added to the sidecar later must arm the gid itself.
