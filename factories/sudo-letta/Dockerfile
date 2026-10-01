@@ -38,15 +38,16 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/node && \
     chmod 0440 /etc/sudoers.d/node
 
-# Docker-socket access is armed at RUNTIME, not baked here. The host docker
+# Docker-socket access is granted at RUNTIME, not baked here. The host docker
 # group gid varies across nodes (lima = 109, Blake's laptop = 986, ...), and a
 # hardcoded gid breaks the comm host bridge (list-siblings / message-agent /
-# check-agent) on every node whose gid differs. The agent container runs with
-# runAsUser: 0 (see kube-scripts/up.sh) so its entrypoint (mcp_entrypoint.sh)
-# starts as root, reads the REAL gid off /var/run/docker.sock, adds `node` to
-# it, then drops to node — the same runtime gid-arm the sudo-agent side uses
-# (a4df988). `USER node` below stays: it is the default for the watch sidecar
-# (which never touches the socket).
+# check-agent) on every node whose gid differs. up.sh reads the REAL gid off
+# /var/run/docker.sock at deploy time and grants it to the pod via
+# securityContext.supplementalGroups — the Letta-side equivalent of the
+# sudo-agent a4df988 runtime gid-arm (unlike Hermes there is no s6-setuidgid
+# drop in this container, so the pod-level supplemental group survives).
+# `USER node` below stays: the agent process and `kubectl exec` both run as
+# node (uid 1000), so the PVC stays node-owned.
 
 # Install Letta Code globally.
 # PINNED to 0.33.2 (exact pin, not ^/latest): letta-code 0.33.0 silently broke
