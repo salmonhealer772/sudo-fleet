@@ -23,8 +23,8 @@ What this module owns (single source of truth)
 ----------------------------------------------
 - the absolute path to ``letta.js`` (the ``letta`` shim on $PATH is temp-stamped
   and therefore not reliably on $PATH for the exec user),
-- the settings.json key that holds the persisted conversationId (the resume
-  source of truth),
+- the settings.json keys that hold the persisted agentId / conversationId (the
+  resume source of truth),
 - resume-vs-new argument construction,
 - the letta CLI command-string builder,
 - stream-json delta parsing,
@@ -38,9 +38,13 @@ Conventions that MUST NOT drift (all hard-won, do not change lightly)
 - always ``HOME=/home/node`` so the CLI reads the real provider config + agents
   (a root login shell would point HOME at /root/.letta -> empty provider config
   -> "Provider is not configured").
-- resume-by-default: read the persisted conversationId and inject
-  ``--conversation <id>``; ``--new`` forces a fresh chat; no id known -> the CLI
-  creates a new chat on its own.
+- always ``--agent <id>`` when the agent id is known (resolved from settings.json
+  ``lastAgent`` / the pinned record). This is what stops the CLI from guessing
+  and hitting ``--conv default requires --agent <agent-id>``.
+- resume-by-default via ``--agent <id>`` alone (the CLI resumes the agent's last
+  conversation); ``--new`` forces a fresh chat. NEVER emit ``--conversation``:
+  it is mutually exclusive with ``--agent``, and the seeded settings.json
+  carries a bogus ``conversationId: "default"`` that is not a real id.
 """
 
 import json
@@ -74,35 +78,73 @@ def get_conversation_id_from_settings(settings_text):
         return None
 
 
-def resume_fragment(conversation_id, as_new_chat):
-    """Return the CLI arg fragment to resume (--conversation <id>) or start fresh (--new).
+def get_agent_id_from_settings(settings_text):
+    """Parse settings.json and return the agent id this pod should target (or None).
 
-    Returns a trailing-space-terminated fragment ("--new " / "--conversation <id> ")
-    or "" when no conversation is known yet (best-effort resume).
+    Resolution order: ``lastAgent`` (a string, or a dict carrying ``id`` /
+    ``agentId``), else the first pinned/memfs record in ``agents``. Best-effort:
+    returns None on any parse/structure failure or when no record resolves, in
+    which case the caller simply omits ``--agent`` and lets the CLI choose.
+    """
+    if not settings_text:
+        return None
+    try:
+        settings = json.loads(settings_text)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    last = settings.get("lastAgent")
+    if isinstance(last, str) and last:
+        return last
+    if isinstance(last, dict):
+        for key in ("id", "agentId"):
+            if last.get(key):
+                return last[key]
+    for rec in settings.get("agents") or []:
+        if isinstance(rec, dict) and (rec.get("memfs") is True or rec.get("pinned") is True):
+            for key in ("id", "agentId"):
+                if rec.get(key):
+                    return rec[key]
+    return None
+
+
+def resume_fragment(conversation_id, as_new_chat):
+    """Return the CLI arg fragment for a fresh chat (``--new ``) or resume (``""``).
+
+    ``--new`` forces a fresh conversation; otherwise the fragment is empty and
+    ``build_letta_command`` relies on ``--agent <id>`` alone to resume the
+    agent's last conversation. We deliberately NEVER emit ``--conversation``:
+    (a) it is mutually exclusive with ``--agent`` ("--conversation cannot be
+    used with --agent"), and (b) the seeded settings.json carries a bogus
+    ``conversationId: "default"`` which is not a real conversation id and makes
+    the CLI fail ("--conv default requires --agent" / "Conversation default not
+    found"). ``conversation_id`` is retained in the signature for compatibility
+    but is no longer used to build the command.
     """
     if as_new_chat:
         return "--new "
-    if conversation_id:
-        return f"--conversation {conversation_id} "
     return ""
 
 
-def build_letta_command(prompt, resume="", output_format=None):
+def build_letta_command(prompt, resume="", output_format=None, agent_id=None):
     """Build the shell command string that invokes letta.js headlessly.
 
     Args:
         prompt: the message text (JSON-escaped into the command).
         resume: an already-built resume fragment from ``resume_fragment``.
         output_format: None (default text), ``"json"``, or ``"stream-json"``.
+        agent_id: the agent id to target (``--agent <id>``); always passed when
+            known so the CLI never has to guess (which is what produces the
+            ``--conv default requires --agent <agent-id>`` failure).
 
     Returns a single shell command string (run via ``sh -c``)::
 
-        HOME=/home/node node <LETTA_JS> --backend local [--output-format X] <resume>-p "<prompt>"
+        HOME=/home/node node <LETTA_JS> --backend local --agent <id> [--output-format X] <resume>-p "<prompt>"
     """
     fmt = f"--output-format {output_format} " if output_format else ""
+    agent = f"--agent {agent_id} " if agent_id else ""
     return (
         f"HOME=/home/node node {LETTA_JS} --backend local "
-        f"{fmt}{resume}-p {json.dumps(prompt)}"
+        f"{agent}{fmt}{resume}-p {json.dumps(prompt)}"
     )
 
 

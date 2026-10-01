@@ -242,6 +242,13 @@ $SEED_INITCONTAINERS
         imagePullPolicy: IfNotPresent
         securityContext:
           privileged: true
+          # Root at entrypoint: mcp_entrypoint.sh arms the node user with the
+          # host's REAL docker-socket gid (varies per node) at runtime, then
+          # drops to node. Without runAsUser: 0 the image USER node would run
+          # the entrypoint non-root and could not groupadd/usermod the socket
+          # gid — the comm host bridge would be denied on any node whose docker
+          # gid isn't the one the image used to bake in.
+          runAsUser: 0
         env:
 $ENV_YAML
         volumeMounts:

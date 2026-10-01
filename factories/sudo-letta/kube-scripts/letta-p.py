@@ -124,6 +124,24 @@ def get_conversation_id(name):
     return letta_prompt.get_conversation_id_from_settings(proc.stdout)
 
 
+def get_agent_id(name):
+    """Read the pod's agent id (lastAgent / pinned record) from settings.json.
+
+    Best-effort: returns None on any failure (then ``--agent`` is omitted and
+    the CLI auto-selects). Mirrors ``get_conversation_id`` above, sharing the
+    same ``letta_prompt`` parser.
+    """
+    deploy = f"sudo-{name}"
+    proc = subprocess.run(
+        [KUBECTL, "exec", f"deploy/{deploy}", "--",
+         "sh", "-c", "HOME=/home/node cat /home/node/.letta/settings.json"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return letta_prompt.get_agent_id_from_settings(proc.stdout)
+
+
 def _resume_arg(name, as_new_chat):
     """Return the CLI arg fragment to resume (--conversation <id>) or start fresh (--new).
 
@@ -152,22 +170,25 @@ def _stream_reply(cmd, name):
 
 def run_prompt(name, prompt, as_json, as_stream=False, as_new_chat=False):
     deploy = f"sudo-{name}"
-    # Inject --conversation <id> (resume) or --new (fresh) right before -p so the
-    # CLI resumes the agent's persisted conversation by default instead of always
-    # starting a new one. Best-effort: empty fragment -> CLI creates a new chat.
+    # Inject --agent <id> (resolved from the pod's settings.json) so the CLI
+    # never has to guess the agent; --new for a fresh chat. Resume-by-default is
+    # --agent alone (no --conversation — mutually exclusive with --agent, and the
+    # seeded "default" conversation id is bogus). Best-effort: missing agent id
+    # -> empty fragment -> the CLI auto-selects.
     resume = _resume_arg(name, as_new_chat)
+    agent_id = get_agent_id(name)
 
     cmd = [
         KUBECTL, "exec", f"deploy/{deploy}", "--",
         "sh", "-c",
-        letta_prompt.build_letta_command(prompt, resume),
+        letta_prompt.build_letta_command(prompt, resume, agent_id=agent_id),
     ]
     if as_json:
         # FIX: was cmd[4] (overwrote the "sh" token) — the command string lives
         # at cmd[6], same as the stream branch. (P1 fix from the repo backlog.)
-        cmd[6] = letta_prompt.build_letta_command(prompt, resume, "json")
+        cmd[6] = letta_prompt.build_letta_command(prompt, resume, "json", agent_id)
     elif as_stream:
-        cmd[6] = letta_prompt.build_letta_command(prompt, resume, "stream-json")
+        cmd[6] = letta_prompt.build_letta_command(prompt, resume, "stream-json", agent_id)
 
     if as_stream:
         _stream_reply(cmd, name)
