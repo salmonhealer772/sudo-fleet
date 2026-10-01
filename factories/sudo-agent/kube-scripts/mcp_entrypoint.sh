@@ -113,6 +113,66 @@ if [ ! -f /opt/data/SOUL.md ]; then
   ) &
 fi
 
+# ── Docker socket group, armed BEFORE the first privilege drop ────────────────
+# The two background helpers below (the offline-fallback Redis and the MCP
+# server) reach hermes through `/command/s6-setuidgid hermes`. That helper
+# calls initgroups(), which REBUILDS the supplementary group list out of
+# /etc/group AS IT IS AT THAT MOMENT — it does not preserve whatever groups
+# the runtime granted the container.
+#
+# The group that grants access to the bind-mounted /var/run/docker.sock (mode
+# 0660, group = the node's docker gid; `hostdocker` gid 109 on this node) is
+# created by the BASE image's stage2-hook.sh. This entrypoint only reaches that
+# hook via the `exec /opt/hermes/docker/entrypoint-dispatch.sh` on the LAST
+# line of this file — i.e. AFTER these drops have already happened. So at drop
+# time /etc/group does not yet list the socket's gid for hermes, and the drop
+# yields supplementary groups [10000] ONLY. The base hook documents the exact
+# same trap for `docker run --group-add`: initgroups silently wipes it.
+#
+# Blast radius: the MCP server, and every `hermes -z` session it spawns — which
+# is the whole fleet traffic path (the prompt-distributor queue, and how the
+# planner drives this agent) — is denied /var/run/docker.sock. The docker +
+# nsenter host bridge that list-siblings / message-agent / check-agent depend
+# on then fails with "docker permission denied", while the supervised gateway
+# escapes only because main-wrapper.sh drops AFTER stage2-hook.sh has run.
+#
+# A pod-level securityContext.supplementalGroups would NOT fix this:
+# s6-setuidgid rewrites the supplementary list from /etc/group regardless.
+#
+# So mirror the base hook's socket block here (same name/idempotence rules,
+# same quiet no-op when no socket is mounted) to make the membership exist
+# BEFORE the first drop. Redundant-safe with the hook that runs later on.
+for _sock in /var/run/docker.sock /run/docker.sock; do
+  [ -S "$_sock" ] || continue
+  _sock_gid="$(stat -c '%g' "$_sock" 2>/dev/null)" || continue
+  [ -n "$_sock_gid" ] || continue
+  if id -G hermes 2>/dev/null | tr ' ' '\n' | grep -qx "$_sock_gid"; then
+    break
+  fi
+  # Reuse the name already carrying this gid when there is one, else create
+  # `hostdocker` — the same name the base hook uses.
+  _sock_group="$(getent group "$_sock_gid" 2>/dev/null | cut -d: -f1)"
+  if [ -z "$_sock_group" ]; then
+    _sock_group=hostdocker
+    groupadd -g "$_sock_gid" "$_sock_group" 2>/dev/null || true
+  fi
+  usermod -aG "$_sock_group" hermes 2>/dev/null || true
+  break
+done
+
+# Prove it on the exact call the helpers below make — their group list is this
+# one. Loud on failure: a pod that boots without the socket gid has silently
+# broken comm tools, which is exactly the bug this block exists to prevent.
+_sock_gid="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
+if [ -n "$_sock_gid" ]; then
+  if /command/s6-setuidgid hermes id -G 2>/dev/null | tr ' ' '\n' | grep -qx "$_sock_gid"; then
+    echo "[sudo-agent] docker-socket gid $_sock_gid armed for hermes (comm host bridge OK)"
+  else
+    echo "[sudo-agent] WARNING: hermes lacks docker-socket gid $_sock_gid after the pre-drop arm;" >&2
+    echo "  list-siblings / message-agent / check-agent will be denied /var/run/docker.sock in this pod" >&2
+  fi
+fi
+
 PORT="${MCP_PORT:-8000}"
 
 # Offline-fallback Redis port: derived from MCP_PORT so it is unique per agent.
