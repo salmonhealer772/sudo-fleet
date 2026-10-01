@@ -383,6 +383,14 @@ metadata:
     agent: $NAME
 spec:
   replicas: 1
+  # Recreate, NOT RollingUpdate: every agent pod runs hostNetwork:true and
+  # binds a per-agent fixed port (MCP_PORT) plus takes the /opt/data/gateway.lock
+  # on the shared PVC, so a rolling update brings the NEW pod up beside the OLD
+  # one and the new pod crash-loops (port already in use / gateway host-lock
+  # held by the old pod) while the rollout hangs. The old pod MUST terminate
+  # before the new one starts (the same reason redis-up.sh uses Recreate).
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: sudo-agent
