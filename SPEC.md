@@ -2,6 +2,15 @@
 
 The whole agent fleet is **one entity** in one repo. This is the forward build: a portable stack that boots on any Linux box with a single `setup.sh`, and saves/pulls agents as complete identity packages.
 
+## Next extension: namespace-scoped project fleets
+
+[NEXT.md](NEXT.md) records the 2026-10-01 direction: one cluster hosting multiple
+independent fleets, one namespace per project, with pause/resume and an optional
+common-services namespace. It is the starting point for the next build, not an
+as-built claim. The existing full-mesh communication contract below describes
+one fleet; the extension must scope that mesh to a project by default rather
+than grant every project access to every agent in the cluster.
+
 ## The contract
 
 > Anywhere that runs Linux: `git clone`, run `setup.sh`, and it works — you are on an effectively-empty fleet with a router/spawner already live, and you save and pull agents in a command or two (`up.sh`, but with a save).
