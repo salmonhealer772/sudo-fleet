@@ -156,6 +156,24 @@ Each tool has a matching skill documenting *when + how* to use it (the reach syn
 
 Every agent's persona gets a short block teaching it: *"You are part of a fleet. You can message any sibling agent by name, check what it's doing, and read its logs. Here are the three tools/skills for that, and when to reach for them."* This is what makes the tools get *used* rather than sat-unused (the psy-glm lesson: capability without persona awareness is ignored).
 
+### The load-skill-first gate (built, both kinds)
+
+Every comm tool sits behind a **stateful prerequisite gate**: the tool refuses to run until its matching comm skill has been LOADED in the current conversation (the Claude Agent SDK "block until prerequisite passed this session" pattern). An observer records each skill load; the tool checks that record and, when absent, returns a model-readable refusal BEFORE any transport/network work. The gate is per-conversation, fail-closed inside a session, fail-open outside one (a scripted `python3 /opt/comm-tools/list_siblings.py` with no session context still works). Two implementations, one contract:
+
+- **Hermes (sudo-agent)** — two halves that enforce the same rule. The `sudo-comm-gate` plugin records skill loads keyed by `HERMES_SESSION_ID` in `<HERMES_HOME>/comm-gate/state.json` (`on_skill_lifecycle`) and vetoes a terminal command that runs a comm CLI with its skill unloaded (`pre_tool_call`). Independently, `comm/tools/comm_gate.py` runs at the top of each comm CLI, reads the same ledger, and exits 69 (sysexits EX_UNAVAILABLE) with `BLOCKED: load the <skill> skill first, then retry.` without building any transport.
+- **Letta (sudo-letta)** — each comm mod's `gate.mjs` installs a `Skill`-tool observer (in-memory, keyed by conversation id); the tool returns `BLOCKED: load the <skill> skill first (Skill tool), then retry.` when the skill wasn't loaded in the current conversation.
+
+The three gated skills are `list-siblings`, `message-agent`, `check-agent`. See `KNOWN-ISSUES.md` for the per-conversation/compaction gap.
+
+### The persona awareness is a factory-managed block (built, both kinds)
+
+The persona layer above ships as a **factory-managed block**, not a first-boot append. The fleet-comm text is a single shared snippet — `factories/sudo-agent/comm/PERSONA-SNIPPET.md`, byte-identical on both sides — applied between fixed `<!-- FLEET-COMM-AWARENESS-BEGIN -->` / `<!-- FLEET-COMM-AWARENESS-END -->` markers and re-applied on EVERY boot by each factory's `mcp_entrypoint.sh`:
+
+- **Hermes (sudo-agent)** — the snippet is baked into the image at `/opt/comm/PERSONA-SNIPPET.md` and applied to `SOUL.md`.
+- **Letta (sudo-letta)** — `up.sh` copies the same snippet into the pod as `/home/node/.letta/fleet-comm-snippet.md`; `mcp_entrypoint.sh` applies it to `system/persona.md` and git-commits the MemFS so the seeded persona loads.
+
+Each boot replaces the content between the markers (or inserts the block if absent), so an agent can never permanently lose or stale its fleet awareness, and a rebuilt image ships a fresh snippet on the next restart. Nothing outside the markers is touched. Skills are separate: seeded on FIRST boot only, because the agent may edit them and a re-seed would clobber.
+
 ### The router default — how agents are born able to talk
 
 In **sudo-fleet**, the router pair (psnvc + forge) **bakes these into every spawned agent as a spawn-time default**: the 3 tools + 3 skills + persona block are part of what `up.sh`/spawn gives an agent, NOT a post-hoc per-agent bolting. A new agent comes out of the spawner already able to message/check any sibling. This is what "native" means — the fleet, as a whole, talks.
