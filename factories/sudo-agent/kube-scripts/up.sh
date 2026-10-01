@@ -226,6 +226,25 @@ if [[ -z "$WATCH_SCRIPTS_SHA" ]]; then
   exit 1
 fi
 echo "→ watch scripts digest: ${WATCH_SCRIPTS_SHA:0:12}"
+
+# ── Image content digest (rolls the pod when the IMAGE changes) ─────────────
+# The pod template pins `image: sudo-agent:latest` with imagePullPolicy:
+# IfNotPresent, so a REBUILT image under the same tag does NOT roll the
+# Deployment on its own: kubectl apply sees the tag and the watch-scripts
+# digest both unchanged and reports "deployment ... unchanged", leaving the
+# running pod on the OLD image. An image-only fix (e.g. a patch_memory_review.py
+# change) would silently never reach the pod. Pin the docker image's
+# content-addressable ID as a pod-template annotation so kubectl apply
+# recreates the pod exactly when the image content changes.
+IMAGE_SHA="$(docker image inspect sudo-agent:latest --format '{{.Id}}' 2>/dev/null)"
+if [[ -z "$IMAGE_SHA" ]]; then
+  echo "✗ could not read the sudo-agent:latest image ID — refusing to deploy an" >&2
+  echo "  unversioned image (an image-only change would silently never roll)." >&2
+  echo "  Build it first:  bash setup.sh   (or: docker build -t sudo-agent:latest -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
+  exit 1
+fi
+echo "→ sudo-agent image digest: ${IMAGE_SHA:0:12}"
+
 # ── Preserve operator-added env vars ─────────────────────────────────────────
 # up.sh REGENERATES this Deployment from the template below, so the live object
 # is REPLACED, not merged. Any env var an operator added to the running
@@ -391,6 +410,12 @@ spec:
         # backslash-escaped; the manifest self-check after the heredoc is the
         # backstop that catches it if someone forgets.
         sudo-agent/watch-scripts-sha: "$WATCH_SCRIPTS_SHA"
+        # Content digest of the sudo-agent IMAGE (see the image-digest note
+        # above the manifest). Bumping it is the ONLY way an image-only change
+        # rolls the pod: the tag is 'latest' and imagePullPolicy is
+        # IfNotPresent, so without this annotation a rebuilt image would
+        # silently keep running the old one in every live pod.
+        sudo-agent/image-sha: "$IMAGE_SHA"
     spec:
       shareProcessNamespace: true
       hostNetwork: true
