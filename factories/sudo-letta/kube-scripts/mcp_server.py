@@ -126,19 +126,21 @@ def _run_stream(cmd):
 
 def _execute_prompt(prompt, stream=False, json_mode=False, new_chat=False):
     """Run ONE prompt against this agent. Returns (ok, output, error)."""
-    conv_id = lp.get_conversation_id_from_settings(_read_settings_text())
+    settings_text = _read_settings_text()
+    conv_id = lp.get_conversation_id_from_settings(settings_text)
     resume = lp.resume_fragment(conv_id, new_chat)
+    agent_id = lp.get_agent_id_from_settings(settings_text)
 
     try:
         if stream:
-            cmd = lp.build_letta_command(prompt, resume, "stream-json")
+            cmd = lp.build_letta_command(prompt, resume, "stream-json", agent_id)
             rc, text, stderr = _run_stream(cmd)
             if rc != 0:
                 return False, "", f"letta failed (rc={rc}): {stderr}"
             return True, text, ""
 
         if json_mode:
-            cmd = lp.build_letta_command(prompt, resume, "json")
+            cmd = lp.build_letta_command(prompt, resume, "json", agent_id)
             rc, out, stderr = _run_collect(cmd)
             if rc != 0:
                 return False, "", f"letta failed (rc={rc}): {stderr or out}"
@@ -150,7 +152,7 @@ def _execute_prompt(prompt, stream=False, json_mode=False, new_chat=False):
                 return True, _json.dumps(parsed, indent=2), ""
             return True, out, ""
 
-        cmd = lp.build_letta_command(prompt, resume)
+        cmd = lp.build_letta_command(prompt, resume, agent_id=agent_id)
         rc, out, stderr = _run_collect(cmd)
         if rc != 0:
             return False, "", f"letta failed (rc={rc}): {stderr or out}"

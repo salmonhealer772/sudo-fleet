@@ -1,7 +1,12 @@
 # sudo-letta — Letta Code with full root inside a privileged container
 FROM node:22-bookworm-slim
 
-LABEL sudo-letta="true" description="Letta Code with sudo + native memory"
+# Stamped at build time so setup.sh can detect source changes and rebuild
+# instead of skipping on a stale image (see factories/sudo-letta/setup.sh).
+ARG SOURCE_HASH=unknown
+
+LABEL sudo-letta="true" description="Letta Code with sudo + native memory" \
+      sudo-fleet.source-hash="${SOURCE_HASH}"
 
 # Install build deps + tools (node-pty compile deps, etc.)
 RUN apt-get update && \
@@ -33,10 +38,15 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/node && \
     chmod 0440 /etc/sudoers.d/node
 
-# Give node a supplementary group with gid 109 = the host's docker group, so it
-# can open the mounted /var/run/docker.sock. (Name is irrelevant — only the
-# numeric gid matters, and it must match the host's gid 109.)
-RUN groupadd --gid 109 dockerhost && usermod -aG dockerhost node
+# Docker-socket access is armed at RUNTIME, not baked here. The host docker
+# group gid varies across nodes (lima = 109, Blake's laptop = 986, ...), and a
+# hardcoded gid breaks the comm host bridge (list-siblings / message-agent /
+# check-agent) on every node whose gid differs. The agent container runs with
+# runAsUser: 0 (see kube-scripts/up.sh) so its entrypoint (mcp_entrypoint.sh)
+# starts as root, reads the REAL gid off /var/run/docker.sock, adds `node` to
+# it, then drops to node — the same runtime gid-arm the sudo-agent side uses
+# (a4df988). `USER node` below stays: it is the default for the watch sidecar
+# (which never touches the socket).
 
 # Install Letta Code globally.
 # PINNED to 0.33.2 (exact pin, not ^/latest): letta-code 0.33.0 silently broke

@@ -13,6 +13,58 @@
 
 set -u
 
+# ── Docker socket group: armed at RUNTIME as root, then drop to node ──────────
+# The image no longer bakes a hardcoded docker gid (the old `groupadd --gid 109`
+# only matched hosts whose docker group happened to be gid 109; it silently
+# broke the comm host bridge on hosts with a different gid, e.g. Blake's 986).
+# Instead this entrypoint starts as root (up.sh sets runAsUser: 0 on the agent
+# container), reads the REAL gid off the bind-mounted /var/run/docker.sock,
+# adds `node` to that group, then re-execs itself as node. Mirrors the
+# sudo-agent fix (a4df988); the watch sidecar is unaffected (it runs as the
+# image USER node and never touches the socket).
+#
+# `setpriv --init-groups` below rebuilds node's supplementary group list from
+# /etc/group AS MODIFIED HERE — so the just-added socket gid is present when the
+# MCP server (and every letta comm-tool invocation) runs. setpriv also PRESERVES
+# the environment (MCP_PORT, HOME, LETTA_HOME, keys, ...) — unlike `su`, whose
+# non-login shell can reset PATH/env and drop the per-agent MCP_PORT. A pod-level
+# supplementalGroups would NOT be reliable for the same reason the sudo-agent
+# entrypoint documents: the drop rebuilds the list from /etc/group.
+if [ "$(id -u)" = "0" ]; then
+  for _sock in /var/run/docker.sock /run/docker.sock; do
+    [ -S "$_sock" ] || continue
+    _sock_gid="$(stat -c '%g' "$_sock" 2>/dev/null)" || continue
+    [ -n "$_sock_gid" ] || continue
+    if getent group "$_sock_gid" >/dev/null 2>&1; then
+      _sock_group="$(getent group "$_sock_gid" | cut -d: -f1)"
+    else
+      _sock_group=hostdocker
+      groupadd -g "$_sock_gid" "$_sock_group" 2>/dev/null || true
+    fi
+    usermod -aG "$_sock_group" node 2>/dev/null || true
+    break
+  done
+  _node_uid="$(id -u node 2>/dev/null || echo 1000)"
+  _node_gid="$(id -g node 2>/dev/null || echo 1000)"
+  # Prove the arm on the exact drop call below (setpriv --init-groups). Loud on
+  # failure: a pod that boots without the socket gid has silently broken comm
+  # tools, which is exactly the bug this block exists to prevent.
+  _sock_gid="$(stat -c '%g' /var/run/docker.sock 2>/dev/null || true)"
+  if [ -n "$_sock_gid" ]; then
+    if setpriv --reuid="$_node_uid" --regid="$_node_gid" --init-groups id -G 2>/dev/null \
+        | tr ' ' '\n' | grep -qx "$_sock_gid"; then
+      echo "[sudo-letta] docker-socket gid $_sock_gid armed for node (comm host bridge OK)"
+    else
+      echo "[sudo-letta] WARNING: node lacks docker-socket gid $_sock_gid after the arm;" >&2
+      echo "  list-siblings / message-agent / check-agent will be denied /var/run/docker.sock in this pod" >&2
+    fi
+  fi
+  # Drop to node for everything below. The `id -u = 0` guard makes this a
+  # one-way drop (node is uid 1000, so the re-exec'd copy skips this block).
+  exec setpriv --reuid="$_node_uid" --regid="$_node_gid" --init-groups \
+    /opt/letta-mcp/mcp_entrypoint.sh
+fi
+
 PORT="${MCP_PORT:-8000}"
 
 (

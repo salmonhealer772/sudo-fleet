@@ -32,15 +32,42 @@ _retry() {
 }
 
 # --- Build image ---
-if ! docker image inspect sudo-letta:latest &>/dev/null; then
-  echo "→ Building sudo-letta image (may take 2-3 min)..."
-  _retry 3 "docker build sudo-letta" docker build -t sudo-letta:latest -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" || {
+# Rebuild whenever the build INPUTS changed, not just when the image is absent.
+# The inputs are this Dockerfile + every file it COPYs into the image. Their
+# combined sha256 is stamped into the image at build time (SOURCE_HASH build
+# arg -> sudo-fleet.source-hash label); if the current sources hash to
+# something different (or the label is missing — e.g. an image built before
+# this mechanism existed, or a stale image from a pre-change-detection setup),
+# rebuild. A re-run with unchanged sources skips the build, so idempotent
+# re-runs stay fast. This closes the stale-image hole: previously a re-run
+# skipped the build whenever the image existed, so a Dockerfile/kube-scripts
+# change survived in the old image until the image was manually removed.
+_source_hash() {
+  ( cd "$SCRIPT_DIR" && \
+      cat Dockerfile \
+          kube-scripts/letta_prompt.py \
+          kube-scripts/mcp_server.py \
+          kube-scripts/mcp_entrypoint.sh \
+          kube-scripts/watch_sidecar.py \
+          kube-scripts/rich_tap.py ) | sha256sum | cut -d' ' -f1
+}
+
+CUR_HASH="$(_source_hash)"
+IMG_HASH="$(docker image inspect --format '{{index .Config.Labels "sudo-fleet.source-hash"}}' sudo-letta:latest 2>/dev/null || true)"
+
+if [[ -z "$IMG_HASH" || "$IMG_HASH" != "$CUR_HASH" ]]; then
+  if [[ -z "$IMG_HASH" ]]; then
+    echo "→ Building sudo-letta image (no source-hash label — image predates change detection)..."
+  else
+    echo "→ Building sudo-letta image (source changed)..."
+  fi
+  _retry 3 "docker build sudo-letta" docker build --build-arg SOURCE_HASH="$CUR_HASH" -t sudo-letta:latest -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" || {
     echo "Docker build failed." >&2
     exit 1
   }
   echo "✓ sudo-letta image built"
 else
-  echo "→ sudo-letta:latest image exists, skipping build"
+  echo "→ sudo-letta:latest up to date (source unchanged), skipping build"
 fi
 
 # --- Create config directory inside the repo ---
