@@ -1,33 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# factories/mac/keyboard-mode.sh — flip the external "Gaming Keyboard" between
-# PC muscle-memory and native Mac behaviour, and make it STICK.
+# factories/mac/keyboard-mode.sh — flip the operator between his two keyboards.
+#
+#   --mac       "my mac keyboard"  = HIS BASELINE, exactly. Re-applies his
+#               global UserKeyMapping verbatim (from
+#               ~/Library/LaunchAgents/key-binds-on-start.plist) if it has
+#               drifted, and applies NO per-device override on the external
+#               board. This is the state his own LaunchAgent already produces
+#               at login — we only restore it if it drifted.
+#   --chinese   "the chinese keyboard" = his baseline (LEFT COMPLETELY ALONE)
+#               PLUS a per-device override on the external "Gaming Keyboard"
+#               only (L/R Ctrl -> Command, L/R Alt -> Command), so Ctrl+C /
+#               Ctrl+V / Alt+Tab work with the Windows-keyboard hand position.
+#   --status    read-only report of the three layers, separately:
+#               (a) his baseline global mapping, (b) the board override,
+#               (c) the remembered mode, (d) whether the board is attached.
+#   --toggle    flip between mac and chinese.
+#   --off       remove everything of ours (board override + state + any old
+#               LaunchAgent we installed). Never touches his global baseline,
+#               never touches key-binds-on-start.plist.
 #
 # Runs on the lima host as root; reaches the Mac over the key-based SSH that
-# factories/mac/up.sh established (aidanmcohen@192.168.5.2). Everything here is
-# dependency-free: built-in hidutil + launchd only. No third-party app, no
-# kernel driver, no Input-Monitoring / Accessibility permission (hidutil writes
-# the HID event system directly and needs none of them).
+# factories/mac/up.sh established (aidanmcohen@192.168.5.2). Dependency-free:
+# built-in hidutil only. No watcher, no LaunchAgent, no third-party app, no
+# kernel driver, no Input-Monitoring / Accessibility permission.
 #
-# Subcommands:
-#   --pc       PC muscle-memory on the EXTERNAL board only: Ctrl=Cmd, Alt=Cmd,
-#              Win=Cmd (copy/paste/app-switcher). Global mapping cleared. The
-#              built-in keyboard is never touched. Persisted across reboot AND
-#              unplug/re-plug.
-#   --mac      Fully native on the external board (no remap; its Win key is
-#              already Command). Global mapping cleared. Persisted.
-#   --status   Show the effective board mapping, the global mapping, and which
-#              mode is remembered.
-#   --off      Remove our mapping + our LaunchAgent and restore the prior state
-#              (re-enable any LaunchAgent we neutralised).
-#
-# Why a LaunchAgent + a watcher loop: hidutil mappings are VOLATILE — they are
-# lost on reboot AND on keyboard unplug/re-plug. A plain RunAtLoad LaunchAgent
-# only covers login. To also survive re-plug we install a KeepAlive LaunchAgent
-# running a tiny watch loop that re-applies the remembered mode whenever the
-# board's presence (via `hidutil list`) or the remembered mode changes, plus a
-# periodic safety re-apply. The chosen mode lives in a file on the Mac.
+# HARD RULES (this revision):
+#   * The ONLY global UserKeyMapping we ever write is HIS BASELINE, verbatim.
+#     Never empty, never ours.
+#   * We never rename/disable/move/overwrite key-binds-on-start.plist, and we
+#     do not touch its launchd disabled-state at all.
+#   * No watcher, no LaunchAgent that writes UserKeyMapping. The remembered
+#     mode is re-applied only when the operator runs this tool again. (His own
+#     key-binds-on-start.plist already persists the mac baseline at login.)
 
 # ── Hardcoded Mac facts (verified live 2026-10-02 — do not re-derive) ────────
 MAC_USER="aidanmcohen"
@@ -44,34 +50,34 @@ BOARD_PRODUCT="Gaming Keyboard"
 #   L GUI  0xE3 = 30064771299     R Alt 0xE6 = 30064771302
 #   R Ctrl 0xE4 = 30064771300     R GUI 0xE7 = 30064771303
 #
-# PC muscle-memory mapping (the exact live-applied state, verified 2026-10-02):
+# HIS BASELINE (verbatim from ~/Library/LaunchAgents/key-binds-on-start.plist,
+# re-confirmed live 2026-10-02 via `hidutil property --get UserKeyMapping`):
+#   L Cmd <-> Fn   (Fn acts as Command: Fn+C copy, Fn+V paste — the FEATURE)
+#   + a third entry (Apple vendor usage 0xFF01/0x10 -> F3), also verbatim.
+# This is the ONLY global mapping we ever apply, and only in --mac.
+BASELINE_MAP_JSON='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771299,"HIDKeyboardModifierMappingDst":1095216660483},{"HIDKeyboardModifierMappingSrc":1095216660483,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":280379760050192,"HIDKeyboardModifierMappingDst":30064771132}]}'
+
+# The per-device override for the external board in --chinese:
 #   L Ctrl -> L Cmd   (Ctrl+C copy / Ctrl+V paste)
 #   R Ctrl -> R Cmd
 #   L Alt  -> R Cmd   (Alt+Tab app switcher)
-#   R Alt  -> R Cmd   (Win/Super already sends L GUI = Command, left untouched)
-MATCH_JSON='{"VendorID":9610,"ProductID":268}'
-PC_MAP_JSON='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":30064771300,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771302,"HIDKeyboardModifierMappingDst":30064771303}]}'
+#   R Alt  -> R Cmd
+CHINESE_MAP_JSON='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":30064771300,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771302,"HIDKeyboardModifierMappingDst":30064771303}]}'
+
 EMPTY_MAP_JSON='{"UserKeyMapping":[]}'
+MATCH_JSON='{"VendorID":9610,"ProductID":268}'
 
 # Mac-side install locations (must match the quoted heredocs below).
 STATE_DIR="$MAC_HOME/.sudofleet-keyboard"
 MODE_FILE="$STATE_DIR/mode"
-WATCH_SCRIPT="$STATE_DIR/watch.sh"
-WATCH_LOG="$STATE_DIR/watch.log"
-PLIST_DST="$MAC_HOME/Library/LaunchAgents/com.sudofleet.keyboard-mode.plist"
-AGENT_LABEL="com.sudofleet.keyboard-mode"
-NEUTRALIZED_FLAG="$STATE_DIR/neutralized-key-binds-on-start"
-
-# The prior-art LaunchAgent that conflicts with us: it re-applies a GLOBAL
-# "Left Command -> Fn" mapping at every login (the exact thing the operator
-# cleared today because it broke every ⌘ shortcut). We must neutralise it or
-# our cleared-global state is undone on the next reboot.
-KBS_LABEL="key-binds-on-start"
-KBS_PLIST="$MAC_HOME/Library/LaunchAgents/key-binds-on-start.plist"
+# The LaunchAgent the OLD revision installed. This revision installs none, but
+# --off removes a leftover one so "turn it off cleanly" also cleans old deploys.
+OLD_LABEL="com.sudofleet.keyboard-mode"
+OLD_PLIST="$MAC_HOME/Library/LaunchAgents/com.sudofleet.keyboard-mode.plist"
 
 # The Mac's login shell is zsh: a remote command containing a bare word that
 # starts with '=' dies with 'zsh:1: ==FOO=== not found'. Every remote command
-# below is either `bash /tmp/xxx.sh` or a grep/ls free of '=' markers.
+# below is `bash /tmp/xxx.sh`, so this never bites.
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
 WORK="/tmp/mac-keyboard-mode"
 
@@ -85,354 +91,229 @@ mssh()     { ssh "${SSH_OPTS[@]}" "$MAC_USER@$MAC_IP" "$@"; }
 write_artifacts() {
   mkdir -p "$WORK"
 
-  # watch.sh — the KeepAlive re-apply loop that runs on the Mac.
-  cat > "$WORK/watch.sh" <<'WATCH_EOF'
-#!/bin/bash
-# Auto-generated by factories/mac/keyboard-mode.sh — managed by that script.
-# Re-applies the remembered keyboard mode at login and whenever the external
-# "Gaming Keyboard" (BY Tech, 0x258A/0x010C) is unplugged/re-plugged, because
-# hidutil mappings are volatile.
-
-set -u
-MODE_FILE="/Users/aidanmcohen/.sudofleet-keyboard/mode"
-LOG="/Users/aidanmcohen/.sudofleet-keyboard/watch.log"
-MATCH='{"VendorID":9610,"ProductID":268}'
-PC_MAP='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":30064771300,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771302,"HIDKeyboardModifierMappingDst":30064771303}]}'
-EMPTY='{"UserKeyMapping":[]}'
-PRODUCT="Gaming Keyboard"
-PERIODIC=15   # seconds between safety re-applies (self-heal)
-
-log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
-
-device_present() {
-  hidutil list 2>/dev/null | grep -q "$PRODUCT"
-}
-
-apply() {
-  local mode="$1"
-  # Global mapping must always be empty: a global remap also affects the
-  # built-in keyboard (and the stale global L Cmd->Fn was what broke every
-  # shortcut). The per-device map below is scoped to the board only.
-  # (hidutil --set echoes the resulting property on stdout; silence it so the
-  #  watcher's log stays clean.)
-  hidutil property --set "$EMPTY" >/dev/null 2>&1
-  if device_present; then
-    if [ "$mode" = "pc" ]; then
-      hidutil property --matching "$MATCH" --set "$PC_MAP" >/dev/null 2>&1
-    else
-      hidutil property --matching "$MATCH" --set "$EMPTY" >/dev/null 2>&1
-    fi
-  fi
-}
-
-last=""
-tick=0
-while true; do
-  mode="$(cat "$MODE_FILE" 2>/dev/null || echo mac)"
-  if device_present; then p=1; else p=0; fi
-  tick=$((tick+1))
-  if [ "$mode:$p" != "$last" ]; then
-    apply "$mode"
-    log "apply mode=$mode present=$p"
-    last="$mode:$p"
-  elif [ $((tick % PERIODIC)) -eq 0 ]; then
-    apply "$mode"   # periodic safety re-apply (self-heals any clobber)
-  fi
-  sleep 1
-done
-WATCH_EOF
-
-  # com.sudofleet.keyboard-mode.plist — the LaunchAgent.
-  cat > "$WORK/com.sudofleet.keyboard-mode.plist" <<'PLIST_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.sudofleet.keyboard-mode</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>/Users/aidanmcohen/.sudofleet-keyboard/watch.sh</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>5</integer>
-  <key>StandardOutPath</key><string>/Users/aidanmcohen/.sudofleet-keyboard/watch.log</string>
-  <key>StandardErrorPath</key><string>/Users/aidanmcohen/.sudofleet-keyboard/watch.log</string>
-</dict>
-</plist>
-PLIST_EOF
-
-  # install.sh — runs on the Mac with one arg: pc|mac.
-  cat > "$WORK/install.sh" <<'INSTALL_EOF'
+  # apply.sh — runs on the Mac with one arg: mac | chinese.
+  cat > "$WORK/apply.sh" <<'APPLY_EOF'
 #!/bin/bash
 set -u
-MODE="${1:-mac}"
+MODE="$1"
 STATE_DIR="/Users/aidanmcohen/.sudofleet-keyboard"
 MODE_FILE="$STATE_DIR/mode"
-WATCH_SRC="/tmp/watch.sh"
-WATCH_DST="$STATE_DIR/watch.sh"
-PLIST_SRC="/tmp/com.sudofleet.keyboard-mode.plist"
-PLIST_DST="/Users/aidanmcohen/Library/LaunchAgents/com.sudofleet.keyboard-mode.plist"
-LABEL="com.sudofleet.keyboard-mode"
-KBS_LABEL="key-binds-on-start"
-KBS_PLIST="/Users/aidanmcohen/Library/LaunchAgents/key-binds-on-start.plist"
-U=$(id -u)
-LC=/bin/launchctl
-
-mkdir -p "$STATE_DIR" "/Users/aidanmcohen/Library/LaunchAgents"
-
-# 1. write the remembered mode
-printf '%s\n' "$MODE" > "$MODE_FILE"
-
-# 2. install watch.sh + the LaunchAgent plist
-cp "$WATCH_SRC" "$WATCH_DST" && chmod 700 "$WATCH_DST"
-cp "$PLIST_SRC" "$PLIST_DST" && chmod 644 "$PLIST_DST"
-
-# 3. neutralise the conflicting prior-art agent (GLOBAL L Cmd->Fn at login)
-if [ -f "$KBS_PLIST" ] || "$LC" list 2>/dev/null | grep -q "$KBS_LABEL"; then
-  "$LC" boot"out"  gui/$U/$KBS_LABEL 2>/dev/null || true
-  "$LC" dis"able"  gui/$U/$KBS_LABEL 2>/dev/null || true
-  printf '1\n' > "$STATE_DIR/neutralized-key-binds-on-start"
-else
-  rm -f "$STATE_DIR/neutralized-key-binds-on-start"
-fi
-
-# 4. (re)load our agent
-"$LC" boot"out"  gui/$U/$LABEL 2>/dev/null || true
-"$LC" boot"strap" gui/$U "$PLIST_DST"
-"$LC" kick"start" -k gui/$U/$LABEL
-
-echo installed
-INSTALL_EOF
-
-  # uninstall.sh — runs on the Mac for --off.
-  cat > "$WORK/uninstall.sh" <<'UNINSTALL_EOF'
-#!/bin/bash
-set -u
-STATE_DIR="/Users/aidanmcohen/.sudofleet-keyboard"
-PLIST_DST="/Users/aidanmcohen/Library/LaunchAgents/com.sudofleet.keyboard-mode.plist"
-LABEL="com.sudofleet.keyboard-mode"
-KBS_LABEL="key-binds-on-start"
-KBS_PLIST="/Users/aidanmcohen/Library/LaunchAgents/key-binds-on-start.plist"
-FLAG="$STATE_DIR/neutralized-key-binds-on-start"
 MATCH='{"VendorID":9610,"ProductID":268}'
+BASELINE='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771299,"HIDKeyboardModifierMappingDst":1095216660483},{"HIDKeyboardModifierMappingSrc":1095216660483,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":280379760050192,"HIDKeyboardModifierMappingDst":30064771132}]}'
+CHINESE='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":30064771300,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771302,"HIDKeyboardModifierMappingDst":30064771303}]}'
 EMPTY='{"UserKeyMapping":[]}'
-U=$(id -u)
-LC=/bin/launchctl
 
-# 1. remove our LaunchAgent
-"$LC" boot"out" gui/$U/$LABEL 2>/dev/null || true
-rm -f "$PLIST_DST"
+mkdir -p "$STATE_DIR"
 
-# 2. remove our mapping (per-device + global)
-hidutil property --matching "$MATCH" --set "$EMPTY" >/dev/null 2>&1 || true
-hidutil property --set "$EMPTY" >/dev/null 2>&1 || true
+case "$MODE" in
+  mac)
+    # His baseline, re-applied if it drifted. This is the ONLY global
+    # UserKeyMapping this tool ever writes, and it is his, verbatim.
+    hidutil property --set "$BASELINE" >/dev/null 2>&1
+    # No per-device override on the board in this mode.
+    hidutil property --matching "$MATCH" --set "$EMPTY" >/dev/null 2>&1
+    printf '%s\n' "mac" > "$MODE_FILE"
+    ;;
+  chinese)
+    # Leave the global mapping COMPLETELY alone (his baseline lives there and
+    # is re-applied at login by his own key-binds-on-start.plist). Only add
+    # the per-device override on the external board.
+    hidutil property --matching "$MATCH" --set "$CHINESE" >/dev/null 2>&1
+    printf '%s\n' "chinese" > "$MODE_FILE"
+    ;;
+  *)
+    echo "unknown mode: $MODE" >&2
+    exit 2
+    ;;
+esac
+echo "applied $MODE"
+APPLY_EOF
 
-# 3. restore the prior art we neutralised (re-enable only — do NOT re-bootstrap
-#    or kickstart, which would re-apply its GLOBAL L Cmd->Fn mapping that the
-#    operator deliberately cleared). Re-enabling lets it auto-load at the next
-#    login exactly as it was configured before we touched it.
-if [ -f "$FLAG" ]; then
-  "$LC" en"able" gui/$U/$KBS_LABEL 2>/dev/null || true
-  echo "restored-key-binds"
-else
-  echo "no-key-binds-to-restore"
-fi
-
-# 4. remove our state dir
-rm -rf "$STATE_DIR"
-
-echo uninstalled
-UNINSTALL_EOF
-
-  # status.sh — runs on the Mac for --status (and the verify steps).
+  # status.sh — read-only report of the three layers.
   cat > "$WORK/status.sh" <<'STATUS_EOF'
 #!/bin/bash
 set -u
 STATE_DIR="/Users/aidanmcohen/.sudofleet-keyboard"
 MODE_FILE="$STATE_DIR/mode"
-LABEL="com.sudofleet.keyboard-mode"
-KBS_LABEL="key-binds-on-start"
 MATCH='{"VendorID":9610,"ProductID":268}'
-U=$(id -u)
 
-echo "remembered_mode=$(cat "$MODE_FILE" 2>/dev/null || echo none)"
-if hidutil list 2>/dev/null | grep -q "Gaming Keyboard"; then
-  echo "device_present=yes"
+GLOBAL="$(hidutil property --get UserKeyMapping 2>&1)"
+BOARD="$(hidutil property --matching "$MATCH" --get UserKeyMapping 2>&1)"
+
+# (a) his baseline global mapping: applied / drifted / empty / other
+gn=$(printf '%s' "$GLOBAL" | grep -c 'HIDKeyboardModifierMappingSrc' || true)
+if [ "$gn" = "3" ] \
+   && printf '%s' "$GLOBAL" | grep -q 'Src = 30064771299' \
+   && printf '%s' "$GLOBAL" | grep -q 'Dst = 1095216660483' \
+   && printf '%s' "$GLOBAL" | grep -q 'Src = 1095216660483' \
+   && printf '%s' "$GLOBAL" | grep -q 'Dst = 30064771299' \
+   && printf '%s' "$GLOBAL" | grep -q 'Src = 280379760050192' \
+   && printf '%s' "$GLOBAL" | grep -q 'Dst = 30064771132'; then
+  echo "baseline_global=applied"
+elif [ "$gn" = "0" ]; then
+  echo "baseline_global=empty"
 else
-  echo "device_present=no"
+  echo "baseline_global=drifted"
 fi
 
-echo "--- per-device mapping (board) ---"
-hidutil property --matching "$MATCH" --get UserKeyMapping 2>&1 || echo "(read failed)"
+# (b) board override: chinese / other / absent
+if printf '%s' "$BOARD" | grep -q 'HIDKeyboardModifierMappingSrc = 30064771296'; then
+  echo "board_override=chinese"
+elif printf '%s' "$BOARD" | grep -q 'HIDKeyboardModifierMappingSrc'; then
+  echo "board_override=other"
+else
+  echo "board_override=absent"
+fi
+
+# (c) remembered mode
+echo "remembered_mode=$(cat "$MODE_FILE" 2>/dev/null || echo none)"
+
+# (d) board attached
+if hidutil list 2>/dev/null | grep -q "Gaming Keyboard"; then
+  echo "board_attached=yes"
+else
+  echo "board_attached=no"
+fi
 
 echo "--- global mapping ---"
-hidutil property --get UserKeyMapping 2>&1 || echo "(read failed)"
-
-echo "--- agent ---"
-if launchctl list 2>/dev/null | grep -q "$LABEL"; then
-  echo "agent=loaded"
-else
-  echo "agent=not-loaded"
-fi
-if pgrep -f "sudofleet-keyboard/watch.sh" >/dev/null 2>&1; then
-  echo "watcher=running"
-else
-  echo "watcher=not-running"
-fi
-
-echo "--- prior-art key-binds-on-start ---"
-if launchctl print-disabled gui/$U 2>/dev/null | grep -q "\"$KBS_LABEL\" => disabled"; then
-  echo "key-binds-on-start=disabled"
-else
-  echo "key-binds-on-start=enabled"
-fi
-
-echo "--- watch log (last 8) ---"
-tail -8 "$STATE_DIR/watch.log" 2>/dev/null || echo "(no log yet)"
+printf '%s\n' "$GLOBAL"
+echo "--- board mapping ---"
+printf '%s\n' "$BOARD"
 STATUS_EOF
+
+  # off.sh — remove everything of ours; leave his baseline + plist alone.
+  cat > "$WORK/off.sh" <<'OFF_EOF'
+#!/bin/bash
+set -u
+STATE_DIR="/Users/aidanmcohen/.sudofleet-keyboard"
+MATCH='{"VendorID":9610,"ProductID":268}'
+EMPTY='{"UserKeyMapping":[]}'
+OLD_LABEL="com.sudofleet.keyboard-mode"
+OLD_PLIST="/Users/aidanmcohen/Library/LaunchAgents/com.sudofleet.keyboard-mode.plist"
+U=$(id -u)
+
+# 1. Remove the LaunchAgent the OLD revision installed (if any). Never touches
+#    key-binds-on-start or com.sudofleet.cluster-access.
+launchctl bootout "gui/$U/$OLD_LABEL" 2>/dev/null || true
+rm -f "$OLD_PLIST"
+
+# 2. Remove our per-device board override (board returns to baseline-only).
+hidutil property --matching "$MATCH" --set "$EMPTY" >/dev/null 2>&1 || true
+
+# 3. Remove our state dir (mode file + any stale watch.sh / watch.log /
+#    neutralized flag from the old revision).
+rm -rf "$STATE_DIR"
+
+# Deliberately do NOT touch the global mapping (his baseline) and do NOT touch
+# key-binds-on-start.plist.
+echo "off: removed sudofleet keyboard state; global baseline + key-binds-on-start.plist untouched"
+OFF_EOF
 }
 
-# ── ship + run a Mac-side script ─────────────────────────────────────────────
+# ── ship the Mac-side scripts ────────────────────────────────────────────────
 ship() {
   scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-    "$WORK/watch.sh" "$WORK/com.sudofleet.keyboard-mode.plist" \
-    "$WORK/install.sh" "$WORK/uninstall.sh" "$WORK/status.sh" \
+    "$WORK/apply.sh" "$WORK/status.sh" "$WORK/off.sh" \
     "$MAC_USER@$MAC_IP:/tmp/" >/dev/null 2>&1
 }
 
 usage() {
-  echo "usage: sudo bash factories/mac/keyboard-mode.sh {--pc|--mac|--status|--off}"
-  echo "  --pc      PC muscle-memory on the external board (Ctrl/Alt/Win = Cmd), persisted"
-  echo "  --mac     native on the external board (no remap), persisted"
-  echo "  --status  show board mapping, global mapping, remembered mode"
-  echo "  --off     remove our mapping + LaunchAgent, restore prior state"
+  echo "usage: sudo bash factories/mac/keyboard-mode.sh {--mac|--chinese|--status|--toggle|--off}"
+  echo "  --mac       'my mac keyboard' = his baseline global mapping, verbatim; no board override"
+  echo "  --chinese   'the chinese keyboard' = his baseline (untouched) + Ctrl/Alt->Cmd on the external board"
+  echo "  --status    read-only: baseline global, board override, remembered mode, board attached"
+  echo "  --toggle    flip between mac and chinese"
+  echo "  --off       remove our board override + state + any old LaunchAgent; leave his baseline + plist alone"
   exit 2
 }
 
-# ── verify the remembered mode is actually applied ───────────────────────────
+# ── apply one mode + verify the observable end state ─────────────────────────
+apply_mode() {
+  local mode="$1"
+  write_artifacts
+  ship || { note_bad "scp to the Mac failed"; summary; }
+  if OUT="$(mssh 'bash /tmp/apply.sh '"$mode"'' 2>&1)"; then
+    note_ok "applied mode=$mode on the Mac ($OUT)"
+  else
+    note_bad "apply failed: $OUT"
+  fi
+  sleep 2
+  verify_applied "$mode"
+}
+
+# ── verify the three layers are in the expected state ────────────────────────
 verify_applied() {
   local mode="$1"
   local ST
   ST="$(mssh 'bash /tmp/status.sh' 2>&1)"
 
-  local global_clear=1
-  if printf '%s' "$ST" | sed -n '/--- global mapping ---/,/--- agent ---/p' | grep -q 'HIDKeyboardModifierMappingSrc'; then
-    global_clear=0
-  fi
-  if [[ "$global_clear" == "1" ]]; then
-    note_ok "global mapping is empty (built-in keyboard untouched)"
+  local bl ov rm
+  bl="$(printf '%s' "$ST" | grep '^baseline_global=' | cut -d= -f2)"
+  ov="$(printf '%s' "$ST" | grep '^board_override=' | cut -d= -f2)"
+  rm="$(printf '%s' "$ST" | grep '^remembered_mode=' | cut -d= -f2)"
+
+  if [[ "$bl" == "applied" ]]; then
+    note_ok "baseline global mapping applied (his baseline, unchanged)"
   else
-    note_bad "global mapping is NOT empty — something re-set a global remap"
+    note_bad "baseline global mapping is '$bl', expected 'applied'"
   fi
 
-  local board_has_pc=0
-  local board_empty=0
-  local board_sec
-  board_sec="$(printf '%s' "$ST" | sed -n '/--- per-device mapping (board) ---/,/--- global mapping ---/p')"
-  if printf '%s' "$board_sec" | grep -q '30064771296'; then board_has_pc=1; fi
-  if ! printf '%s' "$board_sec" | grep -q 'HIDKeyboardModifierMappingSrc'; then board_empty=1; fi
-
-  if [[ "$mode" == "pc" ]]; then
-    if [[ "$board_has_pc" == "1" ]]; then
-      note_ok "board mapping is the PC map (Ctrl/Alt -> Cmd)"
+  if [[ "$mode" == "chinese" ]]; then
+    if [[ "$ov" == "chinese" ]]; then
+      note_ok "board override present (chinese: Ctrl/Alt -> Command)"
     else
-      note_bad "board mapping is NOT the PC map: $(printf '%s' "$board_sec" | tr '\n' ' ')"
+      note_bad "board override is '$ov', expected 'chinese'"
     fi
   else
-    if [[ "$board_empty" == "1" ]]; then
-      note_ok "board mapping is empty (native Mac behaviour)"
+    if [[ "$ov" == "absent" ]]; then
+      note_ok "board override absent (board = his baseline, native)"
     else
-      note_bad "board mapping is NOT empty in --mac mode: $(printf '%s' "$board_sec" | tr '\n' ' ')"
+      note_bad "board override is '$ov', expected 'absent'"
     fi
   fi
 
-  if printf '%s' "$ST" | grep -q '^agent=loaded'; then
-    note_ok "LaunchAgent loaded"
+  if [[ "$rm" == "$mode" ]]; then
+    note_ok "remembered mode = $mode"
   else
-    note_bad "LaunchAgent not loaded"
-  fi
-  if printf '%s' "$ST" | grep -q '^watcher=running'; then
-    note_ok "watcher loop running"
-  else
-    note_bad "watcher loop not running"
+    note_bad "remembered mode is '$rm', expected '$mode'"
   fi
 }
 
-# ── persistence proof: cause the re-apply and show the mapping is back ───────
-verify_persist() {
-  local mode="$1"
-  echo "→ persistence check: clear the board mapping, then let the watcher re-apply it"
-  # Simulate the "mapping lost" state (what happens on reboot / re-plug): wipe
-  # the per-device mapping, then do NOTHING else. The watcher's periodic safety
-  # re-apply (<=15s) must restore it on its own — that is the load-bearing
-  # guarantee, and this proves it rather than reasoning about it.
-  mssh "hidutil property --matching '$MATCH_JSON' --set '$EMPTY_MAP_JSON'" >/dev/null 2>&1 || true
-  echo "    (mapping wiped; waiting for the watcher's periodic re-apply, <=15s)"
-  sleep 18
-  local ST
-  ST="$(mssh 'bash /tmp/status.sh' 2>&1)"
-  local board_sec
-  board_sec="$(printf '%s' "$ST" | sed -n '/--- per-device mapping (board) ---/,/--- global mapping ---/p')"
-  if [[ "$mode" == "pc" ]]; then
-    if printf '%s' "$board_sec" | grep -q '30064771296'; then
-      note_ok "re-apply verified: board mapping came back on its own after being wiped"
-    else
-      note_bad "re-apply FAILED: board mapping did not come back: $(printf '%s' "$board_sec" | tr '\n' ' ')"
-    fi
-  else
-    if ! printf '%s' "$board_sec" | grep -q 'HIDKeyboardModifierMappingSrc'; then
-      note_ok "re-apply verified: board mapping stays empty after being wiped"
-    else
-      note_bad "re-apply FAILED: board mapping not empty in --mac: $(printf '%s' "$board_sec" | tr '\n' ' ')"
-    fi
-  fi
-}
-
-# ── --pc ─────────────────────────────────────────────────────────────────────
-do_pc() {
-  echo "keyboard-mode --pc: PC muscle-memory on the external board, persisted"
-  echo "  Mac: $MAC_USER@$MAC_IP   board: $BOARD_PRODUCT (VID 0x258A PID 0x010C)"
-  echo "  Ctrl=Cmd  Alt=Cmd  Win=Cmd   (built-in keyboard untouched)"
-  echo ""
-
-  write_artifacts
-  ship || { note_bad "scp to the Mac failed"; summary; }
-  if OUT="$(mssh 'bash /tmp/install.sh pc' 2>&1)"; then
-    note_ok "installed mode=pc on the Mac ($OUT)"
-  else
-    note_bad "install failed: $OUT"
-  fi
-
-  sleep 2
-  verify_applied pc
-  verify_persist pc
-  summary
-}
-
-# ── --mac ────────────────────────────────────────────────────────────────────
+# ── subcommands ──────────────────────────────────────────────────────────────
 do_mac() {
-  echo "keyboard-mode --mac: native behaviour on the external board, persisted"
+  echo "keyboard-mode --mac: 'my mac keyboard' = his baseline global mapping, verbatim"
   echo "  Mac: $MAC_USER@$MAC_IP   board: $BOARD_PRODUCT (VID 0x258A PID 0x010C)"
-  echo "  no remap (Win key = Command); global mapping cleared"
+  echo "  global = his baseline (L Cmd <-> Fn, Fn acts as Command); no board override"
   echo ""
-
-  write_artifacts
-  ship || { note_bad "scp to the Mac failed"; summary; }
-  if OUT="$(mssh 'bash /tmp/install.sh mac' 2>&1)"; then
-    note_ok "installed mode=mac on the Mac ($OUT)"
-  else
-    note_bad "install failed: $OUT"
-  fi
-
-  sleep 2
-  verify_applied mac
-  verify_persist mac
+  apply_mode mac
   summary
 }
 
-# ── --status ─────────────────────────────────────────────────────────────────
+do_chinese() {
+  echo "keyboard-mode --chinese: 'the chinese keyboard' = baseline (untouched) + board override"
+  echo "  Mac: $MAC_USER@$MAC_IP   board: $BOARD_PRODUCT (VID 0x258A PID 0x010C)"
+  echo "  board override: L/R Ctrl -> Command, L/R Alt -> Command (Ctrl+C/V, Alt+Tab)"
+  echo "  global baseline left completely alone"
+  echo ""
+  apply_mode chinese
+  summary
+}
+
+do_toggle() {
+  write_artifacts
+  ship || { note_bad "scp to the Mac failed"; summary; }
+  local cur
+  cur="$(mssh 'bash /tmp/status.sh' 2>&1 | grep '^remembered_mode=' | cut -d= -f2)"
+  if [[ "$cur" == "chinese" ]]; then
+    echo "keyboard-mode --toggle: currently chinese -> switching to mac"
+    apply_mode mac
+  else
+    echo "keyboard-mode --toggle: currently $cur -> switching to chinese"
+    apply_mode chinese
+  fi
+  summary
+}
+
 do_status() {
   echo "keyboard-mode --status ($MAC_USER@$MAC_IP)"
   echo ""
@@ -443,41 +324,38 @@ do_status() {
   rm -rf "$WORK"
 }
 
-# ── --off ────────────────────────────────────────────────────────────────────
 do_off() {
-  echo "keyboard-mode --off: remove our mapping + LaunchAgent, restore prior state"
+  echo "keyboard-mode --off: remove our board override + state + any old LaunchAgent"
   echo "  Mac: $MAC_USER@$MAC_IP"
+  echo "  (his global baseline and key-binds-on-start.plist are left untouched)"
   echo ""
-
   write_artifacts
   ship || { note_bad "scp to the Mac failed"; summary; }
-  if OUT="$(mssh 'bash /tmp/uninstall.sh' 2>&1)"; then
-    note_ok "uninstalled ($OUT)"
+  if OUT="$(mssh 'bash /tmp/off.sh' 2>&1)"; then
+    note_ok "off: $OUT"
   else
-    note_bad "uninstall failed: $OUT"
+    note_bad "off failed: $OUT"
   fi
 
   # confirm clean state
   local ST
   ST="$(mssh 'bash /tmp/status.sh' 2>&1)"
-  if printf '%s' "$ST" | grep -q '^agent=not-loaded'; then
-    note_ok "LaunchAgent removed"
-  else
-    note_bad "LaunchAgent still loaded"
-  fi
-  if printf '%s' "$ST" | grep -q 'remembered_mode=none'; then
+  if printf '%s' "$ST" | grep -q '^remembered_mode=none'; then
     note_ok "mode file removed"
   else
     note_bad "mode file still present"
   fi
-  local global_clear=1
-  if printf '%s' "$ST" | sed -n '/--- global mapping ---/,/--- agent ---/p' | grep -q 'HIDKeyboardModifierMappingSrc'; then
-    global_clear=0
-  fi
-  if [[ "$global_clear" == "1" ]]; then
-    note_ok "global mapping empty"
+  if printf '%s' "$ST" | grep -q '^board_override=absent'; then
+    note_ok "board override removed"
   else
-    note_bad "global mapping not empty after --off"
+    note_bad "board override still present"
+  fi
+  local bl
+  bl="$(printf '%s' "$ST" | grep '^baseline_global=' | cut -d= -f2)"
+  if [[ "$bl" == "applied" ]]; then
+    note_ok "his baseline global mapping still applied (untouched)"
+  else
+    note_bad "baseline global mapping is '$bl' after --off (expected untouched 'applied')"
   fi
   summary
 }
@@ -494,9 +372,10 @@ summary() {
 }
 
 case "${1:-}" in
-  --pc)     do_pc ;;
-  --mac)    do_mac ;;
-  --status) do_status ;;
-  --off)    do_off ;;
-  *)        usage ;;
+  --mac)      do_mac ;;
+  --chinese)  do_chinese ;;
+  --status)   do_status ;;
+  --toggle)   do_toggle ;;
+  --off)      do_off ;;
+  *)          usage ;;
 esac

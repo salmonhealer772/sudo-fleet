@@ -1,25 +1,35 @@
-# mac keyboard-mode — flip the external board between PC and Mac, and make it stick
+# mac keyboard-mode — flip between his two keyboards
 
-`keyboard-mode.sh` flips the operator's external Chinese OEM USB keyboard
-(product string **`Gaming Keyboard`**, vendor `BY Tech`, VID `0x258A` /
-PID `0x010C`) between **PC muscle-memory** and **native Mac** behaviour, and
-keeps it flipped across reboot **and** unplug/re-plug. The MacBook's built-in
-keyboard is never touched in either mode.
+`keyboard-mode.sh` flips the operator between **his two keyboards**:
+
+- **`--mac`** — *"my mac keyboard"*: his **baseline, exactly**. It re-applies
+  his global `UserKeyMapping` verbatim from
+  `~/Library/LaunchAgents/key-binds-on-start.plist` (the `Left Command ↔ Fn`
+  swap, so **Fn acts as Command — Fn+C copies, Fn+V pastes**) and applies
+  **no** per-device override on the external board.
+- **`--chinese`** — *"the chinese keyboard"*: his baseline **left completely
+  alone**, **plus** a per-device override on the external board only, mapping
+  `L/R Ctrl → Command` and `L/R Alt → Command`, so `Ctrl+C`, `Ctrl+V` and
+  `Alt+Tab` work with the Windows-keyboard hand position.
+
+The MacBook's built-in keyboard is never given a per-device override in either
+mode; it just follows his global baseline.
 
 It runs on the lima host as root and reaches the Mac over the key-based SSH
 that `factories/mac/up.sh` established (`aidanmcohen@192.168.5.2`). It is
-**dependency-free**: built-in `hidutil` + `launchd` only. No third-party app,
-no kernel driver, and — importantly — **no Input-Monitoring / Accessibility
-permission** (`hidutil` writes the HID event system directly; it needs neither
-`sudo` nor any GUI permission, which we verified live on macOS 26.6.2).
+**dependency-free**: built-in `hidutil` only. No watcher, no LaunchAgent, no
+third-party app, no kernel driver, no Input-Monitoring / Accessibility
+permission (`hidutil` writes the HID event system directly; verified live on
+macOS 26.6.2).
 
 ## Run it
 
 ```bash
-sudo bash factories/mac/keyboard-mode.sh --pc       # PC muscle-memory (persisted)
-sudo bash factories/mac/keyboard-mode.sh --mac      # native Mac (persisted)
-sudo bash factories/mac/keyboard-mode.sh --status   # show state
-sudo bash factories/mac/keyboard-mode.sh --off      # remove everything, restore prior state
+sudo bash factories/mac/keyboard-mode.sh --mac      # his baseline (my mac keyboard)
+sudo bash factories/mac/keyboard-mode.sh --chinese  # baseline + board override (the chinese keyboard)
+sudo bash factories/mac/keyboard-mode.sh --status   # read-only: three layers, separately
+sudo bash factories/mac/keyboard-mode.sh --toggle   # flip mac <-> chinese
+sudo bash factories/mac/keyboard-mode.sh --off      # remove our override + state + old agent; leave his baseline + plist alone
 ```
 
 Each subcommand is idempotent and re-runnable, prints a `✓/✗` PASS/FAIL
@@ -27,16 +37,27 @@ summary, and exits non-zero on FAIL. Switching modes needs **no GUI step**.
 
 ## What each mode does
 
-| | `--pc` (PC muscle-memory) | `--mac` (native) |
+| | `--mac` ("my mac keyboard") | `--chinese` ("the chinese keyboard") |
 |---|---|---|
-| bottom-left Ctrl | → **Command** (Ctrl+C copy, Ctrl+V paste) | stays **Control** |
-| bottom-right Ctrl | → **Command** | stays Control |
-| Alt (both sides) | → **Command** (Alt+Tab = app switcher) | stays Option |
-| Win / Super key | Command (already, native — left alone) | Command (native) |
-| global mapping | cleared (empty) | cleared (empty) |
-| built-in keyboard | untouched (stock) | untouched (stock) |
+| global mapping | **his baseline, re-applied verbatim** if drifted | **left completely alone** |
+| board (external) override | none (board follows his baseline) | `L/R Ctrl → Cmd`, `L/R Alt → Cmd` |
+| copy / paste | Fn+C / Fn+V (Fn is Command) | Ctrl+C / Ctrl+V |
+| app switcher | Fn+Tab | Alt+Tab |
+| built-in keyboard | stock (follows baseline) | stock (follows baseline) |
 
-The PC map is the exact state the operator applied live on 2026-10-02:
+His baseline global mapping (verbatim — the only global `UserKeyMapping` this
+tool ever writes, and only in `--mac`):
+
+```json
+{"UserKeyMapping":[
+  {"HIDKeyboardModifierMappingSrc":30064771299,"HIDKeyboardModifierMappingDst":1095216660483},  /* L Cmd -> Fn */
+  {"HIDKeyboardModifierMappingSrc":1095216660483,"HIDKeyboardModifierMappingDst":30064771299},  /* Fn -> L Cmd */
+  {"HIDKeyboardModifierMappingSrc":280379760050192,"HIDKeyboardModifierMappingDst":30064771132} /* Apple vendor 0x10 -> F3 */
+]}
+```
+
+The `--chinese` board override (per-device only, scoped with
+`--matching '{"VendorID":9610,"ProductID":268}'`, i.e. `0x258A`/`0x010C`):
 
 ```json
 {"UserKeyMapping":[
@@ -47,94 +68,86 @@ The PC map is the exact state the operator applied live on 2026-10-02:
 ]}
 ```
 
-scoped with `hidutil property --matching '{"VendorID":9610,"ProductID":268}'`
-(`0x258A` / `0x010C`), so it applies to the external board only.
+## `--status` — the three layers, separately
+
+```
+baseline_global=applied|drifted|empty|other   (a) his baseline global mapping
+board_override=chinese|other|absent           (b) the board override
+remembered_mode=mac|chinese|none              (c) which mode is remembered
+board_attached=yes|no                         (d) is the board plugged in
+--- global mapping ---
+<raw hidutil readback>
+--- board mapping ---
+<raw hidutil readback>
+```
 
 ## How a human confirms it
 
-On the **external** board:
+- `--mac`: **Fn+C** copies, **Fn+V** pastes (Fn acts as Command). On the
+  external board, `Ctrl+C` does *not* copy (it sends Control) — proof there is
+  no board override.
+- `--chinese`: on the external board **Ctrl+C** copies, **Ctrl+V** pastes,
+  **Alt+Tab** opens the app switcher. On the built-in keyboard Ctrl+C still
+  sends Control (the override is scoped to the board only).
+- `--status` prints the three layers — no typing required.
 
-- `--pc`: **Ctrl+C** copies, **Ctrl+V** pastes, **Alt+Tab** opens the app
-  switcher, and the **Win** key behaves as Command. On the **built-in**
-  keyboard, Ctrl+C does *not* copy (it sends Control) — proof the remap is
-  scoped to the board.
-- `--mac`: **Ctrl+C** no longer copies (it sends Control), **Win** is Command,
-  and **Alt+Tab** does nothing special.
-- `--status` prints the effective board mapping, the global mapping, and the
-  remembered mode — no typing required.
+## Persistence (deliberately minimal)
 
-## How persistence works (the load-bearing part)
+`hidutil` mappings are **volatile** (lost on reboot and on unplug/re-plug).
+This revision installs **no watcher and no LaunchAgent** — a keep-alive
+re-apply loop is what fought his configuration all session, so it is gone.
 
-`hidutil` mappings are **volatile**: they are lost on reboot *and* on keyboard
-unplug/re-plug. A plain `RunAtLoad` LaunchAgent only covers login, which is why
-the standard recipes half-work for a board that gets unplugged. This tool
-installs a `KeepAlive` LaunchAgent running a small watch loop that **re-applies
-the remembered mode at login, on every board re-plug, and on a 15 s periodic
-safety cycle** (so any clobber self-heals within 15 s).
+- **`--mac`** persists because it *is* his baseline, and his own
+  `key-binds-on-start.plist` re-applies that baseline at login. We only
+  restore it if it drifted.
+- **`--chinese`** applies the board override live; it is **not** persisted
+  across reboot/re-plug by this tool. Re-running `--chinese` (or `--toggle`)
+  re-applies it. If the operator wants the board override to survive
+  reboot/re-plug, that needs a one-shot `RunAtLoad` agent that re-applies the
+  *remembered* mode once at login — that is a running agent and is **not
+  installed here**; it should be agreed before adding.
 
-What it puts on the Mac (all as `aidanmcohen`, no `sudo`):
+The remembered mode lives in `~/.sudofleet-keyboard/mode` (nothing else of ours
+is on the Mac).
 
-| path | what |
-|---|---|
-| `~/.sudofleet-keyboard/mode` | the remembered mode (`pc` or `mac`) |
-| `~/.sudofleet-keyboard/watch.sh` | the re-apply loop |
-| `~/.sudofleet-keyboard/watch.log` | one line per re-apply / mode change |
-| `~/.sudofleet-keyboard/neutralized-key-binds-on-start` | flag: prior-art agent neutralised |
-| `~/Library/LaunchAgents/com.sudofleet.keyboard-mode.plist` | the LaunchAgent (`RunAtLoad` + `KeepAlive`) |
+## Hard rules this revision enforces
 
-`--off` removes all of the above, clears the mappings, and restores the
-prior-art agent (see below).
-
-The re-apply is **verified live, not reasoned about**: `--pc`/`--mac` wipe the
-board mapping and then watch the watcher restore it on its own within 15 s,
-and report that as a PASS/FAIL check. The one thing that cannot be simulated
-remotely is the physical unplug/re-plug — the same `apply()` runs on that
-trigger (presence change, detected via `hidutil list`), and the operator can
-confirm it by unplugging the board and seeing the mode return.
+- The **only** global `UserKeyMapping` we ever write is **his baseline,
+  verbatim**. Never empty, never ours. In `--mac` we re-apply it if it drifted;
+  in `--chinese` we leave it completely alone.
+- We **never** rename, disable, move, or overwrite
+  `key-binds-on-start.plist`, and we do not touch its launchd disabled-state.
+  (The old `neutralized-key-binds-on-start` logic and `.disabled` handling are
+  removed.)
+- No watcher, no LaunchAgent that writes `UserKeyMapping`.
 
 ## Prior art — checked, not blindly adopted
 
-- **`~/Library/LaunchAgents/key-binds-on-start.plist`** (operator's own, from a
-  prior experiment): a `RunAtLoad` agent that sets a **global** `Left Command
-  → Fn` mapping at every login — the exact thing the operator cleared today
-  because it broke every ⌘ shortcut. It **conflicts** with our cleared-global
-  state, so `--pc`/`--mac` **neutralise it** (`launchctl bootout` + `disable`)
-  and record the fact; `--off` re-enables it (without re-applying its broken
-  mapping). `--status` reports its state.
-- **`~/bin/mac-kbd-watch`** (operator's own, for a *different* keyboard —
-  `Vulcan II TKL`, VID `0x10f5`/PID `0x502a`): a `KeepAlive` watch loop that
-  polls `hidutil list` for device presence and re-applies per-device mappings.
-  This is the proven pattern our watcher reuses (polling presence + re-apply),
-  but scoped to this board and driven by a mode file instead of the frontmost
-  app. Not loaded, not touched.
-- **hidutil + `RunAtLoad` LaunchAgent recipes** (rakhesh.com, nanoANT, Amit's
-  Thoughts): correct for the login case, but they do **not** survive unplug/
-  re-plug — insufficient for this board, hence the watch loop.
-- **`autokbisw`**: a per-keyboard *input-source* switcher, not a modifier
-  remapper — wrong tool, and a compiled daemon (not dependency-free).
-- **Karabiner-Elements**: kernel driver + extensive permissions — heavy for 4
-  modifier maps. Rejected.
+- **`~/Library/LaunchAgents/key-binds-on-start.plist`** (operator's own): a
+  `RunAtLoad` agent that applies his **baseline** global mapping at every
+  login. This is the feature, not debris — it is the persistence for `--mac`.
+  We leave it alone.
+- **`~/Library/LaunchAgents/com.sudofleet.keyboard-mode.plist`** (the *old*
+  revision of this tool): a `KeepAlive` watcher. Removed by this revision; a
+  leftover one is cleaned up by `--off`.
+- **`autokbisw`**: a per-keyboard *input-source* switcher — wrong tool.
+- **Karabiner-Elements**: kernel driver + permissions — heavy for 4 modifier
+  maps. Rejected.
 
 ## Permissions / what could block it
 
 - **No permission needed.** `hidutil property --set` writes the HID event
-  system directly as the plain user; it does not use `CGEventTap`, so there is
-  **no Input-Monitoring prompt and no `sudo`**. Verified live: the mapping is
-  applied and `sudo -n` on the Mac reports "a password is required" (i.e. we
-  never needed it).
-- **macOS version caveat.** `hidutil` remapping was reported broken on
-  macOS 13.6 and 14.2. This Mac is **26.6.2**, where it works (verified). If a
-  mapping ever silently stops applying, run `--status` and confirm the macOS
-  version first.
-- If the operator ever does want a `LaunchDaemon` (system-wide, survives before
-  login), that *would* require `sudo` on the Mac — not needed here, so we stay
-  in the user domain.
+  system directly as the plain user; no `sudo`, no Input-Monitoring prompt.
+  Verified live on macOS 26.6.2.
+- `hidutil` remapping was reported broken on macOS 13.6 / 14.2; this Mac is
+  26.6.2 where it works. If a mapping silently stops applying, run `--status`
+  and confirm the macOS version first.
 
 ## Gotchas
 
-- The Mac's login shell is **zsh**: a remote command with a bare word starting
-  with `=` (e.g. `echo ===FOO===`) dies with `zsh:1: ==FOO=== not found`. The
-  script runs everything as `bash /tmp/xxx.sh`, so this never bites.
+- The Mac's login shell is **zsh**: a bare word starting with `=` dies with
+  `zsh:1: ==FOO=== not found`. The script runs everything as `bash /tmp/xxx.sh`,
+  so this never bites.
 - All paths, VID/PID and key codes are hardcoded facts verified live
   2026-10-02; they are not re-derived at runtime.
 - `--status` is read-only and harmless to run at any time.
