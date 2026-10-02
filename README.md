@@ -46,6 +46,31 @@ TAVILY_API_KEY=$TAVILY_API_KEY       # may be empty
 > `factories/sudo-letta/` (their own live `.env`/`deployments/` stay untracked).
 > `sudo-fleet/deployments/{Marc,Caesar}/` (the committed glimors) ARE tracked.
 
+## Custom / Featherless provider
+
+To use a custom OpenAI-compatible endpoint (e.g. Featherless), set the
+following in `sudo-fleet/.env` alongside the existing `LLM_API_KEY`:
+
+```
+LLM_BASE_URL=https://api.featherless.ai/v1
+LLM_PROVIDER=openai
+LLM_MODEL=deepseek-ai/DeepSeek-V4-Pro
+```
+
+- `LLM_BASE_URL` — the full base URL of your OpenAI-compatible endpoint.
+  Defaults to `https://api.deepseek.com/v1` if left blank.
+- `LLM_PROVIDER` — derived from `LLM_BASE_URL` by default; override
+  explicitly when the auto-detection is wrong (e.g. `openai` for
+  Featherless).
+- `LLM_MODEL` — **must be set explicitly** for non-DeepSeek providers.
+  Pick a model with a large context window (>=64K tokens). Hermes
+  rejects models under 64K context; a model like `deepseek-ai/DeepSeek-V4-Pro`
+  satisfies this requirement.
+
+The `.env` vars `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_PROVIDER` are the
+single source of truth consumed by both agent factories. Do not put real
+API keys in the repo — use a placeholder such as `<LLM_API_KEY>`.
+
 **Command 2 — bring up the cluster + stand up Marc + Caesar:**
 
 ```bash
