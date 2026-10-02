@@ -65,6 +65,16 @@ _ask() {
   printf '%s' "$REPLY"
 }
 
+# _is_custom_endpoint URL — true when the URL is NOT a plain DeepSeek endpoint.
+# Custom endpoints (Featherless, OpenAI-compatible, localhost, etc.) require an
+# explicit LLM_MODEL because they do not use DeepSeek's model naming convention.
+_is_custom_endpoint() {
+  case "$1" in
+    *deepseek*) return 1 ;;
+    *)          return 0 ;;
+  esac
+}
+
 # --- Durability helpers ---------------------------------------------------------
 # The cluster must come back on its own after a VM/WSL2 restart (zero manual
 # commands) and self-repair after that. These helpers implement the host-layer
@@ -192,6 +202,27 @@ case "$_BASE_URL" in
   *)           _PROVIDER="openai"    ;;
 esac
 
+# --- LLM_MODEL: required for custom (non-DeepSeek) endpoints -------
+# DeepSeek endpoints have a fixed model naming convention; custom
+# providers (Featherless, OpenAI-compatible, localhost) need the caller
+# to supply the model explicitly. The README already documents this as
+# required, but setup.sh must enforce it rather than silently defaulting
+# to a DeepSeek model name that is meaningless on a non-DeepSeek endpoint.
+if _is_custom_endpoint "$_BASE_URL"; then
+  if [[ -n "${LLM_MODEL:-}" ]]; then
+    _MODEL="${LLM_MODEL}"
+    ok "LLM_MODEL already set ($_MODEL) — reusing"
+  else
+    _MODEL="$(_ask "LLM model (required for custom endpoint, e.g. deepseek-ai/DeepSeek-V4-Pro):")"
+    [[ -n "$_MODEL" ]] || warn "LLM_MODEL not provided — custom endpoint will use its default model"
+  fi
+else
+  # Non-custom (DeepSeek) endpoint: keep the existing default behavior
+  # for backward compatibility. No prompt, no env write — the factory
+  # scripts already default to deepseek-v4-pro internally.
+  :
+fi
+
 # --- (3) Tavily API key — letta search mods (secret, optional) ---------------
 if [[ -n "${TAVILY_API_KEY:-}" ]]; then
   _WS_KEY="$TAVILY_API_KEY"
@@ -207,6 +238,7 @@ _write_env "LLM_PROVIDER=${_PROVIDER}"
 _write_env "API_KEY=${_KEY}"
 _write_env "LLM_BASE_URL=${_BASE_URL}"
 _write_env "TAVILY_API_KEY=${_WS_KEY}"
+[[ -n "${_MODEL:-}" ]] && _write_env "LLM_MODEL=${_MODEL}"
 
 # Re-source so every key (prompted or pre-existing) is exported fresh below.
 _source_env
@@ -222,6 +254,7 @@ _source_env
 [[ -n "${LLM_PROVIDER:-}" ]]      && export LLM_PROVIDER
 [[ -n "${API_KEY:-}" ]]           && export API_KEY
 [[ -n "${LLM_BASE_URL:-}" ]] && export LLM_BASE_URL
+[[ -n "${_MODEL:-}" ]] && export LLM_MODEL="${_MODEL}"
 _have_ws=0
 for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
   if [[ -n "${!_wk:-}" ]]; then
@@ -340,6 +373,7 @@ _env_tmp="$(mktemp)"
   printf 'LLM_PROVIDER=%s\n' "$LLM_PROVIDER"
   printf 'API_KEY=%s\n' "$API_KEY"
   [[ -n "${LLM_BASE_URL:-}" ]] && printf 'LLM_BASE_URL=%s\n' "$LLM_BASE_URL"
+  [[ -n "${_MODEL:-}" ]] && printf 'LLM_MODEL=%s\n' "$_MODEL"
   for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
     if [[ -n "${!_wk:-}" ]]; then
       printf '%s=%s\n' "$_wk" "${!_wk}"
