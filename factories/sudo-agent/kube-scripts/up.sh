@@ -767,12 +767,70 @@ _import_once() {
     || docker save "$img" | ctr -n k8s.io image import -
 }
 
+# _build_hermes_agent_once — build hermes-agent:latest from upstream source.
+# Deliberately mirrors factories/sudo-agent/setup.sh line for line (shallow
+# clone the base repo into a temp dir, build there) so up.sh and setup.sh can
+# never drift into two different bases. The temp dir is always removed.
+_build_hermes_agent_once() {
+  local tmp
+  tmp="$(mktemp -d)" || {
+    echo "✗ could not create a temp dir for the hermes-agent clone" >&2
+    return 1
+  }
+  if ! _retry 3 "git clone hermes-agent" git clone --depth 1 \
+        https://github.com/NousResearch/hermes-agent.git "$tmp"; then
+    echo "✗ git clone hermes-agent failed. Check internet." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  if ! _retry 3 "docker build hermes-agent" docker build -t hermes-agent:latest "$tmp"; then
+    echo "✗ docker build hermes-agent:latest failed." >&2
+    rm -rf "$tmp"
+    return 1
+  fi
+  rm -rf "$tmp"
+  return 0
+}
+
+# _build_image IMG — build one of the two images this deploy ships, in place.
+# Only these two have a known recipe here; anything else is a real error, so we
+# never guess a build command for an image we do not own.
+_build_image() {
+  case "$1" in
+    sudo-agent:latest)
+      _retry 3 "docker build sudo-agent" \
+        docker build -t sudo-agent:latest -f "$REPO_DIR/Dockerfile" "$REPO_DIR"
+      ;;
+    hermes-agent:latest)
+      _build_hermes_agent_once
+      ;;
+    *)
+      echo "✗ no build recipe for $1 — build it first: bash setup.sh" >&2
+      return 1
+      ;;
+  esac
+}
+
 _import_image() {
   local img="$1"
-  if ! docker image inspect "$img" >/dev/null 2>&1; then
-    echo "✗ FATAL: docker image $img does not exist locally — nothing to import." >&2
-    echo "  Build it first:  bash setup.sh   (or: docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
-    exit 1
+  # An ABSENT image is no longer fatal: up.sh knows how to build both images it
+  # ships (sudo-agent from $REPO_DIR, hermes-agent from upstream), so a deploy
+  # on a clean box builds what it is missing instead of dying with "nothing to
+  # import". The import + containerd verification below is unchanged.
+  if [[ -z "$(docker images -q "$img" 2>/dev/null)" ]]; then
+    echo "⚠ docker image $img is not present locally — building it (nothing to import yet)"
+    if ! _build_image "$img"; then
+      echo "✗ FATAL: could not build $img — nothing to import." >&2
+      echo "  Build it first:  bash setup.sh   (or: docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
+      exit 1
+    fi
+    # A "successful" build that produced nothing is still fatal — never import
+    # an image we cannot see.
+    if [[ -z "$(docker images -q "$img" 2>/dev/null)" ]]; then
+      echo "✗ FATAL: $img is still absent after a reported-successful build — nothing to import." >&2
+      exit 1
+    fi
+    echo "→ $img built"
   fi
   _retry 3 "image import $img" _import_once "$img" \
     || echo "⚠ all image-import attempts reported failure for $img — verifying containerd..." >&2
@@ -807,9 +865,15 @@ _image_digest() {
 _assert_image_fresh() {
   local img="sudo-agent:latest" want got
   if ! docker image inspect "$img" >/dev/null 2>&1; then
-    echo "✗ FATAL: docker image $img not found locally. Build it first:" >&2
-    echo "    docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\"   (or bash setup.sh)" >&2
-    exit 1
+    # Absent image: build it here as well, for the same reason _import_image now
+    # does. This check runs BEFORE the import, so without this a clean-box
+    # deploy would abort here and never reach _import_image's build path.
+    echo "⚠ docker image $img not found locally — building it"
+    if ! _build_image "$img"; then
+      echo "✗ FATAL: docker image $img not found locally and could not be built." >&2
+      echo "    Build it first:  docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\"   (or bash setup.sh)" >&2
+      exit 1
+    fi
   fi
   want="$(_src_digest "$SCRIPT_DIR")"
   got="$(_image_digest "$img")"
