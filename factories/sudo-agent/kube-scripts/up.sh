@@ -260,7 +260,7 @@ echo "→ sudo-agent image digest: ${IMAGE_SHA:0:12}"
 #     (the old behaviour) instead of aborting the roll.
 #   * Values are re-emitted through jq tojson, i.e. as YAML double-quoted
 #     scalars, so a value like `true` stays the string "true".
-TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","REDIS_URL"]'
+TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","LLM_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","REDIS_URL"]'
 EXTRA_ENV="$(kubectl get deploy "$DEPLOY" -o json 2>/dev/null \
   | jq -r --argjson known "$TEMPLATE_ENV_NAMES" '
       .spec.template.spec.containers[]
@@ -437,6 +437,11 @@ $SEED_INITCONTAINERS
           privileged: true
         env:
         - name: DEEPSEEK_API_KEY
+          value: "$KEY"
+        # Env var a custom_providers entry references via \`key_env\` — so a
+        # Featherless/custom OpenAI-compatible endpoint's Bearer token resolves
+        # inside the pod without the key ever being written to config.yaml.
+        - name: LLM_API_KEY
           value: "$KEY"
         - name: SUDO_PASSWORD
           value: "$SUDO_PASS"
@@ -767,12 +772,45 @@ _import_once() {
     || docker save "$img" | ctr -n k8s.io image import -
 }
 
+# ── Build-on-missing ─────────────────────────────────────────────────────────
+# k8s-up.sh drives a DEPLOY, not a build — but a deploy whose image is absent
+# used to hard-fail ("nothing to import. Build it first: bash setup.sh") and
+# leave the operator to go re-run a setup step mid-deploy. Build the image HERE
+# instead, and fail ONLY if the build itself fails.
+_build_hermes_base() {
+  local tmp
+  tmp="$(mktemp -d)" || return 1
+  _retry 3 "git clone hermes-agent" git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$tmp" \
+    || { rm -rf "$tmp"; return 1; }
+  _retry 3 "docker build hermes-agent" docker build -t hermes-agent:latest "$tmp" \
+    || { rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+  return 0
+}
+
+# _ensure_image_built IMG — build IMG when it is missing. hermes-agent:latest is
+# the sudo-agent BASE image, cloned + built exactly as setup.sh does it; every
+# other image builds from THIS factory's Dockerfile into the repo as context.
+_ensure_image_built() {
+  local img="$1"
+  docker image inspect "$img" >/dev/null 2>&1 && return 0
+  echo "→ docker image $img is missing locally — building it now..." >&2
+  if [[ "$img" == "hermes-agent:latest" ]]; then
+    _build_hermes_base || return 1
+  else
+    _retry 3 "docker build $img" docker build -t "$img" -f "$REPO_DIR/Dockerfile" "$REPO_DIR" || return 1
+  fi
+  docker image inspect "$img" >/dev/null 2>&1
+}
+
 _import_image() {
   local img="$1"
   if ! docker image inspect "$img" >/dev/null 2>&1; then
-    echo "✗ FATAL: docker image $img does not exist locally — nothing to import." >&2
-    echo "  Build it first:  bash setup.sh   (or: docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
-    exit 1
+    _ensure_image_built "$img" || {
+      echo "✗ FATAL: docker image $img is missing and could not be built — nothing to import." >&2
+      echo "  Build it manually:  bash setup.sh   (or: docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
+      exit 1
+    }
   fi
   _retry 3 "image import $img" _import_once "$img" \
     || echo "⚠ all image-import attempts reported failure for $img — verifying containerd..." >&2
@@ -807,9 +845,13 @@ _image_digest() {
 _assert_image_fresh() {
   local img="sudo-agent:latest" want got
   if ! docker image inspect "$img" >/dev/null 2>&1; then
-    echo "✗ FATAL: docker image $img not found locally. Build it first:" >&2
-    echo "    docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\"   (or bash setup.sh)" >&2
-    exit 1
+    # Build-on-missing (see _ensure_image_built): a deploy must not dead-end on
+    # an absent image. Only a BUILD failure is fatal here.
+    _ensure_image_built "$img" || {
+      echo "✗ FATAL: could not build $img. Build it first:" >&2
+      echo "    docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\"   (or bash setup.sh)" >&2
+      exit 1
+    }
   fi
   want="$(_src_digest "$SCRIPT_DIR")"
   got="$(_image_digest "$img")"

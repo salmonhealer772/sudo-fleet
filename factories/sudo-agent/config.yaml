@@ -1,6 +1,35 @@
+# ── LLM model / provider — ONE source of truth ──────────────────────────────
+# provider + base_url live at TOP LEVEL here, NOT nested under `model:`.
+#
+# Why top-level: for a custom OpenAI-compatible endpoint a bare top-level
+# `provider: <name>` + base_url does NOT send the Bearer token — the key must
+# live in a `custom_providers` entry (as `api_key`, or better `key_env`, which
+# names the env var holding it). The committed default below is DeepSeek direct
+# with NO secret in this file; setup.sh rewrites provider/base_url/model.default
+# from LLM_PROVIDER / LLM_BASE_URL / LLM_MODEL and, when LLM_BASE_URL points at a
+# non-DeepSeek (e.g. Featherless) endpoint, emits the matching custom_providers
+# entry. See factories/sudo-agent/setup.sh.
+#
+# NOTE: a model whose server-reported context is below 64K is REJECTED by Hermes
+# ("below the minimum 64,000"). Point at a >=64K-context model, e.g. Featherless
+# `deepseek-ai/DeepSeek-V4-Pro` (262144 ctx).
+provider: "deepseek"
+base_url: "https://api.deepseek.com/v1"
 model:
   default: "deepseek-v4-pro"
-  provider: "deepseek"
+
+# ── Example custom OpenAI-compatible endpoint (e.g. Featherless) ────────────
+# setup.sh appends a block in exactly this shape when LLM_BASE_URL is custom.
+# The key is referenced by ENV VAR NAME (key_env) — never embed a real key in a
+# committed file. The referenced env var is injected into the pod by
+# kube-scripts/up.sh.
+# custom_providers:
+#   - name: featherless
+#     base_url: "https://api.featherless.ai/v1"
+#     key_env: LLM_API_KEY
+#     api_mode: openai
+#     models: ["deepseek-ai/DeepSeek-V4-Pro"]
+
 terminal:
   backend: "local"
   sudo_password_env: "SUDO_PASSWORD"

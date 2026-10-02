@@ -21,9 +21,11 @@ set -euo pipefail
 #     LLM_BASE_URL=...         # LLM API URL (defaults to https://api.deepseek.com/v1 if blank)
 #     TAVILY_API_KEY=...       # letta search mods (secret, optional)
 #   derived in .env (never prompted):
+#     LLM_MODEL=...                    # default deepseek-v4-pro (override via env/.env)
 #     DEEPSEEK_API_KEY=$LLM_API_KEY   # sudo-agent / Hermes
+#     LLM_API_KEY=$LLM_API_KEY        # custom_providers `key_env` target (Hermes)
 #     API_KEY=$LLM_API_KEY            # sudo-letta / Letta
-#     LLM_PROVIDER=<derived from LLM_BASE_URL>   # deepseek|anthropic|openai|...
+#     LLM_PROVIDER=<derived from LLM_BASE_URL>   # deepseek|anthropic|openai|featherless|…
 
 # FLEET_HOME is the repo root — the single sudo-fleet/ folder. Derive it from
 # the script's own location (portable to ANY directory), never a hardcoded path.
@@ -184,13 +186,21 @@ else
 fi
 
 # --- Provider is DERIVED from the URL, never prompted --------------------------
-# deepseek -> deepseek; anthropic -> anthropic; openai -> openai; else openai.
+# deepseek -> deepseek; anthropic -> anthropic; featherless -> featherless;
+# openai -> openai; else openai. A featherless/custom URL yields that provider
+# name, which the sudo-agent factory serves through a custom_providers entry.
 case "$_BASE_URL" in
-  *deepseek*)  _PROVIDER="deepseek"  ;;
-  *anthropic*) _PROVIDER="anthropic" ;;
-  *openai*)    _PROVIDER="openai"    ;;
-  *)           _PROVIDER="openai"    ;;
+  *deepseek*)    _PROVIDER="deepseek"    ;;
+  *anthropic*)   _PROVIDER="anthropic"   ;;
+  *featherless*) _PROVIDER="featherless" ;;
+  *openai*)      _PROVIDER="openai"      ;;
+  *)             _PROVIDER="openai"      ;;
 esac
+
+# --- LLM model id — NOT prompted (keeps the 3-field stdin contract) ------------
+# Read from the environment / an existing .env; otherwise the working DeepSeek
+# model, so behavior is unchanged when nobody sets LLM_MODEL.
+_MODEL="${LLM_MODEL:-deepseek-v4-pro}"
 
 # --- (3) Tavily API key — letta search mods (secret, optional) ---------------
 if [[ -n "${TAVILY_API_KEY:-}" ]]; then
@@ -202,8 +212,11 @@ else
 fi
 
 # Backend derivation: map the ONE key + derived provider into the factory vars.
+# LLM_API_KEY is the env var a custom_providers entry references via `key_env`.
 _write_env "DEEPSEEK_API_KEY=${_KEY}"
+_write_env "LLM_API_KEY=${_KEY}"
 _write_env "LLM_PROVIDER=${_PROVIDER}"
+_write_env "LLM_MODEL=${_MODEL}"
 _write_env "API_KEY=${_KEY}"
 _write_env "LLM_BASE_URL=${_BASE_URL}"
 _write_env "TAVILY_API_KEY=${_WS_KEY}"
@@ -219,7 +232,9 @@ _source_env
 [[ -n "${LLM_PROVIDER:-}" ]]      || warn "LLM_PROVIDER missing — you can add it to $FLEET_ENV later"
 [[ -n "${API_KEY:-}" ]]           || warn "API_KEY missing — you can add it to $FLEET_ENV later"
 [[ -n "${DEEPSEEK_API_KEY:-}" ]] && export DEEPSEEK_API_KEY
+[[ -n "${LLM_API_KEY:-}" ]]       && export LLM_API_KEY
 [[ -n "${LLM_PROVIDER:-}" ]]      && export LLM_PROVIDER
+[[ -n "${LLM_MODEL:-}" ]]         && export LLM_MODEL
 [[ -n "${API_KEY:-}" ]]           && export API_KEY
 [[ -n "${LLM_BASE_URL:-}" ]] && export LLM_BASE_URL
 _have_ws=0
@@ -338,6 +353,7 @@ $SUDO mkdir -p "$LETTA_REPO/.sudo-letta"
 _env_tmp="$(mktemp)"
 {
   printf 'LLM_PROVIDER=%s\n' "$LLM_PROVIDER"
+  printf 'LLM_MODEL=%s\n' "${LLM_MODEL:-deepseek-v4-pro}"
   printf 'API_KEY=%s\n' "$API_KEY"
   [[ -n "${LLM_BASE_URL:-}" ]] && printf 'LLM_BASE_URL=%s\n' "$LLM_BASE_URL"
   for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
