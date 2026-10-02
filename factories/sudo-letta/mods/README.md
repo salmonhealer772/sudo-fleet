@@ -5,6 +5,7 @@ The three comm-tool mod packages an agent is born with:
 - `list-siblings/`  -> `@letta-ai/list-siblings`  (tool `list_siblings`)
 - `message-agent/`  -> `@letta-ai/message-agent`  (tool `message_agent`)
 - `check-agent/`    -> `@letta-ai/check-agent`    (tool `check_agent`)
+- `keyboard-mac/`   -> `@letta-ai/keyboard-mac`   (tool `keyboard_mode`)
 
 These are installed at deploy time by `kube-scripts/up.sh` (see the `NPM_MODS` /
 `COMM_MODS` block) via `kubectl cp` + `letta install <path>`, and verified at
