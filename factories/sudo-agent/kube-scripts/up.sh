@@ -260,7 +260,7 @@ echo "→ sudo-agent image digest: ${IMAGE_SHA:0:12}"
 #     (the old behaviour) instead of aborting the roll.
 #   * Values are re-emitted through jq tojson, i.e. as YAML double-quoted
 #     scalars, so a value like `true` stays the string "true".
-TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","REDIS_URL"]'
+TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","LLM_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","REDIS_URL"]'
 EXTRA_ENV="$(kubectl get deploy "$DEPLOY" -o json 2>/dev/null \
   | jq -r --argjson known "$TEMPLATE_ENV_NAMES" '
       .spec.template.spec.containers[]
@@ -437,6 +437,11 @@ $SEED_INITCONTAINERS
           privileged: true
         env:
         - name: DEEPSEEK_API_KEY
+          value: "$KEY"
+        # Env var a custom_providers entry references via \`key_env\` — so a
+        # Featherless/custom OpenAI-compatible endpoint's Bearer token resolves
+        # inside the pod without the key ever being written to config.yaml.
+        - name: LLM_API_KEY
           value: "$KEY"
         - name: SUDO_PASSWORD
           value: "$SUDO_PASS"

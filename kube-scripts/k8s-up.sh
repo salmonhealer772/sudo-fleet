@@ -87,7 +87,7 @@ ok "k3s up ($(kubectl get nodes --no-headers 2>/dev/null | awk '{print $1}' | pa
 
 # --- 2. API keys (same non-interactive bridge as setup.sh) ---------------------
 step "2/4 API keys from $FLEET_ENV"
-[[ -f "$FLEET_ENV" ]] || die "No $FLEET_ENV — drop one with DEEPSEEK_API_KEY, LLM_PROVIDER, API_KEY before running."
+[[ -f "$FLEET_ENV" ]] || die "No $FLEET_ENV — drop one with LLM_API_KEY, LLM_PROVIDER, API_KEY before running."
 set +euo pipefail
 # shellcheck disable=SC1090
 source "$FLEET_ENV"
@@ -97,6 +97,15 @@ set -euo pipefail
 [[ -n "${API_KEY:-}" ]] || die "API_KEY missing in $FLEET_ENV"
 export DEEPSEEK_API_KEY LLM_PROVIDER API_KEY
 [[ -n "${LLM_BASE_URL:-}" ]] && export LLM_BASE_URL
+# LLM_MODEL is the model contract's third leg (default deepseek-v4-pro); it is
+# optional in the env (a missing value falls back to the working DeepSeek model
+# in the factories), so it is exported only when set. LLM_API_KEY is the env var
+# a Hermes custom_providers entry references via `key_env`; fall back to the
+# shared LLM key so a custom endpoint's token resolves inside the pod.
+LLM_MODEL="${LLM_MODEL:-deepseek-v4-pro}"
+LLM_API_KEY="${LLM_API_KEY:-${DEEPSEEK_API_KEY:-}}"
+export LLM_MODEL
+export LLM_API_KEY
 for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
   [[ -n "${!_wk:-}" ]] && export "$_wk=${!_wk}"
 done
@@ -112,6 +121,7 @@ $SUDO mkdir -p "$LETTA_REPO/.sudo-letta"
 _env_tmp="$(mktemp)"
 {
   printf 'LLM_PROVIDER=%s\n' "$LLM_PROVIDER"
+  printf 'LLM_MODEL=%s\n' "$LLM_MODEL"
   printf 'API_KEY=%s\n' "$API_KEY"
   [[ -n "${LLM_BASE_URL:-}" ]] && printf 'LLM_BASE_URL=%s\n' "$LLM_BASE_URL"
   for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
@@ -131,6 +141,22 @@ if $SUDO test -f "$AGENT_REPO/.env" && $SUDO grep -q '^DEEPSEEK_API_KEY=' "$AGEN
 else
   printf 'DEEPSEEK_API_KEY=%s\n' "$DEEPSEEK_API_KEY" | $SUDO tee -a "$AGENT_REPO/.env" >/dev/null
 fi
+# Also carry the LLM contract (LLM_MODEL / LLM_PROVIDER / LLM_BASE_URL / LLM_API_KEY)
+# into the factory .env, so a re-run of the factory setup.sh and the pod env both
+# read the SAME source. LLM_API_KEY is what a custom_providers `key_env` names.
+_upsert_agent_env() {
+  local key="$1" val="$2"
+  [[ -z "$val" ]] && return 0
+  if $SUDO test -f "$AGENT_REPO/.env" && $SUDO grep -q "^${key}=" "$AGENT_REPO/.env" 2>/dev/null; then
+    $SUDO sed -i "s|^${key}=.*|${key}=${val}|" "$AGENT_REPO/.env"
+  else
+    printf '%s=%s\n' "$key" "$val" | $SUDO tee -a "$AGENT_REPO/.env" >/dev/null
+  fi
+}
+_upsert_agent_env LLM_API_KEY  "$LLM_API_KEY"
+_upsert_agent_env LLM_MODEL    "$LLM_MODEL"
+_upsert_agent_env LLM_PROVIDER "$LLM_PROVIDER"
+_upsert_agent_env LLM_BASE_URL "${LLM_BASE_URL:-}"
 ok "env sourced + factory .env files re-seeded"
 
 # --- 3. Deploy Marc (Letta planner) — seeded from the committed glimor --------
