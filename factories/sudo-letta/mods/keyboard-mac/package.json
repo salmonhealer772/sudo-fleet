@@ -1,0 +1,34 @@
+{
+  "name": "@letta-ai/keyboard-mac",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that adds a keyboard_mode tool to switch the operator's Mac keyboard between PC mode and native Mac mode.",
+  "author": "forge",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "fleet",
+    "keyboard",
+    "mac"
+  ],
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "tools",
+      "events.tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
