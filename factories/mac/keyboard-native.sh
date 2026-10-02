@@ -15,11 +15,16 @@ set -euo pipefail
 #   below and README-keyboard.md. A Python (plistlib) mutation changes ONLY that
 #   one key and preserves every other keyboard's entry.
 #
-# WHAT IT DOES NOT DO
+# WHAT IT DOES NOT DO (and never will)
 #   - Does NOT touch the enabled input source (U.S., KeyboardLayout ID 0).
-#   - Does NOT touch hidutil UserKeyMapping unless --clear-remaps is passed.
-#     The remaps are inventoried and reported on every run, never silently
-#     changed.
+#   - Does NOT touch the operator's global UserKeyMapping (the Fn<->Command swap
+#     + F2 entry) or his launch agent ~/Library/LaunchAgents/
+#     key-binds-on-start.plist. That mapping is his DELIBERATE config — it makes
+#     Fn+C copy and Fn+V paste. It is inventoried and reported on every run, and
+#     it is NEVER renamed, disabled, unloaded, cleared, or overwritten. There is
+#     no flag that clears it. This script only ever reads those remaps to report
+#     them.
+#   - Does NOT install any launch agent or re-apply any key mapping at login.
 #
 # LAYOUT EVIDENCE (not silent assumption)
 #   The definitive ANSI/ISO/JIS signal is the keyboard's HID report descriptor,
@@ -56,7 +61,6 @@ set -euo pipefail
 #   sudo bash factories/mac/keyboard-native.sh --layout jis     # set JIS instead
 #   sudo bash factories/mac/keyboard-native.sh --value 41       # set explicit type
 #   sudo bash factories/mac/keyboard-native.sh --revert         # restore prior value
-#   sudo bash factories/mac/keyboard-native.sh --clear-remaps   # also clear global remaps
 #   sudo bash factories/mac/keyboard-native.sh --dry-run        # report only, change nothing
 #
 #   MAC_SUDO_PASSWORD=… sudo -E bash …/keyboard-native.sh       # non-interactive sudo
@@ -90,7 +94,6 @@ note_bad() { printf '  ✗ %s\n' "$1"; FAIL=$((FAIL+1)); }
 LAYOUT="$DEFAULT_LAYOUT"
 MODE="apply"          # apply | revert
 TARGET=""             # explicit integer for --value (overrides --layout)
-CLEAR_REMAPS=0
 DRY_RUN=0
 REVERT_VALUE=""       # explicit value for --revert --value N
 SUDO_PASSWORD="${MAC_SUDO_PASSWORD:-}"
@@ -103,7 +106,6 @@ while [[ $# -gt 0 ]]; do
     --layout) LAYOUT="${2:?--layout needs ansi|iso|jis}"; shift 2 ;;
     --value)  TARGET="${2:?--value needs an integer}"; shift 2 ;;
     --revert) MODE="revert"; shift ;;
-    --clear-remaps) CLEAR_REMAPS=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
     --sudo-password) SUDO_PASSWORD="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
@@ -136,6 +138,9 @@ import json, os, plistlib, re, subprocess, sys
 
 PLIST = "/Library/Preferences/com.apple.keyboardtype.plist"
 KBD_KEY = "268-9610-0"
+# The operator's own launch agent. This worker READS it for inventory only; it
+# NEVER renames, unloads, clears, or overwrites it. Fn<->Command + F2 is his
+# deliberate config (Fn+C copy / Fn+V paste).
 AGENT = os.path.expanduser("~/Library/LaunchAgents/key-binds-on-start.plist")
 
 def load():
@@ -222,19 +227,6 @@ def main():
             for m in ag:
                 print("AGENT %s -> %s" % (fmt(m.get("HIDKeyboardModifierMappingSrc")),
                                           fmt(m.get("HIDKeyboardModifierMappingDst"))))
-    elif cmd == "clear-remaps":
-        # 1. stop the launch agent (ignore "not loaded")
-        subprocess.run(["launchctl", "unload", AGENT], capture_output=True)
-        # 2. neutralize persistence by renaming the plist out of LaunchAgents/
-        if os.path.exists(AGENT):
-            os.rename(AGENT, AGENT + ".disabled")
-            print("AGENT_DISABLED=%s.disabled" % AGENT)
-        else:
-            print("AGENT_ABSENT=noop")
-        # 3. clear live mappings
-        subprocess.run(["hidutil", "property", "--set", "UserKeyMapping", "()"],
-                       capture_output=True)
-        print("LIVE_CLEARED=done")
     else:
         sys.exit("unknown cmd: " + cmd)
 
@@ -288,37 +280,19 @@ else
   note_ok "this keyboard ($KBD_KEY) current type: $CURRENT (currently NOT connected)"
 fi
 
-# ── [4] remap inventory (report only — never changed here) ─────────────────────
-step "global key-remap inventory (hidutil UserKeyMapping)"
+# ── [4] remap inventory (report only — operator's config, never changed) ───────
+step "global key-remap inventory (hidutil UserKeyMapping — operator's own config)"
 REMAP_OUT="$(run_mac "/usr/bin/python3 $WORKER_PATH remaps" 2>&1)" || REMAP_OUT="remaps read failed: $REMAP_OUT"
 echo "$REMAP_OUT" | sed 's/^/  /'
 LIVE_COUNT="$(printf '%s' "$REMAP_OUT" | sed -n 's/^LIVE_COUNT=//p')"
 AGENT_PRESENT="$(printf '%s' "$REMAP_OUT" | sed -n 's/^AGENT_PRESENT=//p')"
 if [[ "${LIVE_COUNT:-0}" != "0" ]] || [[ "$AGENT_PRESENT" == "yes" ]]; then
-  warn "non-native remaps detected (live=$LIVE_COUNT, agent=$AGENT_PRESENT) — NOT changed unless --clear-remaps"
+  note_ok "operator's Fn<->Command remaps detected (live=$LIVE_COUNT, agent=$AGENT_PRESENT) — PRESERVED, never touched by this script"
 else
-  note_ok "no live remaps and no remap launch agent"
+  note_ok "no live remaps and no remap launch agent present"
 fi
 
-# ── [5] clear remaps (only with --clear-remaps) ────────────────────────────────
-if [[ "$CLEAR_REMAPS" == "1" ]]; then
-  step "clear global key remaps (--clear-remaps)"
-  if [[ "$DRY_RUN" == "1" ]]; then
-    note_ok "dry-run: would unload+disable the launch agent and clear UserKeyMapping"
-  else
-    CLEAR_OUT="$(run_mac "/usr/bin/python3 $WORKER_PATH clear-remaps" 2>&1)" || CLEAR_OUT="clear failed: $CLEAR_OUT"
-    echo "$CLEAR_OUT" | sed 's/^/  /'
-    note_ok "remap clear executed"
-    VERIFY="$(run_mac "hidutil property --get UserKeyMapping" 2>&1)"
-    if printf '%s' "$VERIFY" | grep -q 'HIDKeyboardModifierMapping'; then
-      note_bad "remaps still present after clear: $VERIFY"
-    else
-      note_ok "verify: UserKeyMapping is empty"
-    fi
-  fi
-fi
-
-# ── [6] keyboard type action ───────────────────────────────────────────────────
+# ── [5] keyboard type action ───────────────────────────────────────────────────
 if [[ "$MODE" == "revert" ]]; then
   step "revert keyboard type to prior value"
   if [[ -n "$REVERT_VALUE" ]]; then
@@ -353,7 +327,7 @@ else
   fi
 fi
 
-# ── [7] verify ─────────────────────────────────────────────────────────────────
+# ── [6] verify ─────────────────────────────────────────────────────────────────
 step "verify effective per-device type"
 VERIFY_OUT="$(run_mac "/usr/bin/python3 $WORKER_PATH read" 2>&1)" || VERIFY_OUT="verify read failed: $VERIFY_OUT"
 VERIFY_CURRENT="$(printf '%s' "$VERIFY_OUT" | sed -n 's/^CURRENT=//p')"
@@ -367,7 +341,7 @@ else
   fi
 fi
 
-# ── [8] cost / apply note ──────────────────────────────────────────────────────
+# ── [7] cost / apply note ──────────────────────────────────────────────────────
 step "cost to apply"
 if [[ "$CONNECTED" == "yes" ]]; then
   note_ok "keyboard is connected — unplug/replug it (or log out/in, or reboot) to apply."
