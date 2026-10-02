@@ -380,12 +380,11 @@ if [[ -f "$AUTO_UP" ]]; then
   $SUDO tee "$BOOT_UNIT" >/dev/null <<UNIT
 [Unit]
 Description=sudo-fleet auto bring-up (idempotent; survives VM/WSL2 restart)
-After=network-online.target docker.service k3s.service
+After=k3s.service docker.service
 Wants=docker.service k3s.service
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
 ExecStart=/usr/bin/env bash $AUTO_UP
 StandardOutput=journal
 StandardError=journal
