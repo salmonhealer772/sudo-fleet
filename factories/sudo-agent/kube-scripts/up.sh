@@ -68,8 +68,206 @@ mkdir -p "$YAML_DIR" "$CONFIG_DIR" 2>/dev/null || true
 
 # Per-agent config: seed config/<name>.yaml from the tracked template on first
 # deploy, then leave it alone so each agent's config can diverge (config isolation).
+CONFIG_SEEDED=0
 if [[ ! -f "$PER_AGENT_CONFIG" ]]; then
   cp "$REPO_DIR/config.yaml" "$PER_AGENT_CONFIG"
+  CONFIG_SEEDED=1
+fi
+
+# ── LLM provider / model convergence into the per-agent config ──────────────
+# WHY: the tracked config.yaml defaults to DeepSeek with its custom_providers
+# entry COMMENTED OUT (no secret may live in a committed file), and this script
+# seeds every fresh per-agent config from it. So on a FRESH rebuild the custom
+# OpenAI-compatible endpoint from .env (LLM_PROVIDER / LLM_BASE_URL / LLM_MODEL)
+# was never applied: the agent booted on the DeepSeek default and had to be
+# hand-patched. This step writes the env's provider / base_url / model.default
+# into the per-agent config and emits an UNCOMMENTED custom_providers entry when
+# the endpoint is custom (anything that is not the DeepSeek default — see the
+# contract documented in config.yaml and _is_custom_endpoint() in setup.sh).
+# The per-agent config is generated at deploy time (config/ is untracked) and
+# the key is referenced by env var NAME (key_env: LLM_API_KEY, the env var this
+# script injects into the pod below) — no secret is ever written here.
+# Scope: the full override runs when the config was just seeded, or when the
+# env configures a custom endpoint the existing config does not already carry
+# (a stale seeded config) — so a hand-diverged config is not stomped on every
+# re-deploy. A changed LLM_MODEL still refreshes model.default.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "✗ python3 is required to converge the LLM provider/model into $PER_AGENT_CONFIG" >&2
+  exit 1
+fi
+if ! python3 - "$PER_AGENT_CONFIG" "$ENV_FILE" "$CONFIG_SEEDED" <<'PYEOF'
+import os
+import re
+import shutil
+import sys
+
+cfg_path, env_path, seeded = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+
+
+def env_val(name):
+    """os.environ first, then the .env file (same precedence as setup.sh)."""
+    v = (os.environ.get(name) or "").strip()
+    if v:
+        return v
+    try:
+        with open(env_path) as fh:
+            for line in fh:
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+provider = env_val("LLM_PROVIDER")
+base_url = env_val("LLM_BASE_URL")
+model = env_val("LLM_MODEL")
+
+if not (provider or base_url or model):
+    print("→ no LLM_PROVIDER/LLM_BASE_URL/LLM_MODEL in env — %s keeps the tracked default"
+          % cfg_path)
+    sys.exit(0)
+
+is_custom = bool(base_url) and "deepseek" not in base_url.lower()
+if is_custom and not model:
+    print("⚠ %s: custom endpoint %s is configured without LLM_MODEL — model.default keeps"
+          " the tracked default; set LLM_MODEL in .env to the model id that endpoint serves"
+          % (cfg_path, base_url))
+
+with open(cfg_path) as fh:
+    orig = fh.read()
+lines = orig.splitlines()
+
+
+def block_end(start):
+    """Index just past the YAML block opened at `start` (until the next top-level key)."""
+    for j in range(start + 1, len(lines)):
+        if lines[j].strip() and not lines[j].startswith((" ", "\t", "#")):
+            return j
+    return len(lines)
+
+
+def set_top(key, value):
+    pat = re.compile(r"^%s\s*:" % re.escape(key))
+    for i, ln in enumerate(lines):
+        if pat.match(ln):
+            lines[i] = '%s: "%s"' % (key, value)
+            return
+    lines.insert(0, '%s: "%s"' % (key, value))
+
+
+def set_model_default(value):
+    for i, ln in enumerate(lines):
+        if re.match(r"^model\s*:\s*$", ln):
+            end = block_end(i)
+            for j in range(i + 1, end):
+                if re.match(r"^\s+default\s*:", lines[j]):
+                    lines[j] = '  default: "%s"' % value
+                    return
+            lines.insert(i + 1, '  default: "%s"' % value)
+            return
+    lines.insert(0, 'model:\n  default: "%s"' % value)
+
+
+def find_custom_block():
+    for i, ln in enumerate(lines):
+        if re.match(r"^custom_providers\s*:", ln):
+            return i, block_end(i)
+    return None, None
+
+
+def set_custom_models(value):
+    """Refresh the `models:` list inside an existing custom_providers block."""
+    cstart, cend = find_custom_block()
+    if cstart is None:
+        return
+    for j in range(cstart + 1, cend):
+        if re.match(r"^\s+models\s*:", lines[j]):
+            lines[j] = '    models: ["%s"]' % value
+            return
+    lines.insert(cend, '    models: ["%s"]' % value)
+
+
+custom_name = provider or "custom"
+cstart, cend = find_custom_block()
+already = False
+if cstart is not None:
+    have = "\n".join(lines[cstart:cend])
+    already = base_url in have and "key_env:" in have
+
+full_override = seeded or (is_custom and not already)
+
+if full_override:
+    if provider:
+        set_top("provider", provider)
+    if base_url:
+        set_top("base_url", base_url)
+    if model:
+        set_model_default(model)
+    if is_custom:
+        cstart, cend = find_custom_block()
+        if cstart is not None:
+            del lines[cstart:cend]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        block = ["custom_providers:",
+                 '  - name: "%s"' % custom_name,
+                 '    base_url: "%s"' % base_url,
+                 "    key_env: LLM_API_KEY",
+                 "    api_mode: openai"]
+        if model:
+            block.append('    models: ["%s"]' % model)
+        lines += [""] + block
+elif model:
+    set_model_default(model)
+    set_custom_models(model)
+
+new = "\n".join(lines) + "\n"
+
+if new == orig:
+    print("✓ LLM config already matches the env in %s (provider=%s model=%s base_url=%s)"
+          % (cfg_path, provider or "-", model or "-", base_url or "-"))
+    sys.exit(0)
+
+# Validate BEFORE replacing: pyyaml when available, else a textual check. A bad
+# edit must never leave a broken per-agent config behind.
+why = "textual check"
+try:
+    import yaml  # noqa: F401
+except ImportError:
+    yaml = None
+if yaml is not None:
+    try:
+        data = yaml.safe_load(new)
+    except Exception as exc:
+        print("✗ %s: converged config does not parse (%s) — original left untouched"
+              % (cfg_path, exc))
+        sys.exit(2)
+    if not isinstance(data, dict) or "provider" not in data or "model" not in data:
+        print("✗ %s: converged config lacks provider/model — original left untouched" % cfg_path)
+        sys.exit(2)
+    why = "pyyaml parse"
+else:
+    for want in ("provider:", "base_url:", "model:", "default:"):
+        if want not in new:
+            print("✗ %s: converged config lacks %s — original left untouched" % (cfg_path, want))
+            sys.exit(2)
+
+tmp = cfg_path + ".tmp-llm"
+with open(tmp, "w") as fh:
+    fh.write(new)
+shutil.copymode(cfg_path, tmp)
+os.replace(tmp, cfg_path)
+
+print("✓ LLM config converged in %s (provider=%s model=%s base_url=%s custom_providers=%s) [%s]"
+      % (cfg_path, provider or "-", model or "-", base_url or "-",
+         "yes" if (is_custom and (full_override or already)) else "no", why))
+PYEOF
+then
+  echo "✗ FAILED to converge the LLM provider/model into $PER_AGENT_CONFIG" >&2
+  echo "  The agent would boot on the tracked DeepSeek default (the exact silent" >&2
+  echo "  breakage this step exists to prevent) — deploy aborted." >&2
+  exit 1
 fi
 
 # Auto-detect kubeconfig (sudo changes HOME, kubectl can lose it)

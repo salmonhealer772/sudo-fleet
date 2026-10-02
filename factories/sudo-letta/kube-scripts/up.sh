@@ -101,6 +101,12 @@ if [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
   LLM_PROVIDER=$(grep '^LLM_PROVIDER=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | head -1 || true)
   API_KEY=$(grep '^API_KEY=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | head -1 || true)
   LLM_BASE_URL=$(grep '^LLM_BASE_URL=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | head -1 || true)
+  # LLM_MODEL: the model to pin on the agent AFTER `letta connect` (see the
+  # provider/model wiring below). Read from the same source as the provider and
+  # base-url so a custom OpenAI-compatible endpoint's exact model id is
+  # available at deploy time instead of relying on the endpoint's first
+  # discovered model. Never echoed.
+  LLM_MODEL=$(grep '^LLM_MODEL=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | head -1 || true)
   # Optional web_search provider keys (read but never echoed/committed).
   # Any that are set AND non-empty are injected into the pod env below;
   # unset ones are skipped entirely (no empty-value env vars).
@@ -504,11 +510,119 @@ kubectl wait --for=condition=ready pod -l agent=$NAME --timeout=60s 2>/dev/null 
 echo "→ Configuring Letta provider..."
 POD=$(kubectl get pods -l agent=$NAME -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 if [[ -n "$POD" ]]; then
-  # Source env for Letta connect
-  CONNECT_CMD="letta --backend local connect $LLM_PROVIDER --api-key $API_KEY"
-  [[ -n "${LLM_BASE_URL:-}" ]] && CONNECT_CMD="$CONNECT_CMD --base-url $LLM_BASE_URL"
+  # ── Provider + model wiring (custom OpenAI-compatible endpoints) ──────────
+  # `letta connect` only accepts the CLI's OWN provider names. A custom
+  # OpenAI-compatible endpoint named in LLM_PROVIDER (e.g. "featherless") is NOT
+  # one of them: verified live on the pinned letta-code 0.33.2,
+  #   letta --backend local connect featherless --api-key ...
+  #   -> "Unknown provider: featherless. Supported providers: ..."
+  # so the connect silently failed and the deployed agent had no working model
+  # ("No model selected") until it was hand-patched. The CLI's supported
+  # provider for an arbitrary OpenAI-compatible endpoint is `openai-compatible`
+  # (verified: `letta connect openai-compatible --base-url <url> --api-key <key>`
+  # -> "Connected OpenAI-compatible API (openai-compatible) in local storage"),
+  # and its models are then provider-qualified as
+  # `openai-compatible/<model-id>` (e.g. openai-compatible/deepseek-ai/DeepSeek-V4-Pro).
+  #
+  # Strategy: try the configured provider first (a real built-in such as
+  # deepseek / anthropic / openai / zai connects as-is, unchanged behaviour),
+  # and fall back to `openai-compatible` ONLY when the CLI rejects the name.
+  # Self-verifying — no hard-coded provider list to drift out of date.
+  CONNECT_PROVIDER="${LLM_PROVIDER:-}"
 
-  kubectl exec "$POD" -- bash -c "$CONNECT_CMD" 2>&1 | tail -3 || echo "⚠ Letta connect failed (may need manual config)"
+  _connect_letta() {  # $1 = provider name as `letta connect` should see it
+    local cmd="letta --backend local connect $1 --api-key $API_KEY"
+    [[ -n "${LLM_BASE_URL:-}" ]] && cmd="$cmd --base-url $LLM_BASE_URL"
+    kubectl exec "$POD" -- bash -c "$cmd" 2>&1
+  }
+
+  CONNECT_OUT="$(_connect_letta "$CONNECT_PROVIDER" || true)"
+  if printf '%s' "$CONNECT_OUT" | grep -qi 'unknown provider'; then
+    echo "⚠ '$CONNECT_PROVIDER' is not a letta built-in provider — connecting the custom endpoint as 'openai-compatible' (${LLM_BASE_URL:-no base-url set})"
+    CONNECT_PROVIDER="openai-compatible"
+    CONNECT_OUT="$(_connect_letta "$CONNECT_PROVIDER" || true)"
+  fi
+  printf '%s\n' "$CONNECT_OUT" | tail -3
+  printf '%s' "$CONNECT_OUT" | grep -qi 'connected' \
+    || echo "⚠ Letta connect failed (may need manual config)"
+
+  # ── Select the model (LLM_MODEL), when one is configured ─────────────────
+  # `letta connect` wires the PROVIDER only; the agent's model stays whatever it
+  # already was. The confirmed non-interactive selection command on letta-code
+  # 0.33.2 is:
+  #   letta --backend local model set <handle> [--agent <id>]
+  # (from `letta model set` usage; verified live against a mock
+  # OpenAI-compatible endpoint: it writes model +
+  # model_settings.provider_type into the pod's agent record under
+  # /home/node/.letta/lc-local-backend/agents/<base64-id>.json). The handle must
+  # be provider-qualified — `letta model list --byok` prints the endpoint's exact
+  # handles — so a bare LLM_MODEL gets the effective provider prefixed here.
+  #
+  # `model set` needs a TARGET agent (it errors with "Set AGENT_ID or pass
+  # --agent/--conversation to select configuration" otherwise), so resolve the
+  # pod's agent id from settings.json (same resolution as letta_prompt.py), then
+  # fall back to `letta agents list`. A truly fresh PVC has no agent yet — the
+  # first prompt creates it; the warning below says exactly what to run then.
+  if [[ -n "${LLM_MODEL:-}" ]]; then
+    case "$LLM_MODEL" in
+      "$CONNECT_PROVIDER"/*) MODEL_HANDLE="$LLM_MODEL" ;;                       # already qualified
+      *)                     MODEL_HANDLE="$CONNECT_PROVIDER/$LLM_MODEL" ;;     # bare id -> qualify
+    esac
+
+    AGENT_ID_RESOLVED="$(kubectl exec "$POD" -- bash -c 'python3 - << "PYEOF"
+import json, sys
+try:
+    with open("/home/node/.letta/settings.json") as f:
+        s = json.load(f)
+except Exception:
+    sys.exit(0)
+last = s.get("lastAgent")
+if isinstance(last, str) and last:
+    print(last); sys.exit(0)
+if isinstance(last, dict):
+    for k in ("id", "agentId"):
+        if last.get(k):
+            print(last[k]); sys.exit(0)
+for r in s.get("agents") or []:
+    if isinstance(r, dict) and (r.get("memfs") is True or r.get("pinned") is True):
+        for k in ("id", "agentId"):
+            if r.get(k):
+                print(r[k]); sys.exit(0)
+PYEOF' 2>/dev/null | tr -d '\r' | tail -1)"
+
+    if [[ -z "$AGENT_ID_RESOLVED" ]]; then
+      # No agent record in settings.json yet (fresh PVC) — ask the CLI itself.
+      AGENT_ID_RESOLVED="$(kubectl exec "$POD" -- bash -c 'letta --backend local agents list 2>/dev/null' 2>/dev/null \
+        | grep -o '"id"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 \
+        | sed 's/.*"\([^"]*\)"$/\1/')"
+    fi
+
+    echo "→ Selecting model '$MODEL_HANDLE' for agent ${AGENT_ID_RESOLVED:-<none yet>}..."
+    if [[ -n "$AGENT_ID_RESOLVED" ]]; then
+      MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$MODEL_HANDLE' --agent '$AGENT_ID_RESOLVED'" 2>&1 || true)"
+    else
+      MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$MODEL_HANDLE'" 2>&1 || true)"
+    fi
+    printf '%s\n' "$MODEL_SET_OUT" | tail -3
+
+    if ! printf '%s' "$MODEL_SET_OUT" | grep -q '"model"'; then
+      # Second attempt with the raw id: covers an endpoint whose reported id is
+      # not the same string as the provider-qualified handle.
+      if [[ -n "$AGENT_ID_RESOLVED" ]]; then
+        MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$LLM_MODEL' --agent '$AGENT_ID_RESOLVED'" 2>&1 || true)"
+      else
+        MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$LLM_MODEL'" 2>&1 || true)"
+      fi
+      printf '%s\n' "$MODEL_SET_OUT" | tail -3
+    fi
+
+    if [[ -z "$AGENT_ID_RESOLVED" ]]; then
+      echo "⚠ No agent exists in the pod yet, so LLM_MODEL could not be pinned. After the"
+      echo "  first prompt creates it, run:  kubectl exec $POD -- letta --backend local model set '$MODEL_HANDLE' --agent <agent-id>"
+    elif ! printf '%s' "$MODEL_SET_OUT" | grep -q '"model"'; then
+      echo "⚠ Model selection did not confirm — check: kubectl exec $POD -- letta --backend local model list --byok"
+    fi
+  fi
 
   # Create settings with permissions
   kubectl exec "$POD" -- bash -c '
