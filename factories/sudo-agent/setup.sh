@@ -97,6 +97,14 @@ fi
 # backward-compatible DeepSeek defaults — in that order. The SAME three values
 # are consumed by kube-scripts/up.sh, so a Featherless/custom endpoint is
 # configured in exactly ONE place (the root .env) and nothing re-pins it here.
+_is_custom_endpoint() {
+  case "$1" in
+    *deepseek*) return 1 ;;
+    *featherless*|*openai*|*custom*|*localhost*|*127.0.0.1*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 LLM_MODEL="${LLM_MODEL:-}"
 LLM_BASE_URL="${LLM_BASE_URL:-}"
 LLM_PROVIDER="${LLM_PROVIDER:-}"
@@ -106,19 +114,13 @@ if [[ -f "$ENV_FILE" ]]; then
   [[ -z "$LLM_PROVIDER" ]] && LLM_PROVIDER="$(sed -n 's/^LLM_PROVIDER=//p' "$ENV_FILE" 2>/dev/null | head -n1)"
 fi
 # Backward-compatible defaults — used ONLY when the variables are unset.
-LLM_MODEL="${LLM_MODEL:-deepseek-v4-pro}"
 LLM_BASE_URL="${LLM_BASE_URL:-https://api.deepseek.com/v1}"
 LLM_PROVIDER="${LLM_PROVIDER:-deepseek}"
-
-# A non-DeepSeek OpenAI-compatible endpoint (Featherless, openai, local, …) is
-# served through a custom_providers entry; its provider name is the custom name.
-_is_custom_endpoint() {
-  case "$1" in
-    *deepseek*) return 1 ;;
-    *featherless*|*openai*|*custom*|*localhost*|*127.0.0.1*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+if _is_custom_endpoint "$LLM_BASE_URL"; then
+  [[ -z "$LLM_MODEL" ]] && read -r -p "LLM model (required for custom endpoint, e.g. deepseek-ai/DeepSeek-V4-Pro): " LLM_MODEL
+else
+  LLM_MODEL="${LLM_MODEL:-deepseek-v4-pro}"
+fi
 if _is_custom_endpoint "$LLM_BASE_URL"; then
   case "$LLM_PROVIDER" in
     deepseek|openai|"") LLM_PROVIDER="custom" ;;
