@@ -192,10 +192,11 @@ OLD_LABEL="com.sudofleet.keyboard-mode"
 OLD_PLIST="/Users/aidanmcohen/Library/LaunchAgents/com.sudofleet.keyboard-mode.plist"
 U=$(id -u)
 
-# 1. Remove the LaunchAgent the OLD revision installed (if any). Never touches
-#    key-binds-on-start or com.sudofleet.cluster-access.
+# 1. Remove the LaunchAgent the OLD revision installed (if any) — both the
+#    plain .plist and the psnvc-renamed .plist.disabled-psnvc variant. Never
+#    touches key-binds-on-start or com.sudofleet.cluster-access.
 launchctl bootout "gui/$U/$OLD_LABEL" 2>/dev/null || true
-rm -f "$OLD_PLIST"
+rm -f "$OLD_PLIST" "$OLD_PLIST.disabled-psnvc"
 
 # 2. Remove our per-device board override (board returns to baseline-only).
 hidutil property --matching "$MATCH" --set "$EMPTY" >/dev/null 2>&1 || true
