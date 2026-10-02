@@ -14,7 +14,6 @@ sudo bash factories/mac/keyboard-native.sh --layout iso    # ISO instead
 sudo bash factories/mac/keyboard-native.sh --layout jis    # JIS instead
 sudo bash factories/mac/keyboard-native.sh --value 41      # explicit type integer
 sudo bash factories/mac/keyboard-native.sh --revert        # restore the prior value
-sudo bash factories/mac/keyboard-native.sh --clear-remaps  # also clear the global remaps
 sudo bash factories/mac/keyboard-native.sh --dry-run       # report only, change nothing
 ```
 
@@ -45,9 +44,13 @@ the script tries `sudo -n` first, then falls back to the supplied password.
    `factories/mac/.keyboard-native.state` on every successful apply, or the
    documented original `41` if no state file exists). `--revert --value N`
    restores an explicit value.
-5. **Global remaps are never silently changed.** Every run inventories the
-   live `hidutil UserKeyMapping` and the launch agent that re-applies it, and
-   reports it. Only `--clear-remaps` changes them (see below).
+5. **The operator's key remaps are preserved, never touched.** Every run
+   inventories the live `hidutil UserKeyMapping` and the launch agent that
+   re-applies it, and reports it. That mapping — **Fn ↔ Command** (so **Fn+C
+   copies and Fn+V pastes**, "like a windows keyboard") plus a vendor-key→F2
+   entry — is the operator's **deliberate** configuration. The script has **no
+   flag** that clears, renames, unloads, or overrides it, and it installs **no**
+   launch agent of its own. It only ever reads those remaps to report them.
 6. **Verified for real.** It reads the value back after writing and shows the
    effective per-device type; it fails loudly (non-zero) if the write did not
    take or sudo is unavailable.
@@ -109,10 +112,10 @@ ways to trigger re-enumeration when the board is already plugged in.
    `defaults read /Library/Preferences/com.apple.keyboardtype.plist` — the
    `268-9610-0` entry should be `40`.
 
-## The global remaps (inventory + how to clear)
+## The global remaps (inventory only — the operator's config)
 
-macOS had three non-native **global** key remaps (they apply to *every*
-keyboard, not just this one), defined in a leftover launch agent
+macOS has three non-native **global** key remaps (they apply to *every*
+keyboard, not just this one), defined in the operator's launch agent
 `~/Library/LaunchAgents/key-binds-on-start.plist` (`RunAtLoad`), with a
 `.bak-fa24` backup holding an earlier 2-mapping version:
 
@@ -122,19 +125,13 @@ keyboard, not just this one), defined in a leftover launch agent
 | `0xFF00000003 → 0x7000000E3` | Apple Fn → Left Command  (with the above: **Cmd ↔ Fn swap**) |
 | `0xFF0100000010 → 0x70000003C` | vendor key `0xFF01:0x10` → **F2** |
 
-All three look like **leftovers** from prior keyboard fiddling (the "fa24"
-era — see the `.bak-fa24` backup and the sibling `local.fa24.*` launch agents).
-None are needed for native ANSI typing. The live `hidutil --get UserKeyMapping`
-currently reads **empty** (the agent re-applies these only at a GUI login, not
-over SSH); the launch agent is the persistence.
-
-**`--clear-remaps`** (opt-in, never the default) does three things as
-`aidanmcohen` (no sudo needed — it all lives in the user's own home/context):
-
-1. `launchctl unload` the launch agent,
-2. rename `key-binds-on-start.plist` → `key-binds-on-start.plist.disabled`
-   (reversible by renaming back),
-3. `hidutil property --set UserKeyMapping '()'` to clear any live mappings.
+This mapping is **deliberate**, not leftover: it is what makes **Fn+C copy**
+and **Fn+V paste** work, which is the operator's stated goal ("on the mac i want
+fn c fn v to work as my copy paist os its like a winodws keybaird"). It is
+inventoried and reported on every run and is **never** cleared, renamed,
+unloaded, or overridden by this script. The launch agent is the persistence;
+the live `hidutil --get UserKeyMapping` reads the same three entries whenever
+the agent has run (it re-applies them at a GUI login).
 
 ## Verified live (2026-10-02)
 
