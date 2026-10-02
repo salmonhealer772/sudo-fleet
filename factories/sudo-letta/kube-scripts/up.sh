@@ -448,9 +448,19 @@ _import_once() {
 _import_image() {
   local img="$1"
   if ! docker image inspect "$img" >/dev/null 2>&1; then
-    echo "✗ FATAL: docker image $img does not exist locally — nothing to import." >&2
-    echo "  Build it first:  bash setup.sh" >&2
-    exit 1
+    # Not built yet — build it here instead of dying, then fall through to the
+    # normal `docker save | ctr image import` path below.
+    echo "→ docker image $img does not exist locally — building it now..." >&2
+    if ! _retry 3 "image build $img" docker build -t sudo-letta:latest -f "$REPO_DIR/Dockerfile" "$REPO_DIR"; then
+      echo "✗ FATAL: docker image $img does not exist locally and the automatic build failed." >&2
+      echo "  Build it manually:  docker build -t sudo-letta:latest -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\"" >&2
+      exit 1
+    fi
+    if ! docker image inspect "$img" >/dev/null 2>&1; then
+      echo "✗ FATAL: build reported success but docker image $img is still missing locally — nothing to import." >&2
+      exit 1
+    fi
+    echo "→ built $img"
   fi
   _retry 3 "image import $img" _import_once "$img" \
     || echo "⚠ all image-import attempts reported failure for $img — verifying containerd..." >&2
