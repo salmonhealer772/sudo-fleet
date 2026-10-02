@@ -111,6 +111,20 @@ for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
 done
 unset _wk
 
+# ── Web-search key gate (fail ONCE, clearly) ─────────────────────────────────
+# The Letta web-search mod refuses to install for a blind agent, so Marc's
+# factory up.sh exits FATAL — and the deploy is wrapped in `_retry 3`, so the
+# operator got the same confusing FATAL three times before k8s-up gave up.
+# Detect it HERE, once, with the actual fix, and skip the retry churn entirely.
+_have_ws=0
+for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
+  [[ -n "${!_wk:-}" ]] && _have_ws=1
+done
+unset _wk
+if [[ "$_have_ws" -ne 1 ]]; then
+  die "no web-search key in $FLEET_ENV — the Letta web-search mod refused a blind agent; add TAVILY_API_KEY"
+fi
+
 # Re-seed the factory .env files so the `sudo bash up.sh` calls (sudo strips the
 # wrapper's exported env) still find their credentials. Idempotent.
 $SUDO mkdir -p "$LETTA_REPO/.sudo-letta"

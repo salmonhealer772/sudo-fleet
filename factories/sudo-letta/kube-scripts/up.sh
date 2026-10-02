@@ -445,12 +445,27 @@ _import_once() {
     || docker save "$img" | ctr -n k8s.io image import -
 }
 
+# _ensure_image_built IMG — build IMG from this factory's Dockerfile when it is
+# missing. k8s-up.sh drives a DEPLOY, not a build, so a deploy whose image is
+# absent used to hard-fail ("nothing to import. Build it first: bash setup.sh")
+# and leave the operator to re-run a setup step mid-deploy. Build it HERE and
+# fail ONLY if the build itself fails.
+_ensure_image_built() {
+  local img="$1"
+  docker image inspect "$img" >/dev/null 2>&1 && return 0
+  echo "→ docker image $img is missing locally — building it now..." >&2
+  _retry 3 "docker build $img" docker build -t "$img" -f "$REPO_DIR/Dockerfile" "$REPO_DIR" || return 1
+  docker image inspect "$img" >/dev/null 2>&1
+}
+
 _import_image() {
   local img="$1"
   if ! docker image inspect "$img" >/dev/null 2>&1; then
-    echo "✗ FATAL: docker image $img does not exist locally — nothing to import." >&2
-    echo "  Build it first:  bash setup.sh" >&2
-    exit 1
+    _ensure_image_built "$img" || {
+      echo "✗ FATAL: docker image $img is missing and could not be built — nothing to import." >&2
+      echo "  Build it manually:  bash setup.sh" >&2
+      exit 1
+    }
   fi
   _retry 3 "image import $img" _import_once "$img" \
     || echo "⚠ all image-import attempts reported failure for $img — verifying containerd..." >&2
