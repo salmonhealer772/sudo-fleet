@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -uo pipefail
 
-# sudo-agent/setup.sh — One-time setup: builds Docker image, prompts for DeepSeek API key.
+# sudo-agent/setup.sh — One-time setup: builds Docker image, prompts for the LLM key.
 
 echo "┌─────────────────────────────────────────────┐"
 echo "│  sudo-agent — Hermes Agent with root cage   │"
@@ -92,32 +92,112 @@ if [[ -z "$DEEPSEEK_KEY" ]]; then
   exit 1
 fi
 
-# Persist the key to .env. The repo dir may be root-owned, so a direct append
-# is tried FIRST and only falls back to `sudo tee` when that is refused — the
-# sudo/exit-code trap: a root-owned repo is a normal state in this factory, not
-# an error. If BOTH paths fail, abort with the chown fix instead of continuing
-# with a key that only lives in this process's environment and is lost on exit.
+# ── LLM model / provider / base_url — resolve the ONE source of truth ─────────
+# Resolved from (1) the environment, (2) this factory's .env, (3) the
+# backward-compatible DeepSeek defaults — in that order. The SAME three values
+# are consumed by kube-scripts/up.sh, so a Featherless/custom endpoint is
+# configured in exactly ONE place (the root .env) and nothing re-pins it here.
+LLM_MODEL="${LLM_MODEL:-}"
+LLM_BASE_URL="${LLM_BASE_URL:-}"
+LLM_PROVIDER="${LLM_PROVIDER:-}"
+if [[ -f "$ENV_FILE" ]]; then
+  [[ -z "$LLM_MODEL" ]]    && LLM_MODEL="$(sed -n 's/^LLM_MODEL=//p' "$ENV_FILE" 2>/dev/null | head -n1)"
+  [[ -z "$LLM_BASE_URL" ]] && LLM_BASE_URL="$(sed -n 's/^LLM_BASE_URL=//p' "$ENV_FILE" 2>/dev/null | head -n1)"
+  [[ -z "$LLM_PROVIDER" ]] && LLM_PROVIDER="$(sed -n 's/^LLM_PROVIDER=//p' "$ENV_FILE" 2>/dev/null | head -n1)"
+fi
+# Backward-compatible defaults — used ONLY when the variables are unset.
+LLM_MODEL="${LLM_MODEL:-deepseek-v4-pro}"
+LLM_BASE_URL="${LLM_BASE_URL:-https://api.deepseek.com/v1}"
+LLM_PROVIDER="${LLM_PROVIDER:-deepseek}"
+
+# A non-DeepSeek OpenAI-compatible endpoint (Featherless, openai, local, …) is
+# served through a custom_providers entry; its provider name is the custom name.
+_is_custom_endpoint() {
+  case "$1" in
+    *deepseek*) return 1 ;;
+    *featherless*|*openai*|*custom*|*localhost*|*127.0.0.1*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+if _is_custom_endpoint "$LLM_BASE_URL"; then
+  case "$LLM_PROVIDER" in
+    deepseek|openai|"") LLM_PROVIDER="custom" ;;
+  esac
+  echo "→ custom OpenAI-compatible endpoint ($LLM_BASE_URL) — provider '$LLM_PROVIDER'"
+fi
+
+# Persist the credentials + LLM contract to .env. The repo dir may be
+# root-owned, so a direct append is tried FIRST and only falls back to
+# `sudo tee` when that is refused — the sudo/exit-code trap: a root-owned repo
+# is a normal state in this factory, not an error. If BOTH paths fail, abort
+# with the chown fix instead of continuing with a key that only lives in this
+# process's environment and is lost on exit.
+# NOTE: the LLM_API_KEY line is the env var a custom_providers entry references
+# via `key_env`, so a custom endpoint's key resolves inside the pod.
+_ENV_BODY="# sudo-agent config (set by setup.sh)
+DEEPSEEK_API_KEY=$DEEPSEEK_KEY
+LLM_API_KEY=$DEEPSEEK_KEY
+LLM_MODEL=$LLM_MODEL
+LLM_PROVIDER=$LLM_PROVIDER
+LLM_BASE_URL=$LLM_BASE_URL"
 if ! echo "" >> "$ENV_FILE" 2>/dev/null; then
   echo "→ Repo is root-owned. Using sudo to save credentials..."
-  { echo "# sudo-agent config (set by setup.sh)"; echo "DEEPSEEK_API_KEY=$DEEPSEEK_KEY"; } | sudo tee "$ENV_FILE" > /dev/null 2>&1 || {
+  printf '%s\n' "$_ENV_BODY" | sudo tee "$ENV_FILE" > /dev/null 2>&1 || {
     echo "✗ Could not write .env. Run: sudo chown -R \$USER:\$USER $SCRIPT_DIR" >&2
     exit 1
   }
 else
-  echo "# sudo-agent config (set by setup.sh)" > "$ENV_FILE"
-  echo "DEEPSEEK_API_KEY=$DEEPSEEK_KEY" >> "$ENV_FILE"
+  printf '%s\n' "$_ENV_BODY" > "$ENV_FILE"
 fi
-echo "✓ API key saved to $ENV_FILE"
+unset _ENV_BODY
+echo "✓ API key + LLM contract saved to $ENV_FILE"
 
-# Seed config.yaml from the inline template on first run, then pin the model /
-# provider / terminal backend on EVERY run (idempotent). A re-run must converge
-# to the same config, and a missing config.yaml must never block first boot; if
-# the heredoc write fails the later sed pins still apply (they are independent).
+# ── config.yaml — converge WITHOUT re-pinning (the drift fix) ────────────────
+# OLD BEHAVIOUR (the bug this replaces): on EVERY run this block sed-RE-PINNED
+#   model.default -> "deepseek-v4-pro", provider -> "deepseek", and DELETED any
+#   `base_url:` line. A working Featherless/custom endpoint was therefore
+#   silently clobbered back to DeepSeek every time setup.sh ran.
+#
+# NEW CONTRACT: provider / base_url / model.default come from LLM_PROVIDER /
+# LLM_BASE_URL / LLM_MODEL (resolved above). We only WRITE a value that is not
+# already present, we NEVER delete a user's base_url, and the DeepSeek defaults
+# are used only when those variables are completely unset (backward compat).
+# The LLM keys live at TOP LEVEL (`provider:` / `base_url:`) — not under
+# `model:` — because that is the shape Hermes reads, and a custom endpoint needs
+# the custom_providers entry emitted below for its Bearer token to be sent.
+
+# _set_root_if_absent KEY VALUE — prepend a top-level `KEY: "VALUE"` line only
+# when that top-level key does not already exist. Never rewrites a user value.
+_set_root_if_absent() {
+  local key="$1" val="$2"
+  grep -qE "^${key}:" "$CONFIG_FILE" 2>/dev/null && return 0
+  local tmp; tmp="$(mktemp)"
+  { printf '%s: "%s"\n' "$key" "$val"; cat "$CONFIG_FILE"; } > "$tmp" \
+    && mv "$tmp" "$CONFIG_FILE"
+}
+
+# _set_nested_if_absent SECTION KEY VALUE — add `SECTION.KEY: "VALUE"` only when
+# no sibling `KEY:` already exists, creating the SECTION if needed. Never
+# rewrites a user's value.
+_set_nested_if_absent() {
+  local section="$1" key="$2" val="$3"
+  grep -qE "^[[:space:]]+${key}:" "$CONFIG_FILE" 2>/dev/null && return 0
+  local tmp; tmp="$(mktemp)"
+  if grep -qE "^${section}:" "$CONFIG_FILE" 2>/dev/null; then
+    awk -v s="$section" -v k="$key" -v v="$val" '
+      { print }
+      $0 == (s ":") && !ins { printf "  %s: \"%s\"\n", k, v; ins=1 }
+    ' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+  else
+    { printf '%s:\n  %s: "%s"\n' "$section" "$key" "$val"; cat "$CONFIG_FILE"; } > "$tmp" \
+      && mv "$tmp" "$CONFIG_FILE"
+  fi
+}
+
 if [[ ! -f "$CONFIG_FILE" ]]; then
+  # First run: seed ONLY the non-LLM defaults. The LLM keys are written by the
+  # convergence below so they always reflect LLM_MODEL/PROVIDER/BASE_URL.
   cat > "$CONFIG_FILE" << 'CONFIGEOF'
-model:
-  default: "deepseek-v4-pro"
-  provider: "deepseek"
 terminal:
   backend: "local"
   sudo_password_env: "SUDO_PASSWORD"
@@ -129,13 +209,27 @@ memory:
   write_approval: false
   nudge_interval: 1
 CONFIGEOF
-else
-  sed -i 's|^  default:.*|  default: "deepseek-v4-pro"|' "$CONFIG_FILE"
-  sed -i 's|^  provider:.*|  provider: "deepseek"|' "$CONFIG_FILE"
-  sed -i 's|^  backend:.*|  backend: "local"|' "$CONFIG_FILE"
-  # Remove any stale base_url line
-  sed -i '/^  base_url:/d' "$CONFIG_FILE"
 fi
+
+_set_root_if_absent    provider "$LLM_PROVIDER"
+_set_root_if_absent    base_url "$LLM_BASE_URL"
+_set_nested_if_absent  model    default  "$LLM_MODEL"
+_set_nested_if_absent  terminal backend  "local"
+
+# A custom (non-DeepSeek) OpenAI-compatible endpoint must also appear in
+# custom_providers, or the Bearer token is never sent. The key is referenced by
+# ENV VAR NAME (key_env) — no secret is ever written into config.yaml.
+if _is_custom_endpoint "$LLM_BASE_URL" && ! grep -qE '^custom_providers:' "$CONFIG_FILE" 2>/dev/null; then
+  cat >> "$CONFIG_FILE" <<CUSTOMEOF
+custom_providers:
+  - name: "$LLM_PROVIDER"
+    base_url: "$LLM_BASE_URL"
+    key_env: LLM_API_KEY
+    api_mode: openai
+    models: ["$LLM_MODEL"]
+CUSTOMEOF
+fi
+echo "✓ config.yaml converged (provider='$LLM_PROVIDER' model='$LLM_MODEL' base_url='$LLM_BASE_URL')"
 
 # --- Shared Redis for the prompt-distributor queue ---
 # The queue that serializes concurrent prompts into the agent lives in a SHARED
