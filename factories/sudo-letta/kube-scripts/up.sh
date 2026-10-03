@@ -163,6 +163,11 @@ ENV_YAML="        - name: LLM_PROVIDER
 [[ -n "${LLM_BASE_URL:-}" ]] && ENV_YAML+="
         - name: LLM_BASE_URL
           value: \"${LLM_BASE_URL}\""
+# Pin the exact model on the agent record (critical for Featherless/OpenAI-compatible
+# endpoints where the handle and wire id differ - see patch-featherless-deepseek.cjs).
+[[ -n "${LETTA_MODEL:-}" ]] && ENV_YAML+="
+        - name: LETTA_MODEL
+          value: "${LETTA_MODEL}""
 # Optional web_search provider keys: inject only the ones that are set and
 # non-empty (fleet-wide fallback; agent-scoped /secret takes precedence per
 # the mod). Never echo the values.
