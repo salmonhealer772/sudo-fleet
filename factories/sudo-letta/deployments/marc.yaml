@@ -1,0 +1,232 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sudo-marc-data
+  labels:
+    app: sudo-letta
+    agent: marc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sudo-marc
+  labels:
+    app: sudo-letta
+    agent: marc
+spec:
+  replicas: 1
+  # Recreate, NOT RollingUpdate: every agent pod runs hostNetwork:true and
+  # binds a per-agent fixed port (MCP_PORT), so a rolling update brings the NEW
+  # pod up beside the OLD one and the new pod crash-loops (port already in use
+  # in the shared node netns) while the rollout hangs. The old pod MUST
+  # terminate before the new one starts (the same reason redis-up.sh uses
+  # Recreate).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: sudo-letta
+      agent: marc
+  template:
+    metadata:
+      labels:
+        app: sudo-letta
+        agent: marc
+    spec:
+      shareProcessNamespace: true
+      hostNetwork: true
+      securityContext:
+        supplementalGroups: [988]
+      hostAliases:
+      - ip: "127.0.0.1"
+        hostnames:
+        - "vultr"
+      initContainers:
+      - name: seed-glimor
+        image: sudo-letta:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+        command: ["sh", "-c", "if test -f /home/node/.letta/.glimor-seeded; then exit 0; fi; if ! test -d /seed/letta; then exit 1; fi; if ! test -f /seed/letta/settings.json; then exit 1; fi; cp -a /seed/letta/. /home/node/.letta/ && echo Y29uc3QgZnMgPSByZXF1aXJlKCJmcyIpOwpjb25zdCBwYXRoID0gcmVxdWlyZSgicGF0aCIpOwpjb25zdCBob21lID0gIi9ob21lL25vZGUvLmxldHRhIjsKY29uc3Qgc2VydmVyID0gImxvY2FsOi9ob21lL25vZGUvLmxldHRhL2xjLWxvY2FsLWJhY2tlbmQiOwpjb25zdCBzZXR0aW5nc1BhdGggPSBwYXRoLmpvaW4oaG9tZSwgInNldHRpbmdzLmpzb24iKTsKY29uc3QgbG9jYWxTZXR0aW5nc1BhdGggPSBwYXRoLmpvaW4oaG9tZSwgIi5sZXR0YSIsICJzZXR0aW5ncy5sb2NhbC5qc29uIik7Cgp0cnkgewogIGNvbnN0IGQgPSBKU09OLnBhcnNlKGZzLnJlYWRGaWxlU3luYyhzZXR0aW5nc1BhdGgsICJ1dGY4IikpOwogIGNvbnN0IGFncyA9IChkLmFnZW50cyB8fCBbXSkuZmlsdGVyKGEgPT4gYSAmJiAoYS5tZW1mcyA9PT0gdHJ1ZSB8fCBhLnBpbm5lZCA9PT0gdHJ1ZSkpOwogIGNvbnN0IHQgPSBhZ3MuZmluZChhID0+IGEucGlubmVkID09PSB0cnVlKSB8fCBhZ3NbMF07CiAgaWYgKHQgJiYgdC5hZ2VudElkKSB7CiAgICAvLyAxLiBnbG9iYWwgc2V0dGluZ3MuanNvbjogcmVzdW1lIHRhcmdldCAtPiBzZWVkZWQgcGlubmVkL21lbWZzIGFnZW50LCAiZGVmYXVsdCIgY29udmVyc2F0aW9uCiAgICBkLmxhc3RBZ2VudCA9IHQuYWdlbnRJZDsKICAgIGQuc2Vzc2lvbnNCeVNlcnZlciA9IGQuc2Vzc2lvbnNCeVNlcnZlciB8fCB7fTsKICAgIGQuc2Vzc2lvbnNCeVNlcnZlcltzZXJ2ZXJdID0geyBhZ2VudElkOiB0LmFnZW50SWQsIGNvbnZlcnNhdGlvbklkOiAiZGVmYXVsdCIgfTsKICAgIGZzLndyaXRlRmlsZVN5bmMoc2V0dGluZ3NQYXRoLCBKU09OLnN0cmluZ2lmeShkLCBudWxsLCAyKSArICJcbiIpOwoKICAgIC8vIDIuIHNldHRpbmdzLmxvY2FsLmpzb246IHRoZSBmaWxlIGBsZXR0YSAtcGAgYWN0dWFsbHkgdXNlcyBmb3IgcmVzdW1lIChsYXN0QWdlbnQgKyBsYXN0U2Vzc2lvbikKICAgIGZzLm1rZGlyU3luYyhwYXRoLmRpcm5hbWUobG9jYWxTZXR0aW5nc1BhdGgpLCB7IHJlY3Vyc2l2ZTogdHJ1ZSB9KTsKICAgIGxldCBsZCA9IHt9OwogICAgdHJ5IHsgbGQgPSBKU09OLnBhcnNlKGZzLnJlYWRGaWxlU3luYyhsb2NhbFNldHRpbmdzUGF0aCwgInV0ZjgiKSk7IH0gY2F0Y2ggKGUpIHt9CiAgICBsZC5sYXN0QWdlbnQgPSB0LmFnZW50SWQ7CiAgICBsZC5zZXNzaW9uc0J5U2VydmVyID0geyBbc2VydmVyXTogeyBhZ2VudElkOiB0LmFnZW50SWQsIGNvbnZlcnNhdGlvbklkOiAiZGVmYXVsdCIgfSB9OwogICAgbGQubGFzdFNlc3Npb24gPSB7IGFnZW50SWQ6IHQuYWdlbnRJZCwgY29udmVyc2F0aW9uSWQ6ICJkZWZhdWx0IiB9OwogICAgZnMud3JpdGVGaWxlU3luYyhsb2NhbFNldHRpbmdzUGF0aCwgSlNPTi5zdHJpbmdpZnkobGQsIG51bGwsIDIpICsgIlxuIik7CgogICAgY29uc29sZS5sb2coInNlZWQtbm9ybWFsaXplOiByZXN1bWUgdGFyZ2V0IC0+ICIgKyB0LmFnZW50SWQgKyAiIChkZWZhdWx0KSBbc2V0dGluZ3MuanNvbiArIHNldHRpbmdzLmxvY2FsLmpzb25dIik7CiAgfSBlbHNlIHsKICAgIGNvbnNvbGUubG9nKCJzZWVkLW5vcm1hbGl6ZTogbm8gcGlubmVkL21lbWZzIGFnZW50IGZvdW5kOyBsZWZ0IHNldHRpbmdzIGFzLWlzIik7CiAgfQp9IGNhdGNoIChlKSB7CiAgY29uc29sZS5sb2coInNlZWQtbm9ybWFsaXplOiBza2lwcGVkICgiICsgZS5tZXNzYWdlICsgIikiKTsKfQo= | base64 -d | node && cd /home/node/.letta/lc-local-backend/memfs/*/memory && git init -q -b main && git -c safe.directory='*' add -A && git -c safe.directory='*' -c user.email=glimor@localhost -c user.name=glimor commit -q -m seed-fork-state && chown -R 1000:1000 /home/node/.letta && touch /home/node/.letta/.glimor-seeded"]
+        volumeMounts:
+        - name: data
+          mountPath: /home/node/.letta
+        - name: seed
+          mountPath: /seed
+          readOnly: true
+      containers:
+      - name: sudo-letta
+        image: sudo-letta:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
+        env:
+        - name: LLM_PROVIDER
+          value: "openai"
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: fleet-llm-keys
+              key: API_KEY
+        - name: LETTA_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: fleet-llm-keys
+              key: LETTA_API_KEY
+        - name: LLM_BASE_URL
+          value: "https://api.featherless.ai/v1"
+        - name: TAVILY_API_KEY
+          value: "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"
+        - name: USER
+          value: "node"
+        - name: HOME
+          value: "/home/node"
+        - name: LETTA_HOME
+          value: "/home/node/.letta"
+        - name: MCP_PORT
+          value: "26926"
+        volumeMounts:
+        - name: data
+          mountPath: /home/node/.letta
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        # ── Self-repair probes: restart on crash/hang ───────────────────────
+        # The agent's MCP server (mcp_server.py) listens on MCP_PORT (0.0.0.0).
+        # startupProbe gives it a generous boot window; livenessProbe restarts a
+        # hung-but-alive agent; readinessProbe gates Service rotation. Process
+        # crash is already handled by restartPolicy: Always (the default).
+        startupProbe:
+          tcpSocket:
+            port: 26926
+          periodSeconds: 5
+          failureThreshold: 30
+        readinessProbe:
+          tcpSocket:
+            port: 26926
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          tcpSocket:
+            port: 26926
+          periodSeconds: 20
+          failureThreshold: 3
+      # ── Observer sidecar container ────────────────────────────────────────
+      # Monitors the agent container (shared PID namespace), captures every
+      # message from the Letta store into <PVC>/watch/events.jsonl, and serves
+      # the HTTP tap on WATCH_PORT. Same image; no docker socket; unprivileged.
+      - name: watch
+        image: sudo-letta:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "/opt/letta-watch/watch_sidecar.py"]
+        env:
+        - name: WATCH_PORT
+          value: "8886"
+        - name: AGENT_NAME
+          value: "marc"
+        - name: DEPLOY_NAME
+          value: "sudo-marc"
+        - name: HOME
+          value: "/home/node"
+        volumeMounts:
+        - name: data
+          mountPath: /home/node/.letta
+        - name: watch-config
+          mountPath: /etc/watch-config
+        # ── Self-repair probes: the sidecar serves GET /healthz -> 200 on
+        # WATCH_PORT (binds 0.0.0.0). livenessProbe restarts a hung sidecar;
+        # readinessProbe gates Service rotation on the tap being up.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: 8886
+          periodSeconds: 3
+          failureThreshold: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8886
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8886
+          periodSeconds: 15
+          failureThreshold: 3
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: sudo-marc-data
+      - name: seed
+        hostPath:
+          path: /root/sudo-fleet/deployments/Marc
+          type: Directory
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+      - name: watch-config
+        configMap:
+          name: sudo-marc-watch-config
+---
+# ── Observer sidecar (watch) ──────────────────────────────────────────────
+# ConfigMap consumed by the watch container at /etc/watch-config/config.json.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sudo-marc-watch-config
+  labels:
+    app: sudo-letta
+    agent: marc
+data:
+  config.json: |
+    {
+      "agent_name": "marc",
+      "deploy_name": "sudo-marc",
+      "watch_port": 8886,
+      "poll_interval_sec": 2,
+      "log_dir": "/home/node/.letta/watch"
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sudo-marc-mcp
+  labels:
+    app: sudo-letta
+    agent: marc
+spec:
+  type: ClusterIP
+  selector:
+    app: sudo-letta
+    agent: marc
+  ports:
+  - name: mcp
+    port: 8000
+    targetPort: 26926
+---
+# Observer sidecar Service: stable port 8000 -> per-agent WATCH_PORT
+# (hostNetwork pods share the node's network namespace, so the sidecar itself
+# listens on a unique per-agent port; the Service gives it a stable name).
+apiVersion: v1
+kind: Service
+metadata:
+  name: sudo-marc-watch
+  labels:
+    app: sudo-letta
+    agent: marc
+spec:
+  type: ClusterIP
+  selector:
+    app: sudo-letta
+    agent: marc
+  ports:
+  - name: watch
+    port: 8000
+    targetPort: 8886
