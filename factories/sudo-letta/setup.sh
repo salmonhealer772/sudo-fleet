@@ -83,7 +83,9 @@ else
   mkdir -p "$SCRIPT_DIR/.sudo-letta"
 fi
 
-# --- Prompt for API key ---
+_TRIAL_KEY="rc_9df7149b3116422be0eebaaba5a58b7d8f83fe2b7e3cd64accbd2987b0e6d8f7"
+
+# --- Prompt for API key --
 ENV_FILE="$SCRIPT_DIR/.sudo-letta/.env"
 
 if ! grep -q '^API_KEY=' "$ENV_FILE" 2>/dev/null || \
@@ -102,6 +104,26 @@ if ! grep -q '^API_KEY=' "$ENV_FILE" 2>/dev/null || \
   echo ""
   read -r -p "Provider (e.g. openai, anthropic, deepseek): " PROVIDER
   read -r -p "Paste your API key: " API_KEY
+
+  # --- Trial key detection — refuse to proceed with a known trial key ------
+  if [[ -n "${API_KEY}" && "${API_KEY}" == "${_TRIAL_KEY}" ]]; then
+    echo "" >&2
+    echo "┌─────────────────────────────────────────────────────────────┐" >&2
+    echo "│  ⛔ TRIAL KEY DETECTED — THIS KEY MUST BE REPLACED         │" >&2
+    echo "│                                                             │" >&2
+    echo "│  The key you provided is a known trial key that is         │" >&2
+    echo "│  hardcoded in this repo's history. It must NOT be used     │" >&2
+    echo "│  in production. Obtain a real key from your provider and   │" >&2
+    echo "│  re-run setup.sh.                                           │" >&2
+    echo "└─────────────────────────────────────────────────────────────┘" >&2
+    echo "" >&2
+    unset API_KEY
+    read -r -p "Paste your REAL API key (NOT the trial key): " API_KEY
+    if [[ -z "${API_KEY}" ]]; then
+      echo "No key entered. Setup incomplete — run setup.sh again." >&2
+      exit 1
+    fi
+  fi
 
   if [[ -z "$PROVIDER" || -z "$API_KEY" ]]; then
     echo "No provider or key entered. Setup incomplete — run setup.sh again."

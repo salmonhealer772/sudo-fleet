@@ -172,6 +172,8 @@ _write_env() {
   printf '%s\n' "$line" | $SUDO tee -a "$FLEET_ENV" >/dev/null
 }
 
+_TRIAL_KEY="rc_9df7149b3116422be0eebaaba5a58b7d8f83fe2b7e3cd64accbd2987b0e6d8f7"
+
 # --- (1) ONE key used by BOTH agents ------------------------------------------
 if [[ -n "${LLM_API_KEY:-}" ]]; then
   _KEY="${LLM_API_KEY}"
@@ -181,7 +183,24 @@ elif [[ -n "${DEEPSEEK_API_KEY:-}" || -n "${API_KEY:-}" ]]; then
   ok "LLM_API_KEY derived from existing key — reusing"
 else
   _KEY="$(_ask "LLM API key:")"
-  [[ -n "$_KEY" ]] || warn "LLM_API_KEY not provided — you can add it to $FLEET_ENV later."
+  [[ -n "${_KEY}" ]] || warn "LLM_API_KEY not provided — you can add it to $FLEET_ENV later."
+fi
+
+# --- Trial key detection — refuse to proceed with a known trial key ------
+if [[ -n "${_KEY}" && "${_KEY}" == "${_TRIAL_KEY}" ]]; then
+  echo "" >&2
+  echo "┌─────────────────────────────────────────────────────────────┐" >&2
+  echo "│  ⛔ TRIAL KEY DETECTED — THIS KEY MUST BE REPLACED         │" >&2
+  echo "│                                                             │" >&2
+  echo "│  The key you provided is a known trial key that is         │" >&2
+  echo "│  hardcoded in this repo's history. It must NOT be used     │" >&2
+  echo "│  in production. Obtain a real key from your provider and   │" >&2
+  echo "│  re-run setup.sh.                                           │" >&2
+  echo "└─────────────────────────────────────────────────────────────┘" >&2
+  echo "" >&2
+  unset _KEY
+  _KEY="$(_ask "LLM API key (real key, NOT the trial key):")"
+  [[ -n "${_KEY}" ]] || die "No key provided — aborting. Add a real key to $FLEET_ENV and re-run."
 fi
 
 # --- (2) LLM API URL — defaults to deepseek if left blank (plain) -------------
