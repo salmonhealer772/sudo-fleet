@@ -97,6 +97,21 @@ RUN chmod +x /opt/letta-mcp/mcp_entrypoint.sh && \
 # does not invalidate the cached image layers).
 COPY --chmod=0755 kube-scripts/rich_tap.py /opt/letta-watch/rich_tap.py
 
+# ---------------------------------------------------------------------------
+# Featherless routing for the built-in `deepseek` provider.
+# Featherless serves this model ONLY under its full id
+# (`deepseek-ai/DeepSeek-V4-Pro`; the short id `deepseek-v4-pro` returns 404),
+# while the Letta handle and the agent record stay `deepseek-v4-pro`. pi-ai
+# builds BOTH the model-registry key and the request-body `model` field from
+# `Model.id`, so this patch keeps the catalog KEY as the handle, sets `id` to
+# the Featherless wire id, adds a getModel case-insensitive basename fallback so
+# the handle still resolves, points baseUrl at Featherless, and clamps
+# maxTokens to Featherless's effective limit (30000, leaving 2768 tokens of headroom under the 32768 hard cap so prompts never overflow). Idempotent — safe to run
+# on every build. Details in kube-scripts/patch-featherless-deepseek.cjs.
+# ---------------------------------------------------------------------------
+COPY kube-scripts/patch-featherless-deepseek.cjs /opt/letta-patch/patch-featherless-deepseek.cjs
+RUN node /opt/letta-patch/patch-featherless-deepseek.cjs
+
 USER node
 
 WORKDIR /home/node/.letta
