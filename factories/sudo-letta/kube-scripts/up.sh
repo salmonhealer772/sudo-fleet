@@ -144,13 +144,22 @@ fi
 # var never did anything.
 
 # ── Generate YAML ──
-# Build env lines for YAML
+# Build env lines for YAML — API keys reference a per-deployment
+# Kubernetes Secret (created below from the fleet .env). The secret
+# keeps keys out of the Deployment manifest and out of `kubectl apply`
+# audit logs. Non-secret env vars are still inlined.
 ENV_YAML="        - name: LLM_PROVIDER
           value: \"${LLM_PROVIDER}\"
         - name: API_KEY
-          value: \"${API_KEY}\"
+          valueFrom:
+            secretKeyRef:
+              name: ${DEPLOY}-api-key
+              key: api-key
         - name: LETTA_API_KEY
-          value: \"${API_KEY}\""
+          valueFrom:
+            secretKeyRef:
+              name: ${DEPLOY}-api-key
+              key: api-key"
 [[ -n "${LLM_BASE_URL:-}" ]] && ENV_YAML+="
         - name: LLM_BASE_URL
           value: \"${LLM_BASE_URL}\""
@@ -212,6 +221,20 @@ if [[ -n "${GLIMOR_DIR:-}" ]]; then
 fi
 
 cat > "$YAML" <<YAMLEOF
+# Per-deployment API key Secret — created before the Deployment so
+# kubectl apply succeeds on the first run. The Secret is owned by
+# the same labels as the Deployment for consistent cleanup.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${DEPLOY}-api-key
+  labels:
+    app: sudo-letta
+    agent: $NAME
+type: Opaque
+data:
+  api-key: $(printf '%s' "${API_KEY}" | base64 -w0)
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

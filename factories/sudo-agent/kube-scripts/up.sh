@@ -558,6 +558,21 @@ if [[ -n "${GLIMOR_DIR:-}" ]]; then
           type: Directory"
 fi
 cat > "$YAML" <<YAMLEOF
+# Per-deployment API key Secret — created before the Deployment so
+# kubectl apply succeeds on the first run. The Secret is owned by
+# the same labels as the Deployment for consistent cleanup.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${DEPLOY}-api-key
+  labels:
+    app: sudo-agent
+    agent: $NAME
+type: Opaque
+data:
+  deepseek-api-key: $(printf '%s' "${KEY}" | base64 -w0)
+  llm-api-key: $(printf '%s' "${KEY}" | base64 -w0)
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -635,12 +650,18 @@ $SEED_INITCONTAINERS
           privileged: true
         env:
         - name: DEEPSEEK_API_KEY
-          value: "$KEY"
-        # Env var a custom_providers entry references via \`key_env\` — so a
+          valueFrom:
+            secretKeyRef:
+              name: ${DEPLOY}-api-key
+              key: deepseek-api-key
+        # Env var a custom_providers entry references via `key_env` — so a
         # Featherless/custom OpenAI-compatible endpoint's Bearer token resolves
-        # inside the pod without the key ever being written to config.yaml.
+        # inside the pod without the key ever being written into config.yaml.
         - name: LLM_API_KEY
-          value: "$KEY"
+          valueFrom:
+            secretKeyRef:
+              name: ${DEPLOY}-api-key
+              key: llm-api-key
         - name: SUDO_PASSWORD
           value: "$SUDO_PASS"
         - name: HERMES_YOLO_MODE
