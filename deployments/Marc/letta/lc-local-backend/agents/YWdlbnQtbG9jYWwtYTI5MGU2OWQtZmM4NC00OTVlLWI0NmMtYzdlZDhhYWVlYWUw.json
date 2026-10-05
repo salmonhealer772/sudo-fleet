@@ -15,6 +15,6 @@
     "provider_type": "openai-compatible",
     "parallel_tool_calls": true,
     "context_window_limit": 65536,
-    "max_tokens": 8192
+    "max_tokens": 16384
   }
 }
