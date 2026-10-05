@@ -75,27 +75,27 @@ RUN su node -c 'HOME=/home/node letta install npm:@letta-ai/web-search@0.1.0'
 RUN mkdir -p /.letta && chown -R node:node /.letta
 
 # Per-pod MCP server: a streamable-HTTP wrapper over letta-p's prompt logic.
-# letta_prompt.py is the single source of truth shared with kube-scripts/letta-p.py;
+# letta_prompt.py is the single source of truth shared with bin/letta-p.py;
 # mcp_server.py runs inside the pod and prompts THIS agent directly (no kubectl).
 # mcp_entrypoint.sh starts the MCP server and keeps the pod alive (the CMD below).
-COPY kube-scripts/letta_prompt.py /opt/letta-mcp/letta_prompt.py
-COPY kube-scripts/mcp_server.py /opt/letta-mcp/mcp_server.py
-COPY kube-scripts/mcp_entrypoint.sh /opt/letta-mcp/mcp_entrypoint.sh
+COPY bin/letta_prompt.py /opt/letta-mcp/letta_prompt.py
+COPY bin/mcp_server.py /opt/letta-mcp/mcp_server.py
+COPY bin/mcp_entrypoint.sh /opt/letta-mcp/mcp_entrypoint.sh
 # Observer sidecar daemon: monitors the agent container's processes, captures
 # every prompt/reply/thinking/tool event from the Letta message store into a
 # durable JSONL log on the agent PVC, and serves a live HTTP tap.
-COPY kube-scripts/watch_sidecar.py /opt/letta-watch/watch_sidecar.py
+COPY bin/watch_sidecar.py /opt/letta-watch/watch_sidecar.py
 RUN chmod +x /opt/letta-mcp/mcp_entrypoint.sh && \
     pip3 install --no-cache-dir --break-system-packages fastmcp==4.0.9 redis==5.2.1 && \
     chown -R node:node /opt/letta-mcp
 
 # Rich full-fidelity tap for stream.sh RICH mode: stdlib-only, read-only
 # file placed OUTSIDE the agent PVC mount (/home/node/.letta) so the PVC can
-# never shadow it. Driven only by kube-scripts/stream.sh via `kubectl exec -c
+# never shadow it. Driven only by bin/stream.sh via `kubectl exec -c
 # watch`; the watch sidecar is unaffected. Shipped exactly like
 # watch_sidecar.py (kept as its OWN layer, after the pip RUN, so adding it
 # does not invalidate the cached image layers).
-COPY --chmod=0755 kube-scripts/rich_tap.py /opt/letta-watch/rich_tap.py
+COPY --chmod=0755 bin/rich_tap.py /opt/letta-watch/rich_tap.py
 
 # ---------------------------------------------------------------------------
 # Featherless routing for the built-in `deepseek` provider.
@@ -107,9 +107,9 @@ COPY --chmod=0755 kube-scripts/rich_tap.py /opt/letta-watch/rich_tap.py
 # the Featherless wire id, adds a getModel case-insensitive basename fallback so
 # the handle still resolves, points baseUrl at Featherless, and clamps
 # maxTokens to Featherless's effective limit (30000, leaving 2768 tokens of headroom under the 32768 hard cap so prompts never overflow). Idempotent — safe to run
-# on every build. Details in kube-scripts/patch-featherless-deepseek.cjs.
+# on every build. Details in bin/patch-featherless-deepseek.cjs.
 # ---------------------------------------------------------------------------
-COPY kube-scripts/patch-featherless-deepseek.cjs /opt/letta-patch/patch-featherless-deepseek.cjs
+COPY bin/patch-featherless-deepseek.cjs /opt/letta-patch/patch-featherless-deepseek.cjs
 RUN node /opt/letta-patch/patch-featherless-deepseek.cjs
 
 USER node

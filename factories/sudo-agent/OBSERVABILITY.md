@@ -60,29 +60,29 @@ materializes on the first real prompt after the sidecar is deployed.
 # THE FIREHOSE (default): the whole runtime, live — every reasoning/answer
 # chunk, FULL tool args and FULL tool results, activity beats, housekeeping
 # turns, and the agent's own log lines, all in one feed
-bash kube-scripts/stream.sh --<name>
+bash bin/stream.sh --<name>
 
 # only the model's reasoning/thinking
-bash kube-scripts/stream.sh --<name> --thinking
+bash bin/stream.sh --<name> --thinking
 
 # only the answer text
-bash kube-scripts/stream.sh --<name> --answer
+bash bin/stream.sh --<name> --answer
 
 # trim the two noisiest lanes (both are ON by default)
-bash kube-scripts/stream.sh --<name> --no-logs
-bash kube-scripts/stream.sh --<name> --no-activity
+bash bin/stream.sh --<name> --no-logs
+bash bin/stream.sh --<name> --no-activity
 
 # also dump the full input context (system prompt, user message, role/size table)
-bash kube-scripts/stream.sh --<name> --context
+bash bin/stream.sh --<name> --context
 
 # the old state.db event tape (was the default before the token stream)
-bash kube-scripts/stream.sh --<name> --events
+bash bin/stream.sh --<name> --events
 
 # transcript mode: last 40 lines of the chat log, then follow
-bash kube-scripts/stream.sh --<name> -t
+bash bin/stream.sh --<name> -t
 
 # list agents
-bash kube-scripts/stream.sh --list
+bash bin/stream.sh --list
 ```
 
 Token mode renders each turn as a block — the console shows EVERYTHING the
@@ -291,7 +291,7 @@ Notes that matter operationally:
 * Reasoning deltas only flow when the agent's config sets
   `plugins.stream_reasoning_deltas: true`; `up.sh` writes that (plus
   `plugins.enabled: [sudo-watch-stream]`) into `config/<name>.yaml` via
-  `kube-scripts/watch_plugin_enable.py` — a surgical text edit, so
+  `bin/watch_plugin_enable.py` — a surgical text edit, so
   operator-authored comments and settings survive, and the result is re-parsed
   before it replaces the file.
 * Plugin discovery path is `<HERMES_HOME>/plugins/<key>/`, i.e.
@@ -351,7 +351,7 @@ prompt at a time (never concurrent, never dropped).
   the matching `REDIS_URL`). It runs `hostNetwork: true` bound to the node's
   loopback because every agent pod is hostNetwork too — a hostNetwork pod gets
   the NODE resolver, not cluster DNS, so a Service name never resolves.
-  Provisioned by `kube-scripts/redis-up.sh` (idempotent; run by `up.sh` and
+  Provisioned by `bin/redis-up.sh` (idempotent; run by `up.sh` and
   `setup.sh`). Its port is NODE-GLOBAL: Hermes owns **6380**, `sudo-letta-redis`
   owns **6379**; `redis-up.sh` preflights and aborts loudly on a foreign owner.
 - **Durability**: PVC `sudo-agent-redis-data` with AOF on
@@ -409,8 +409,8 @@ id) are the authoritative one-at-a-time evidence — see the `results` array of
   command (`hermes` image has no CMD) — the daemon script ships via the
   `sudo-<name>-watch-config` ConfigMap; the plugin ships via
   `sudo-<name>-watch-plugin`.
-- Daemon: `kube-scripts/watch_sidecar.py` — stdlib only.
-  Plugin: `kube-scripts/watch_plugin/__init__.py` — stdlib only, every
+- Daemon: `bin/watch_sidecar.py` — stdlib only.
+  Plugin: `bin/watch_plugin/__init__.py` — stdlib only, every
   callback wrapped in try/except, writer on its own thread.
 - To check a live agent's tap without stream.sh:
   `kubectl exec deploy/sudo-<name> -c watch -- curl -s localhost:<WATCH_PORT>/status`
@@ -493,7 +493,7 @@ id) are the authoritative one-at-a-time evidence — see the `results` array of
 
 The prompt-distributor queue is backed by the shared `sudo-agent-redis`
 (`REDIS_URL=redis://127.0.0.1:6380/0`, injected by `up.sh`), deployed by
-`kube-scripts/redis-up.sh` with its own PVC and AOF persistence on — the queue
+`bin/redis-up.sh` with its own PVC and AOF persistence on — the queue
 survives agent pod recreation AND redis pod recreation. It runs
 `hostNetwork: true` because a hostNetwork agent pod has no cluster DNS (see
 DESIGN.md), so it is reached on the NODE's loopback, never by Service name.

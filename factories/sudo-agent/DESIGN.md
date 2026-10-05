@@ -4,15 +4,15 @@
 
 One command. Hermes Agent on DeepSeek — contained in Docker. Multiple agents by name, each isolated in its own container with full privileged root access and zero host escape.
 
-## Deploy path — use `kube-scripts/`
+## Deploy path — use `bin/`
 
 | Path | Status | What you get |
 |---|---|---|
-| `kube-scripts/` | **The real path** (k3s) | Per-agent MCP service, prompt-distributor queue on a shared Redis, observer (watch) sidecar, `stream.sh`, `hermes-p.py` |
+| `bin/` | **The real path** (k3s) | Per-agent MCP service, prompt-distributor queue on a shared Redis, observer (watch) sidecar, `stream.sh`, `hermes-p.py` |
 
-`setup.sh` builds the image. Everything else you want lives in `kube-scripts/`.
+`setup.sh` builds the image. Everything else you want lives in `bin/`.
 
-## Scripts (`kube-scripts/`)
+## Scripts (`bin/`)
 
 | Script | What | Notes |
 |---|---|---|
@@ -86,7 +86,7 @@ namespace. Three consequences are load-bearing:
    Hermes fleet owns **6380**. `redis-up.sh` preflights the port and aborts
    loudly if anything other than this deployment's own Redis holds it, rather
    than crashlooping. If the two fleets are ever to share one port, the Letta
-   fleet is the one that must move — see the header of `kube-scripts/redis-up.sh`.
+   fleet is the one that must move — see the header of `bin/redis-up.sh`.
 
 ## Design rule: whole-runtime observability (read before touching the watch surface)
 
@@ -96,7 +96,7 @@ COMPLETE. No partial row exists while the model streams, so "every word the
 agent thinks, in real time" is impossible from the DB by construction — not a
 matter of polling faster.
 
-1. **The tap is a Hermes plugin, not a poller.** `kube-scripts/watch_plugin/`
+1. **The tap is a Hermes plugin, not a poller.** `bin/watch_plugin/`
    registers callbacks on Hermes' native hooks
    (`on_stream_start` / `on_stream_delta` / `on_stream_end` /
    `pre_api_request` / `post_api_request` / `pre_tool_call` /
@@ -196,7 +196,7 @@ cross-agent routing.
   `hermes_queue_status()` — in-flight + pending queue + recent results.
   `hermes -z` is stateless per invocation, so there is no conversation resume.
   `--stream` / `--new-chat` are CLI-parity no-ops and are not tool params.
-- **Single source of truth**: `kube-scripts/hermes_prompt.py` holds the hermes
+- **Single source of truth**: `bin/hermes_prompt.py` holds the hermes
   `-z` command construction, the JSON pass-through formatting, and the host-side
   agent listing / name resolution. Both `hermes-p.py` (host CLI) and
   `mcp_server.py` (in-pod MCP) import it.

@@ -7,7 +7,7 @@ The three comm-tool mod packages an agent is born with:
 - `check-agent/`    -> `@letta-ai/check-agent`    (tool `check_agent`)
 - `keyboard-mac/`   -> `@letta-ai/keyboard-mac`   (tool `keyboard_mode`)
 
-These are installed at deploy time by `kube-scripts/up.sh` (see the `NPM_MODS` /
+These are installed at deploy time by `bin/up.sh` (see the `NPM_MODS` /
 `COMM_MODS` block) via `kubectl cp` + `letta install <path>`, and verified at
 their exact pinned version the same way the official npm mods are.
 

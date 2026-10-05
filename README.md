@@ -1,9 +1,9 @@
 # sudo-fleet
 
-A disposable room you stand up anywhere: saved agents are pulled in, talk to each other, and survive the room's destruction. The full spec lives in `SPEC.md`.
+A disposable room you stand up anywhere: saved agents are pulled in, talk to each other, and survive the room's destruction. The full spec lives in [`docs/SPEC.md`](docs/SPEC.md).
 
 **Next direction (2026-10-01):** [multiple independent project fleets in one
-cluster](NEXT.md), with namespace-scoped agents/state and fleet pause/resume.
+cluster](docs/NEXT.md), with namespace-scoped agents/state and fleet pause/resume.
 An optional shared-services namespace is under consideration. This is the next
 planned capability, not something the current setup commands already implement.
 
@@ -74,7 +74,7 @@ API keys in the repo — use a placeholder such as `<LLM_API_KEY>`.
 **Command 2 — bring up the cluster + stand up Marc + Caesar:**
 
 ```bash
-cd kube-scripts && bash k8s-up.sh
+cd bin && bash k8s-up.sh
 ```
 
 This deploys `sudo-marc` (Letta planner) and `sudo-caesar` (Hermes engineer),
@@ -88,9 +88,9 @@ and they diverge independently from there.
 sudo-fleet/
 ├── setup.sh              # Command 1 — prompt keys, docker+k3s, build images from factories/
 ├── README.md
-├── SPEC.md
+├── docs/                 # spec + status + plans (SPEC, KNOWN-ISSUES, NEXT, …)
 ├── .gitignore
-├── down.sh               # thin pointer -> kube-scripts/k8s-down.sh
+├── down.sh               # thin pointer -> bin/k8s-down.sh
 ├── .env                  # your keys (gitignored, written by setup.sh)
 ├── factories/            # the two default agent factories (in-repo)
 │   ├── sudo-agent/       # Hermes engineer factory
@@ -98,7 +98,7 @@ sudo-fleet/
 ├── deployments/          # committed glimors (the router pair's identity)
 │   ├── Marc/             # Letta planner (renamed from psnvc)
 │   └── Caesar/           # Hermes engineer (renamed from forge)
-└── kube-scripts/
+└── bin/
     ├── k8s-up.sh         # Command 2 — deploy Marc + Caesar, seed from committed glimors
     └── k8s-down.sh       # stop / purge / teardown
 ```
@@ -108,10 +108,14 @@ sudo-fleet/
 A **glimor** is a committed snapshot of one agent's full resumable state, stored
 under `sudo-fleet/deployments/`:
 
-- `deployments/Marc/`   — the Letta planner (renamed from psnvc): the agent
-  record + its memfs brain + `settings.json`, scrubbed for the public repo.
+- `deployments/Marc/`   — the Letta planner (renamed from psnvc): its identity
+  files (`name`, `kind`, `meta.yaml`, `allowlist.txt`, `settings.json`),
+  scrubbed for the public repo. Its regenerable state (the `memfs` brain, agent
+  records, sessions) is NOT committed — a fresh box seeds the identity and lets
+  the agent rebuild its working state.
 - `deployments/Caesar/` — the Hermes engineer (renamed from forge): `SOUL.md` +
-  `config.yaml` + `state.db` + `.hermes_history` + `.local/`, scrubbed.
+  `config.yaml` + `name`/`kind`/`meta.yaml`/`allowlist.txt`, scrubbed. Live
+  state (`state.db`, `.hermes_history`, `.local/`) is NOT committed.
 
 They are **committed** (not gitignored), so a fresh box gets them with the repo.
 `k8s-up.sh` passes each to the factory `up.sh --from-glimor <dir>`; the factory
@@ -135,18 +139,18 @@ block. Two mechanisms make them stick:
   (Hermes) / `system/persona.md` (Letta) on EVERY boot, between fixed BEGIN/END
   markers, so an agent can't permanently lose or stale its fleet awareness.
 
-The full contract is in `SPEC.md` ("Native cross-agent communication"); the
-known gaps are in `KNOWN-ISSUES.md`.
+The full contract is in `docs/SPEC.md` ("Native cross-agent communication"); the
+known gaps are in `docs/KNOWN-ISSUES.md`.
 
 ## Tear down
 
 ```bash
-cd kube-scripts && bash k8s-down.sh                 # stop agents, PRESERVE PVCs (state)
-cd kube-scripts && bash k8s-down.sh --purge          # also delete PVCs
-cd kube-scripts && bash k8s-down.sh --teardown-k3s   # uninstall k3s too
+cd bin && bash k8s-down.sh                 # stop agents, PRESERVE PVCs (state)
+cd bin && bash k8s-down.sh --purge          # also delete PVCs
+cd bin && bash k8s-down.sh --teardown-k3s   # uninstall k3s too
 ```
 
-(The repo-root `down.sh` is a thin pointer to `kube-scripts/k8s-down.sh`.)
+(The repo-root `down.sh` is a thin pointer to `bin/k8s-down.sh`.)
 
 ## Durable cluster (comes back on its own)
 
@@ -161,7 +165,7 @@ cluster is durable:
   local-only image.
 - **Everything up.sh created is recreated on boot** — `setup.sh` installs a
   oneshot systemd unit (`sudo-fleet-boot.service`) that runs
-  `kube-scripts/k8s-auto-up.sh` on every boot: it waits for k3s to be Ready,
+  `bin/k8s-auto-up.sh` on every boot: it waits for k3s to be Ready,
   re-imports any missing images, and re-runs the idempotent bring-up.
 - **Pods restart themselves on crash/hang** — every agent and watch container
   ships a `startupProbe` + `readinessProbe` + `livenessProbe`, so a crashed or

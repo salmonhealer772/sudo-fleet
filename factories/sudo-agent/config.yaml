@@ -22,7 +22,7 @@ model:
 # setup.sh appends a block in exactly this shape when LLM_BASE_URL is custom.
 # The key is referenced by ENV VAR NAME (key_env) — never embed a real key in a
 # committed file. The referenced env var is injected into the pod by
-# kube-scripts/up.sh.
+# bin/up.sh.
 # custom_providers:
 #   - name: featherless
 #     base_url: "https://api.featherless.ai/v1"

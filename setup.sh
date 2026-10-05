@@ -12,7 +12,7 @@ set -euo pipefail
 #     git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet && bash setup.sh
 #
 #   Command 2:
-#     cd kube-scripts && bash k8s-up.sh
+#     cd bin && bash k8s-up.sh
 #
 # Everything this script creates lives INSIDE the single `sudo-fleet/` folder
 # (the repo root = FLEET_HOME). No siblings, nothing outside it.
@@ -427,7 +427,7 @@ printf '%s\n%s\n%s\n' "$LLM_PROVIDER" "$API_KEY" "${LLM_BASE_URL:-}" \
 # restart with zero manual commands. This is NOT a third command — it runs
 # automatically; the operator contract stays "two commands".
 step "Durability (auto bring-up on boot)"
-AUTO_UP="$FLEET_HOME/kube-scripts/k8s-auto-up.sh"
+AUTO_UP="$FLEET_HOME/bin/k8s-auto-up.sh"
 BOOT_UNIT="/etc/systemd/system/sudo-fleet-boot.service"
 if [[ -f "$AUTO_UP" ]]; then
   $SUDO tee "$BOOT_UNIT" >/dev/null <<UNIT
@@ -467,4 +467,4 @@ echo ""
 ok "Bootstrap complete (docker + k3s + repos + images)."
 echo ""
 echo "Next — bring up the cluster and stand up Marc + Caesar:"
-echo "    cd $FLEET_HOME/kube-scripts && bash k8s-up.sh"
+echo "    cd $FLEET_HOME/bin && bash k8s-up.sh"

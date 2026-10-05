@@ -20,20 +20,20 @@ bash setup.sh              # builds image, asks for API key once
 ```
 
 ```bash
-bash kube-scripts/up.sh --alice      # create or restart "alice" (generates sudo password)
-bash kube-scripts/talk.sh --alice   # talk to "alice" (opens Letta Code TUI)
-bash kube-scripts/ssh.sh --alice     # root shell — no password needed
-bash kube-scripts/down.sh --alice    # stop "alice" (memory persists)
-bash kube-scripts/rm-containers.sh --ALL  # kill all sudo-* containers
+bash bin/up.sh --alice      # create or restart "alice" (generates sudo password)
+bash bin/talk.sh --alice   # talk to "alice" (opens Letta Code TUI)
+bash bin/ssh.sh --alice     # root shell — no password needed
+bash bin/down.sh --alice    # stop "alice" (memory persists)
+bash bin/rm-containers.sh --ALL  # kill all sudo-* containers
 ```
 
 Multiple agents:
 
 ```bash
-bash kube-scripts/up.sh --alice
-bash kube-scripts/up.sh --bob
-bash kube-scripts/talk.sh --alice   # talks to alice
-bash kube-scripts/talk.sh --bob     # talks to bob
+bash bin/up.sh --alice
+bash bin/up.sh --bob
+bash bin/talk.sh --alice   # talks to alice
+bash bin/talk.sh --bob     # talks to bob
 ```
 
 Each name → own container, own volume, own memory, own sudo.
@@ -94,7 +94,7 @@ flags and nothing more. It is fronted by a Kubernetes Service named
   listens on a unique per-agent port (auto-derived from the agent name) because
   every sudo-letta pod runs `hostNetwork: true` and a fixed port would collide.
 - **Not exposed**: `--list` / cross-agent name resolution — that requires
-  `kubectl`/kubeconfig and remains host-side (`kube-scripts/letta-p.py --list`).
+  `kubectl`/kubeconfig and remains host-side (`bin/letta-p.py --list`).
 
 ## Stack
 
@@ -104,11 +104,11 @@ flags and nothing more. It is fronted by a Kubernetes Service named
 
 ## Observer sidecar (every pod)
 
-Every sudo-letta pod ships a second container, `watch`, that runs the observer-sidecar daemon (`kube-scripts/watch_sidecar.py`) alongside the agent:
+Every sudo-letta pod ships a second container, `watch`, that runs the observer-sidecar daemon (`bin/watch_sidecar.py`) alongside the agent:
 
 - **Monitors** the agent container: is it up, what processes are running, and idle<->active transitions (a process is letta activity if its cmdline references letta). The pod runs `shareProcessNamespace: true`, so the sidecar sees the agent container's processes (PID 1 is the pause container; the agent CMD is unaffected).
 - **Captures** everything the agent does — every prompt in, every reply out, all reasoning, every tool call + result — into `events.jsonl` on the agent PVC (`/home/node/.letta/watch/events.jsonl`), tailed from the Letta message store with persisted byte-offset watermarks.
-- **Writes a plain-text transcript** — `transcript.txt` (same dir): a human-readable chat log of ONLY real user prompts and agent replies (thinking, tool calls/results, sessions, and system-reminder plumbing are excluded). Format: `[YYYY-MM-DD HH:MM:SS] You: ...` / `... Agent: ...`, blank line between exchanges, a `--- conversation: <id> ---` divider when the conversation switches. Appends only (tail -f friendly); no backfill of pre-existing events — it starts from deployment time. `/status` reports its size as `transcript_bytes`. Read it live with `bash kube-scripts/stream.sh --<name> --transcript` (last 40 lines + live follow, no pretty-printer).
+- **Writes a plain-text transcript** — `transcript.txt` (same dir): a human-readable chat log of ONLY real user prompts and agent replies (thinking, tool calls/results, sessions, and system-reminder plumbing are excluded). Format: `[YYYY-MM-DD HH:MM:SS] You: ...` / `... Agent: ...`, blank line between exchanges, a `--- conversation: <id> ---` divider when the conversation switches. Appends only (tail -f friendly); no backfill of pre-existing events — it starts from deployment time. `/status` reports its size as `transcript_bytes`. Read it live with `bash bin/stream.sh --<name> --transcript` (last 40 lines + live follow, no pretty-printer).
 - **Serves a live HTTP tap** so an operator can watch an agent's stream of consciousness in real time:
   - `GET /healthz` — liveness
   - `GET /status` — JSON: {agent, deploy, uptime_s, agent_container_up, active, current_conversation, last_event_ts, events_logged, watch_port}
@@ -121,10 +121,10 @@ Every sudo-letta pod ships a second container, `watch`, that runs the observer-s
   `kubectl exec deploy/sudo-<name> -c watch -- tail -f /home/node/.letta/watch/events.jsonl`
   and from the node: `curl http://$(kubectl get svc sudo-<name>-watch -o jsonpath='{.spec.clusterIP}'):8000/stream`
 - **Easiest tap — `stream.sh`** (from the host, one command):
-  `bash kube-scripts/stream.sh --<name>`
+  `bash bin/stream.sh --<name>`
   It finds the agent, picks /stream, and pretty-prints events live. Example output:
   ```
-  $ bash kube-scripts/stream.sh --ya-glm-l
+  $ bash bin/stream.sh --ya-glm-l
   [sudo-ya-glm-l] tapping http://10.43.145.217:8000/stream
   12:04:11 thinking  let me check the watch service...
   12:04:14 tool_call  bash {"cmd": "kubectl get svc"}
@@ -136,7 +136,7 @@ Every sudo-letta pod ships a second container, `watch`, that runs the observer-s
 
 Day-to-day commands for watching a sudo-letta agent (run from the host; get the clusterIP first):
 
-- **Daily driver**: `bash kube-scripts/stream.sh --<name>` — live pretty-printed event tap via `/stream`.
+- **Daily driver**: `bash bin/stream.sh --<name>` — live pretty-printed event tap via `/stream`.
 - **Fallback (raw JSONL)**: `kubectl exec deploy/sudo-<name> -c watch -- tail -f /home/node/.letta/watch/events.jsonl`
 - **Port-forward variant**: `kubectl port-forward svc/sudo-<name>-watch 8000:8000` then `curl -N http://localhost:8000/stream` (the `-N` disables buffering so events appear live).
 - **One-shot status/ps/events** (clusterIP first: `kubectl get svc sudo-<name>-watch -o jsonpath='{.spec.clusterIP}'`):
@@ -182,14 +182,14 @@ empty and no `web_search`, even though the mod is installed. `up.sh` now
 auto-normalizes on every deploy: ghost records are removed (the pinned
 `memfs:true` record and `sessionsByServer` are kept, a backup goes to
 `settings.json.bak-ghosts`). For pods you don't want to redeploy, run
-`bash kube-scripts/fix-agent-records.sh --<name>` (grep-style name resolution)
+`bash bin/fix-agent-records.sh --<name>` (grep-style name resolution)
 to do the same cleanup on demand.
 
 
 ### Prompt distributor (queue layer)
 
 `letta_prompt` on the per-pod MCP server is queue-driven: the prompt is
-enqueued in Redis (shared instance, `kube-scripts/redis.yaml`, applied
+enqueued in Redis (shared instance, `bin/redis.yaml`, applied
 automatically by `up.sh`) and a single drain worker feeds the agent ONE
 prompt at a time.
 

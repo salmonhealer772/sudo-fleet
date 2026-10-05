@@ -12,11 +12,11 @@
 - **MCP door + prompt distributor** — every pod serves an MCP endpoint whose prompts are serialized through a shared Redis queue (one at a time, per source).
 - **CLI in the container** — git, docker-cli, openssh, python, node, ripgrep, ffmpeg, Playwright. Full terminal.
 
-## Deploy path — use `kube-scripts/`
+## Deploy path — use `bin/`
 
 | Path | Status | What you get |
 |---|---|---|
-| `kube-scripts/` | **The real path** (k3s) | MCP service, prompt-distributor queue, observer sidecar, `stream.sh` |
+| `bin/` | **The real path** (k3s) | MCP service, prompt-distributor queue, observer sidecar, `stream.sh` |
 
 ## Quick Start
 
@@ -27,20 +27,20 @@ bash setup.sh              # builds the image, asks for DeepSeek API key once,
 ```
 
 ```bash
-bash kube-scripts/up.sh --alice      # create or restart "alice" (provisions the queue, generates sudo password)
-bash kube-scripts/talk.sh --alice    # talk to "alice"
-bash kube-scripts/ssh.sh --alice     # root shell
-bash kube-scripts/down.sh --alice    # stop "alice" (memory persists)
-bash kube-scripts/rm-containers.sh --ALL  # kill all sudo-* deployments
+bash bin/up.sh --alice      # create or restart "alice" (provisions the queue, generates sudo password)
+bash bin/talk.sh --alice    # talk to "alice"
+bash bin/ssh.sh --alice     # root shell
+bash bin/down.sh --alice    # stop "alice" (memory persists)
+bash bin/rm-containers.sh --ALL  # kill all sudo-* deployments
 ```
 
 Multiple agents:
 
 ```bash
-bash kube-scripts/up.sh --alice
-bash kube-scripts/up.sh --bob
-bash kube-scripts/talk.sh --alice    # talks to alice
-bash kube-scripts/talk.sh --bob      # talks to bob
+bash bin/up.sh --alice
+bash bin/up.sh --bob
+bash bin/talk.sh --alice    # talks to alice
+bash bin/talk.sh --bob      # talks to bob
 ```
 
 Each name → own deployment, own PVC, own memory, own sudo. Bring it down →
@@ -110,7 +110,7 @@ same functionality and nothing more. It is fronted by a Kubernetes Service named
   listens on a unique per-agent port (auto-derived from the agent name) because
   every sudo-agent pod runs `hostNetwork: true` and a fixed port would collide.
 - **Not exposed**: `--list` / cross-agent name resolution — that requires
-  `kubectl`/kubeconfig and remains host-side (`kube-scripts/hermes-p.py --list`).
+  `kubectl`/kubeconfig and remains host-side (`bin/hermes-p.py --list`).
   `--stream` / `--new-chat` are CLI-parity no-ops for `hermes -z` and are not
   MCP tool params.
 
@@ -118,7 +118,7 @@ same functionality and nothing more. It is fronted by a Kubernetes Service named
 
 The queue that serializes concurrent prompts lives in ONE Redis for the whole
 Hermes fleet: Deployment `sudo-agent-redis`, deployed by
-`bash kube-scripts/redis-up.sh` (`up.sh` and `setup.sh` run it for you — you
+`bash bin/redis-up.sh` (`up.sh` and `setup.sh` run it for you — you
 normally never call it directly).
 
 - **Reached as `redis://127.0.0.1:6380/0`** (`SUDO_AGENT_REDIS_PORT` overrides).
@@ -154,7 +154,7 @@ backing. See `DESIGN.md` for the full topology and the hostNetwork design rules.
 
 - **Never write "verified" in a commit message before the verification output
   exists; if a test runs after the commit, say so in a follow-up commit.**
-- Changing `kube-scripts/mcp_server.py`, `mcp_entrypoint.sh`, `hermes_prompt.py`,
+- Changing `bin/mcp_server.py`, `mcp_entrypoint.sh`, `hermes_prompt.py`,
   `Dockerfile` or `patch_memory_review.py` means the **image** must be rebuilt
   (`docker build -t sudo-agent:latest -f Dockerfile .`) before deploying;
   `up.sh` refuses to deploy `sudo-agent:latest` when the **content** of

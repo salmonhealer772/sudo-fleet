@@ -114,7 +114,7 @@ spec:
         # (mcp_entrypoint.sh starts a per-pod local Redis only when this is
         # unset — the offline fallback). NOT a Service name: a hostNetwork pod
         # gets the node resolver, not cluster DNS, so a Service name cannot
-        # resolve. See kube-scripts/redis-up.sh.
+        # resolve. See bin/redis-up.sh.
         - name: REDIS_URL
           value: redis://127.0.0.1:6380/0
 
@@ -259,7 +259,7 @@ data:
     #!/usr/bin/env python3
     """Observer sidecar for a sudo-agent (Hermes) pod.
     
-    Faithful port of sudo-letta's kube-scripts/watch_sidecar.py, adapted to the
+    Faithful port of sudo-letta's bin/watch_sidecar.py, adapted to the
     Hermes event source. On Hermes there is no append-only messages.jsonl to
     tail; instead the agent runtime durably writes every conversation turn to
     /opt/data/state.db (SQLite, WAL mode) on the data PVC. The byte-watermark
@@ -365,7 +365,7 @@ data:
         # sessions with a source in this set are treated as machine self-prompts
         # (reminder:true -> excluded from the transcript)
         "noisy_sources": ["cron", "subagent"],
-        # ── Token-level stream tap (written by kube-scripts/watch_plugin/) ──────
+        # ── Token-level stream tap (written by bin/watch_plugin/) ──────
         # The plugin is the only writer of stream.jsonl; the sidecar follows it
         # with its own persisted byte cursor (never backfills, exactly like the
         # messages.id cursor) to keep live stats for /status and to serve /stream.
@@ -453,7 +453,7 @@ data:
     
     
     def stream_path():
-        """The plugin's token-level tape (see kube-scripts/watch_plugin/)."""
+        """The plugin's token-level tape (see bin/watch_plugin/)."""
         return CONFIG["stream_file"] or os.path.join(CONFIG["log_dir"],
                                                      "stream.jsonl")
     
@@ -1345,7 +1345,7 @@ data:
     
     WHY THIS EXISTS
     ---------------
-    The observer sidecar (``kube-scripts/watch_sidecar.py``) polls the agent's
+    The observer sidecar (``bin/watch_sidecar.py``) polls the agent's
     SQLite store (``/opt/data/state.db``). Hermes only writes a message row when a
     turn is COMPLETE, so the sidecar can never show a token before the model has
     finished it — per-token granularity is impossible from state.db by
@@ -1356,7 +1356,7 @@ data:
         <HERMES_HOME>/watch/stream.jsonl
     
     one JSON object per line, as it happens. The sidecar tails that file (see its
-    ``/stream`` endpoint); ``kube-scripts/stream.sh`` reads it directly with
+    ``/stream`` endpoint); ``bin/stream.sh`` reads it directly with
     ``kubectl exec ... tail -f``.
     
     EVENT SCHEMA (all lines carry ``ts`` (epoch float) and a monotonic ``seq``)
