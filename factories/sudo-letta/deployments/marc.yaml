@@ -1,3 +1,17 @@
+# Per-deployment API key Secret — created before the Deployment so
+# kubectl apply succeeds on the first run. The Secret is owned by
+# the same labels as the Deployment for consistent cleanup.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sudo-marc-api-key
+  labels:
+    app: sudo-letta
+    agent: marc
+type: Opaque
+data:
+  api-key: bG9jYWwtdmxsbS1uby1hdXRo
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -42,11 +56,11 @@ spec:
       shareProcessNamespace: true
       hostNetwork: true
       securityContext:
-        supplementalGroups: [988]
+        supplementalGroups: [112]
       hostAliases:
       - ip: "127.0.0.1"
         hostnames:
-        - "vultr"
+        - "fabean"
       initContainers:
       - name: seed-glimor
         image: sudo-letta:latest
@@ -68,21 +82,24 @@ spec:
           privileged: true
         env:
         - name: LLM_PROVIDER
-          value: "openai"
+          value: "openai-compatible"
         - name: API_KEY
           valueFrom:
             secretKeyRef:
-              name: fleet-llm-keys
-              key: API_KEY
+              name: sudo-marc-api-key
+              key: api-key
         - name: LETTA_API_KEY
           valueFrom:
             secretKeyRef:
-              name: fleet-llm-keys
-              key: LETTA_API_KEY
+              name: sudo-marc-api-key
+              key: api-key
         - name: LLM_BASE_URL
-          value: "https://api.featherless.ai/v1"
+          value: "http://127.0.0.1:8000/v1"
         - name: TAVILY_API_KEY
-          value: "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"
+          valueFrom:
+            secretKeyRef:
+              name: sudo-marc-api-key
+              key: tavily-api-key
         - name: USER
           value: "node"
         - name: HOME
@@ -165,7 +182,7 @@ spec:
           claimName: sudo-marc-data
       - name: seed
         hostPath:
-          path: /root/sudo-fleet/deployments/Marc
+          path: /home/who/sudo-fleet/deployments/Marc
           type: Directory
       - name: docker-sock
         hostPath:

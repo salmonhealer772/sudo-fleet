@@ -1,3 +1,18 @@
+# Per-deployment API key Secret — created before the Deployment so
+# kubectl apply succeeds on the first run. The Secret is owned by
+# the same labels as the Deployment for consistent cleanup.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: sudo-caesar-api-key
+  labels:
+    app: sudo-agent
+    agent: caesar
+type: Opaque
+data:
+  deepseek-api-key: bG9jYWwtdmxsbS1uby1hdXRo
+  llm-api-key: bG9jYWwtdmxsbS1uby1hdXRo
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -55,13 +70,13 @@ spec:
         # real apply failure would also produce. Backticks here MUST stay
         # backslash-escaped; the manifest self-check after the heredoc is the
         # backstop that catches it if someone forgets.
-        sudo-agent/watch-scripts-sha: "14e16be7391c62f694e0f96692e37471fd0489dc9db2e3867e97032d096bad4d"
+        sudo-agent/watch-scripts-sha: "0ecc101de0c8cd46ddeab24283109573b5e8d6ff8dbada8f18f7921e3f14f80f"
         # Content digest of the sudo-agent IMAGE (see the image-digest note
         # above the manifest). Bumping it is the ONLY way an image-only change
         # rolls the pod: the tag is 'latest' and imagePullPolicy is
         # IfNotPresent, so without this annotation a rebuilt image would
         # silently keep running the old one in every live pod.
-        sudo-agent/image-sha: "sha256:1b0909554d10101998b9d15ec0d5d0c2e9854bec570361e1a836fb4a8e439ebe"
+        sudo-agent/image-sha: "sha256:1710bcbbf1d4b50d8954bfdd4b1d9862486e70ac000c501ce613e8a8fa4f44d3"
     spec:
       shareProcessNamespace: true
       hostNetwork: true
@@ -89,18 +104,23 @@ spec:
         - name: DEEPSEEK_API_KEY
           valueFrom:
             secretKeyRef:
-              name: fleet-llm-keys
-              key: DEEPSEEK_API_KEY
+              name: sudo-caesar-api-key
+              key: deepseek-api-key
         # Env var a custom_providers entry references via `key_env` — so a
         # Featherless/custom OpenAI-compatible endpoint's Bearer token resolves
-        # inside the pod without the key ever being written to config.yaml.
+        # inside the pod without the key ever being written into config.yaml.
         - name: LLM_API_KEY
           valueFrom:
             secretKeyRef:
-              name: fleet-llm-keys
-              key: LLM_API_KEY
+              name: sudo-caesar-api-key
+              key: llm-api-key
+        - name: TAVILY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: sudo-caesar-api-key
+              key: tavily-api-key
         - name: SUDO_PASSWORD
-          value: "z36YOrj6H5wWyHsz"
+          value: "svzJIMh8nEvJCQu6"
         - name: HERMES_YOLO_MODE
           value: "true"
         - name: MCP_PORT
@@ -220,11 +240,11 @@ spec:
           claimName: sudo-caesar-data
       - name: seed
         hostPath:
-          path: /root/sudo-fleet/deployments/Caesar
+          path: /home/who/sudo-fleet/deployments/Caesar
           type: Directory
       - name: config
         hostPath:
-          path: /root/sudo-fleet/factories/sudo-agent/config/caesar.yaml
+          path: /home/who/sudo-fleet/factories/sudo-agent/config/caesar.yaml
           type: File
       - name: docker-sock
         hostPath:
