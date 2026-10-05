@@ -1,0 +1,26 @@
+{
+  "tokenStreaming": true,
+  "preferredBackendMode": "local",
+  "globalSharedBlockIds": {},
+  "permissions": {
+    "bash": "allow",
+    "read": "allow",
+    "write": "allow"
+  },
+  "autoConversationTitles": false,
+  "agents": [
+    {
+      "agentId": "agent-local-7c00bb99-a606-4cb4-91c6-b3f42112ff82",
+      "baseUrl": "local:/home/node/.letta/lc-local-backend",
+      "systemPromptPreset": "default",
+      "pinned": true,
+      "memfs": true
+    }
+  ],
+  "sessionsByServer": {
+    "local:/home/node/.letta/lc-local-backend": {
+      "agentId": "agent-local-7c00bb99-a606-4cb4-91c6-b3f42112ff82",
+      "conversationId": "default"
+    }
+  }
+}
