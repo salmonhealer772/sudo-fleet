@@ -604,20 +604,14 @@ if cmd == "selftest" {
     exit(0)
 }
 
-// Install SIGINT/SIGTERM handlers via DispatchSource (safe: runs on a dispatch
-// queue, not in async-signal context). requestStop() sets a flag; the background
-// frame loop notices it, restores colour, and exits.
-var stopRequested = false
-let stopLock = NSLock()
-func requestStop() { stopLock.lock(); stopRequested = true; stopLock.unlock() }
-func isStopping() -> Bool { stopLock.lock(); defer { stopLock.unlock() }; return stopRequested }
-
-let sigintSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
-sigintSrc.setEventHandler { requestStop() }
-sigintSrc.resume()
-let sigtermSrc = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
-sigtermSrc.setEventHandler { requestStop() }
-sigtermSrc.resume()
+// Async-signal-safe stop flag. The signal handler only sets this sig_atomic_t
+// (a plain write is async-signal-safe); the background frame loop polls it and
+// restores the colour before exiting. signal()+sig_atomic_t is bulletproof where
+// DispatchSource signal sources proved flaky for SIGTERM.
+var g_stop: sig_atomic_t = 0
+func handleStopSignal(_ sig: Int32) { g_stop = 1 }
+signal(SIGINT, handleStopSignal)
+signal(SIGTERM, handleStopSignal)
 
 // Final colour to leave on the board as we exit (idle for ripple, colour for solid, black for off/map).
 let finalColors: [UInt8]
@@ -638,7 +632,7 @@ DispatchQueue.global(qos: .userInteractive).async {
         print("map mode: lighting each LED one at a time (Ctrl+C to stop).")
         if mapAutoMs > 0 { print("auto-advance every \(mapAutoMs) ms") } else { print("press any key to advance") }
         var i = 0
-        while !isStopping() {
+        while g_stop == 0 {
             var cols = [UInt8](repeating: 0, count: LED_COUNT * 3)
             cols[i*3] = 255; cols[i*3+1] = 255; cols[i*3+2] = 255
             _ = sendFrame(rgbDev, cols)
@@ -648,7 +642,7 @@ DispatchQueue.global(qos: .userInteractive).async {
                 usleep(useconds_t(mapAutoMs * 1000))
             } else {
                 stateLock.lock(); keyAdvance = false; stateLock.unlock()
-                while !isStopping() {
+                while g_stop == 0 {
                     stateLock.lock(); let adv = keyAdvance; stateLock.unlock()
                     if adv { break }
                     usleep(10_000)
@@ -667,7 +661,7 @@ DispatchQueue.global(qos: .userInteractive).async {
           "ripple \(r) \(g) \(b) @ \(fps) fps (Ctrl+C to stop)")
 
     var lastFrame = now()
-    while !isStopping() {
+    while g_stop == 0 {
         let t = now()
         let colors: [UInt8]
         if cmd == "ripple" {
