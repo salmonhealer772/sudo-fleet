@@ -4,17 +4,17 @@
 
 One command. Letta Code on any API — contained in Docker. Multiple agents by name, each isolated in its own container with full root access and zero host escape.
 
-## Scripts (`kube-scripts/`)
+## Scripts (`bin/`)
 
 | Script | What | Notes |
 |---|---|---|
 | `setup.sh` | One-time: builds Docker image, prompts for API key | Run once per machine |
-| `kube-scripts/up.sh --name` | Create or restart `sudo-{name}` container | Generates sudo password on first run |
-| `kube-scripts/talk.sh --name` | `docker exec -it sudo-{name} letta --resume` | Talks to the agent |
-| `kube-scripts/ssh.sh --name` | `docker exec -it sudo-{name} bash` | Root shell |
-| `kube-scripts/down.sh --name` | Stop `sudo-{name}`, volume persists | Memory survives |
-| `kube-scripts/rm-containers.sh --name` | Force-remove one container | — |
-| `kube-scripts/rm-containers.sh --ALL` | Force-remove **all** `sudo-*` containers | Nuke button |
+| `bin/up.sh --name` | Create or restart `sudo-{name}` container | Generates sudo password on first run |
+| `bin/talk.sh --name` | `docker exec -it sudo-{name} letta --resume` | Talks to the agent |
+| `bin/ssh.sh --name` | `docker exec -it sudo-{name} bash` | Root shell |
+| `bin/down.sh --name` | Stop `sudo-{name}`, volume persists | Memory survives |
+| `bin/rm-containers.sh --name` | Force-remove one container | — |
+| `bin/rm-containers.sh --ALL` | Force-remove **all** `sudo-*` containers | Nuke button |
 
 ## Naming
 
@@ -59,7 +59,7 @@ pod's own agent directly — no kubectl, no kubeconfig, no cross-agent routing.
   a 1:1 mapping of letta-p.py's flags (prompt / `--stream` / `--json` /
   `--new-chat`). Default resumes the persisted conversation; `new_chat` forces a
   fresh one.
-- **Single source of truth**: `kube-scripts/letta_prompt.py` holds the letta
+- **Single source of truth**: `bin/letta_prompt.py` holds the letta
   command construction, resume logic, settings.json conversationId parsing,
   stream-json delta parsing, and json-output parsing. Both `letta-p.py` (host
   CLI) and `mcp_server.py` (in-pod MCP) import it.
@@ -76,7 +76,7 @@ Letta Code by Letta AI (TypeScript, Apache license). Docker. Alpine/busybox for 
 
 ## Observer sidecar
 
-Each `sudo-{name}` pod also runs a second container `watch` (image `sudo-letta:latest` — same image; `kube-scripts/watch_sidecar.py` baked in at `/opt/letta-watch/`). It has three jobs:
+Each `sudo-{name}` pod also runs a second container `watch` (image `sudo-letta:latest` — same image; `bin/watch_sidecar.py` baked in at `/opt/letta-watch/`). It has three jobs:
 
 1. **Process monitor** — polls `/proc` every `poll_interval_sec` (default 2s). Because the pod spec sets `shareProcessNamespace: true`, the sidecar sees the agent container's processes (PID 1 is the pause container; excluded, along with the sidecar's own pid tree). A process counts as letta activity when its cmdline references letta; idle<->active transitions append a `process_state` event. `agent_container_up` = any other non-self, non-pause process visible.
 2. **Capture** — tail-follows every `/home/node/.letta/lc-local-backend/conversations/*/messages.jsonl` with byte-offset watermarks persisted in `<log_dir>/state.json`. A shrunk file (recreate/rotation) resets its watermark; only complete lines are parsed (a partial trailing line is buffered). Records are normalized into the event schema and appended to `<log_dir>/events.jsonl`.
@@ -112,7 +112,7 @@ described in a follow-up commit, not in the original message.
 ## Prompt Distributor (queue layer)
 
 Between the agent's MCP door and the agent's brain sits a Redis-backed queue
-(inside `kube-scripts/mcp_server.py`; deployed Redis: `kube-scripts/redis.yaml`,
+(inside `bin/mcp_server.py`; deployed Redis: `bin/redis.yaml`,
 one shared instance per cluster, reachable from every hostNetwork agent pod at
 `redis://127.0.0.1:6379/0`, overridable via `REDIS_URL`).
 

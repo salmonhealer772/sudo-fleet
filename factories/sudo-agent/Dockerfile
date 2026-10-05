@@ -32,7 +32,7 @@ RUN . /opt/hermes/.venv/bin/activate && uv pip install ddgs
 
 # Per-pod MCP server: a streamable-HTTP wrapper over hermes-p's prompt logic.
 # hermes_prompt.py is the single source of truth shared with
-# kube-scripts/hermes-p.py; mcp_server.py runs inside the pod and prompts THIS
+# bin/hermes-p.py; mcp_server.py runs inside the pod and prompts THIS
 # agent directly (no kubectl); mcp_entrypoint.sh (the ENTRYPOINT below) starts
 # the MCP server in the background and then execs the base image's entrypoint,
 # so `gateway run` still runs as the pod's main process under s6-overlay.
@@ -44,9 +44,9 @@ RUN . /opt/hermes/.venv/bin/activate && uv pip install --exclude-newer 2026-12-3
 # Prompt-distributor queue: redis-py client (the per-pod redis-server
 # binary itself is apt-installed above; started by mcp_entrypoint.sh).
 RUN . /opt/hermes/.venv/bin/activate && uv pip install redis
-COPY kube-scripts/hermes_prompt.py /opt/hermes-mcp/hermes_prompt.py
-COPY kube-scripts/mcp_server.py /opt/hermes-mcp/mcp_server.py
-COPY kube-scripts/mcp_entrypoint.sh /opt/hermes-mcp/mcp_entrypoint.sh
+COPY bin/hermes_prompt.py /opt/hermes-mcp/hermes_prompt.py
+COPY bin/mcp_server.py /opt/hermes-mcp/mcp_server.py
+COPY bin/mcp_entrypoint.sh /opt/hermes-mcp/mcp_entrypoint.sh
 RUN chmod +x /opt/hermes-mcp/mcp_entrypoint.sh && \
     chown -R hermes:hermes /opt/hermes-mcp
 

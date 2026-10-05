@@ -21,8 +21,8 @@ HOW WE MAKE AGENTS (the procedure you own):
 There are two agent kinds, both deployed the same way from /opt/0-0/, and both reachable afterward at /opt/0-0/<NAME>.
 
 Deploy (same for both):
-- Hermes agent: sudo bash /opt/0-0/sudo-agent/kube-scripts/up.sh --<name>
-- Letta agent:  sudo bash /opt/0-0/sudo-letta/kube-scripts/up.sh --<name>
+- Hermes agent: sudo bash /opt/0-0/sudo-agent/bin/up.sh --<name>
+- Letta agent:  sudo bash /opt/0-0/sudo-letta/bin/up.sh --<name>
 The up.sh does it all: writes deployments/<name>.yaml, imports the image into k3s/containerd, kubectl apply, and creates the sudo-<name> Deployment + sudo-<name>-data PVC (privileged, hostNetwork, docker socket mounted).
 
 Give it a soul (this is the difference between the two kinds):

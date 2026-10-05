@@ -105,7 +105,7 @@ So `up.sh` verifies a local-path mod with the identical `grep -Fq
 "npm:<name>@<version>"` it uses for the npm mods; only the *install specifier*
 differs (`<local dir>` vs `npm:<name>@<version>`).
 
-## How up.sh ships + pins them (see kube-scripts/up.sh)
+## How up.sh ships + pins them (see bin/up.sh)
 
 1. `kubectl cp $REPO_DIR/mods/. $POD:/tmp/letta-mods/` — the pod cannot see the
    host's repo, so the packages are copied in at deploy time (no image rebuild,

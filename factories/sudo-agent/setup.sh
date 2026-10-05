@@ -113,7 +113,7 @@ fi
 # ── LLM model / provider / base_url — resolve the ONE source of truth ─────────
 # Resolved from (1) the environment, (2) this factory's .env, (3) the
 # backward-compatible DeepSeek defaults — in that order. The SAME three values
-# are consumed by kube-scripts/up.sh, so a Featherless/custom endpoint is
+# are consumed by bin/up.sh, so a Featherless/custom endpoint is
 # configured in exactly ONE place (the root .env) and nothing re-pins it here.
 _is_custom_endpoint() {
   case "$1" in
@@ -259,9 +259,9 @@ echo "✓ config.yaml converged (provider='$LLM_PROVIDER' model='$LLM_MODEL' bas
 # fleet without its queue backing has a dead prompt path.
 if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
   echo ""
-  echo "→ Provisioning the shared queue Redis (kube-scripts/redis-up.sh)..."
-  if ! bash "$SCRIPT_DIR/kube-scripts/redis-up.sh"; then
-    echo "✗ FAILED to provision the shared Redis (kube-scripts/redis-up.sh)." >&2
+  echo "→ Provisioning the shared queue Redis (bin/redis-up.sh)..."
+  if ! bash "$SCRIPT_DIR/bin/redis-up.sh"; then
+    echo "✗ FAILED to provision the shared Redis (bin/redis-up.sh)." >&2
     echo "  Setup aborted: agents deployed without it would have a dead prompt queue." >&2
     exit 1
   fi
@@ -270,12 +270,12 @@ else
   echo ""
   echo "⚠ No reachable Kubernetes cluster (kubectl missing, or 'kubectl cluster-info' failed)."
   echo "  The shared queue Redis is provisioned automatically by the first deploy:"
-  echo "    bash kube-scripts/up.sh --<name>"
+  echo "    bash bin/up.sh --<name>"
 fi
 
 echo ""
 echo "✓ Setup complete"
 echo ""
-echo "  bash kube-scripts/up.sh --fish    # start agent (k3s; provisions the queue Redis)"
-echo "  bash kube-scripts/talk.sh --fish  # talk to agent"
-echo "  bash kube-scripts/down.sh --fish  # stop agent"
+echo "  bash bin/up.sh --fish    # start agent (k3s; provisions the queue Redis)"
+echo "  bash bin/talk.sh --fish  # talk to agent"
+echo "  bash bin/down.sh --fish  # stop agent"

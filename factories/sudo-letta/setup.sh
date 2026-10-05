@@ -40,16 +40,16 @@ _retry() {
 # this mechanism existed, or a stale image from a pre-change-detection setup),
 # rebuild. A re-run with unchanged sources skips the build, so idempotent
 # re-runs stay fast. This closes the stale-image hole: previously a re-run
-# skipped the build whenever the image existed, so a Dockerfile/kube-scripts
+# skipped the build whenever the image existed, so a Dockerfile/bin
 # change survived in the old image until the image was manually removed.
 _source_hash() {
   ( cd "$SCRIPT_DIR" && \
       cat Dockerfile \
-          kube-scripts/letta_prompt.py \
-          kube-scripts/mcp_server.py \
-          kube-scripts/mcp_entrypoint.sh \
-          kube-scripts/watch_sidecar.py \
-          kube-scripts/rich_tap.py ) | sha256sum | cut -d' ' -f1
+          bin/letta_prompt.py \
+          bin/mcp_server.py \
+          bin/mcp_entrypoint.sh \
+          bin/watch_sidecar.py \
+          bin/rich_tap.py ) | sha256sum | cut -d' ' -f1
 }
 
 CUR_HASH="$(_source_hash)"
@@ -196,20 +196,20 @@ fi
 # --- Shared Redis for the prompt distributor queue ---
 # Applied now if kubectl + a cluster are available; otherwise applied on first up.sh deploy.
 if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
-  echo "→ Applying shared Redis (kube-scripts/redis.yaml)..."
-  if ! kubectl apply -f "$SCRIPT_DIR/kube-scripts/redis.yaml" --validate=false; then
-    echo "✗ FAILED to apply kube-scripts/redis.yaml (shared Redis for the prompt distributor queue). Setup aborted — fix Redis provisioning and re-run setup.sh." >&2
+  echo "→ Applying shared Redis (bin/redis.yaml)..."
+  if ! kubectl apply -f "$SCRIPT_DIR/bin/redis.yaml" --validate=false; then
+    echo "✗ FAILED to apply bin/redis.yaml (shared Redis for the prompt distributor queue). Setup aborted — fix Redis provisioning and re-run setup.sh." >&2
     exit 1
   fi
   echo "✓ Shared Redis applied"
 else
-  echo "⚠ kubectl/cluster not available yet — shared Redis (kube-scripts/redis.yaml) will be applied on the first up.sh agent deploy."
+  echo "⚠ kubectl/cluster not available yet — shared Redis (bin/redis.yaml) will be applied on the first up.sh agent deploy."
 fi
 
 echo ""
 echo "✓ Setup complete"
 echo ""
-echo "  bash kube-scripts/up.sh --fish      # start agent (generates sudo password)"
-echo "  bash kube-scripts/talk.sh --fish    # talk to agent"
-echo "  bash kube-scripts/down.sh --fish    # stop agent (memory persists)"
+echo "  bash bin/up.sh --fish      # start agent (generates sudo password)"
+echo "  bash bin/talk.sh --fish    # talk to agent"
+echo "  bash bin/down.sh --fish    # stop agent (memory persists)"
 echo ""

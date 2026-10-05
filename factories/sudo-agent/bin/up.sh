@@ -1,0 +1,1214 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+# bin/up.sh — Deploy a sudo-agent to Kubernetes
+# Usage: bash bin/up.sh --name
+
+# Parse --name (required) and --from-glimor (optional seed dir). --from-glimor
+# takes its own argument, so it consumes two tokens; an unknown arg aborts with
+# usage because a guessed name would deploy the wrong agent.
+NAME=""
+KEY=""
+SUDO_PASS=""
+GLIMOR_DIR=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --from-glimor) GLIMOR_DIR="$2"; shift 2 ;;
+    --name|--*)    NAME="${1#--}"; shift ;;
+    *)             echo "Usage: bash bin/up.sh --name [--from-glimor <dir>]" >&2; exit 1 ;;
+  esac
+done
+
+# Reject an empty name and the reserved `all` token, because `sudo-` and a
+# bulk-teardown name would each produce a broken or ambiguous deploy (see
+# rm-containers.sh for the real bulk path).
+if [[ -z "$NAME" ]]; then
+  echo "Usage: bash bin/up.sh --name" >&2
+  echo "Example: bash bin/up.sh --alice" >&2
+  exit 1
+fi
+
+if [[ "${NAME,,}" == "all" ]]; then
+  echo "'--ALL' is reserved. Pick a different name." >&2; exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+ENV_FILE="$REPO_DIR/.env"
+YAML_DIR="$REPO_DIR/deployments"
+CONFIG_DIR="$REPO_DIR/config"
+DEPLOY="sudo-$NAME"
+YAML="$YAML_DIR/$NAME.yaml"
+PER_AGENT_CONFIG="$CONFIG_DIR/$NAME.yaml"
+
+# Per-agent MCP server port. Every sudo-agent pod runs hostNetwork:true, so all
+# pods share the node's network namespace and a single fixed port would collide.
+# Derive a stable, unique port from the agent name (stays below the ephemeral
+# range, 32768+). The Service below exposes a stable port 8000 and forwards
+# (targetPort) to this unique per-agent port.
+MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 24768 ))
+
+# Per-agent WATCH (observer sidecar) port — same hostNetwork collision rules
+# as MCP_PORT, but hashed from a DIFFERENT string ("$NAME-watch") so it never
+# collides with the MCP port. Guard bumps by 1 in the (astronomically rare) case
+# the two hashes land on the same port.
+WATCH_PORT=$(( 8000 + $(printf '%s-watch' "$NAME" | cksum | cut -d' ' -f1) % 24768 ))
+if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
+  WATCH_PORT=$(( MCP_PORT + 1 ))
+fi
+
+# If repo is root-owned and we're not root, bail early
+if [[ ! -w "$REPO_DIR" ]] && [[ "$(id -u)" != "0" ]]; then
+  echo "Repo is root-owned. Run with: sudo bash bin/up.sh --$NAME" >&2
+  exit 1
+fi
+
+mkdir -p "$YAML_DIR" "$CONFIG_DIR" 2>/dev/null || true
+
+# Per-agent config: seed config/<name>.yaml from the tracked template on first
+# deploy, then leave it alone so each agent's config can diverge (config isolation).
+CONFIG_SEEDED=0
+if [[ ! -f "$PER_AGENT_CONFIG" ]]; then
+  cp "$REPO_DIR/config.yaml" "$PER_AGENT_CONFIG"
+  CONFIG_SEEDED=1
+fi
+
+# ── LLM provider / model convergence into the per-agent config ──────────────
+# WHY: the tracked config.yaml defaults to DeepSeek with its custom_providers
+# entry COMMENTED OUT (no secret may live in a committed file), and this script
+# seeds every fresh per-agent config from it. So on a FRESH rebuild the custom
+# OpenAI-compatible endpoint from .env (LLM_PROVIDER / LLM_BASE_URL / LLM_MODEL)
+# was never applied: the agent booted on the DeepSeek default and had to be
+# hand-patched. This step writes the env's provider / base_url / model.default
+# into the per-agent config and emits an UNCOMMENTED custom_providers entry when
+# the endpoint is custom (anything that is not the DeepSeek default — see the
+# contract documented in config.yaml and _is_custom_endpoint() in setup.sh).
+# The per-agent config is generated at deploy time (config/ is untracked) and
+# the key is referenced by env var NAME (key_env: LLM_API_KEY, the env var this
+# script injects into the pod below) — no secret is ever written here.
+# Scope: the full override runs when the config was just seeded, or when the
+# env configures a custom endpoint the existing config does not already carry
+# (a stale seeded config) — so a hand-diverged config is not stomped on every
+# re-deploy. A changed LLM_MODEL still refreshes model.default.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "✗ python3 is required to converge the LLM provider/model into $PER_AGENT_CONFIG" >&2
+  exit 1
+fi
+if ! python3 - "$PER_AGENT_CONFIG" "$ENV_FILE" "$CONFIG_SEEDED" <<'PYEOF'
+import os
+import re
+import shutil
+import sys
+
+cfg_path, env_path, seeded = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+
+
+def env_val(name):
+    """os.environ first, then the .env file (same precedence as setup.sh)."""
+    v = (os.environ.get(name) or "").strip()
+    if v:
+        return v
+    try:
+        with open(env_path) as fh:
+            for line in fh:
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+provider = env_val("LLM_PROVIDER")
+base_url = env_val("LLM_BASE_URL")
+model = env_val("LLM_MODEL")
+
+if not (provider or base_url or model):
+    print("→ no LLM_PROVIDER/LLM_BASE_URL/LLM_MODEL in env — %s keeps the tracked default"
+          % cfg_path)
+    sys.exit(0)
+
+is_custom = bool(base_url) and "deepseek" not in base_url.lower()
+if is_custom and not model:
+    print("⚠ %s: custom endpoint %s is configured without LLM_MODEL — model.default keeps"
+          " the tracked default; set LLM_MODEL in .env to the model id that endpoint serves"
+          % (cfg_path, base_url))
+
+with open(cfg_path) as fh:
+    orig = fh.read()
+lines = orig.splitlines()
+
+
+def block_end(start):
+    """Index just past the YAML block opened at `start` (until the next top-level key)."""
+    for j in range(start + 1, len(lines)):
+        if lines[j].strip() and not lines[j].startswith((" ", "\t", "#")):
+            return j
+    return len(lines)
+
+
+def set_top(key, value):
+    pat = re.compile(r"^%s\s*:" % re.escape(key))
+    for i, ln in enumerate(lines):
+        if pat.match(ln):
+            lines[i] = '%s: "%s"' % (key, value)
+            return
+    lines.insert(0, '%s: "%s"' % (key, value))
+
+
+def set_model_default(value):
+    for i, ln in enumerate(lines):
+        if re.match(r"^model\s*:\s*$", ln):
+            end = block_end(i)
+            for j in range(i + 1, end):
+                if re.match(r"^\s+default\s*:", lines[j]):
+                    lines[j] = '  default: "%s"' % value
+                    return
+            lines.insert(i + 1, '  default: "%s"' % value)
+            return
+    lines.insert(0, 'model:\n  default: "%s"' % value)
+
+
+def find_custom_block():
+    for i, ln in enumerate(lines):
+        if re.match(r"^custom_providers\s*:", ln):
+            return i, block_end(i)
+    return None, None
+
+
+def set_custom_models(value):
+    """Refresh the `models:` list inside an existing custom_providers block."""
+    cstart, cend = find_custom_block()
+    if cstart is None:
+        return
+    for j in range(cstart + 1, cend):
+        if re.match(r"^\s+models\s*:", lines[j]):
+            lines[j] = '    models: ["%s"]' % value
+            return
+    lines.insert(cend, '    models: ["%s"]' % value)
+
+
+custom_name = provider or "custom"
+cstart, cend = find_custom_block()
+already = False
+if cstart is not None:
+    have = "\n".join(lines[cstart:cend])
+    already = base_url in have and "key_env:" in have
+
+full_override = seeded or (is_custom and not already)
+
+if full_override:
+    if provider:
+        set_top("provider", provider)
+    if base_url:
+        set_top("base_url", base_url)
+    if model:
+        set_model_default(model)
+    if is_custom:
+        cstart, cend = find_custom_block()
+        if cstart is not None:
+            del lines[cstart:cend]
+        while lines and not lines[-1].strip():
+            lines.pop()
+        block = ["custom_providers:",
+                 '  - name: "%s"' % custom_name,
+                 '    base_url: "%s"' % base_url,
+                 "    key_env: LLM_API_KEY",
+                 "    api_mode: openai"]
+        if model:
+            block.append('    models: ["%s"]' % model)
+        lines += [""] + block
+elif model:
+    set_model_default(model)
+    set_custom_models(model)
+
+new = "\n".join(lines) + "\n"
+
+if new == orig:
+    print("✓ LLM config already matches the env in %s (provider=%s model=%s base_url=%s)"
+          % (cfg_path, provider or "-", model or "-", base_url or "-"))
+    sys.exit(0)
+
+# Validate BEFORE replacing: pyyaml when available, else a textual check. A bad
+# edit must never leave a broken per-agent config behind.
+why = "textual check"
+try:
+    import yaml  # noqa: F401
+except ImportError:
+    yaml = None
+if yaml is not None:
+    try:
+        data = yaml.safe_load(new)
+    except Exception as exc:
+        print("✗ %s: converged config does not parse (%s) — original left untouched"
+              % (cfg_path, exc))
+        sys.exit(2)
+    if not isinstance(data, dict) or "provider" not in data or "model" not in data:
+        print("✗ %s: converged config lacks provider/model — original left untouched" % cfg_path)
+        sys.exit(2)
+    why = "pyyaml parse"
+else:
+    for want in ("provider:", "base_url:", "model:", "default:"):
+        if want not in new:
+            print("✗ %s: converged config lacks %s — original left untouched" % (cfg_path, want))
+            sys.exit(2)
+
+tmp = cfg_path + ".tmp-llm"
+with open(tmp, "w") as fh:
+    fh.write(new)
+shutil.copymode(cfg_path, tmp)
+os.replace(tmp, cfg_path)
+
+print("✓ LLM config converged in %s (provider=%s model=%s base_url=%s custom_providers=%s) [%s]"
+      % (cfg_path, provider or "-", model or "-", base_url or "-",
+         "yes" if (is_custom and (full_override or already)) else "no", why))
+PYEOF
+then
+  echo "✗ FAILED to converge the LLM provider/model into $PER_AGENT_CONFIG" >&2
+  echo "  The agent would boot on the tracked DeepSeek default (the exact silent" >&2
+  echo "  breakage this step exists to prevent) — deploy aborted." >&2
+  exit 1
+fi
+
+# Auto-detect kubeconfig (sudo changes HOME, kubectl can lose it)
+if [[ -z "${KUBECONFIG:-}" ]]; then
+  for cfg in "/etc/rancher/k3s/k3s.yaml" "/home/world15/.kube/config" "$HOME/.kube/config"; do
+    if [[ -f "$cfg" ]]; then
+      export KUBECONFIG="$cfg"
+      break
+    fi
+  done
+  if [[ -z "${KUBECONFIG:-}" ]]; then
+    echo "No kubeconfig found. Is k3s running? Try: export KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >&2
+    exit 1
+  fi
+fi
+
+echo "→ sudo-$NAME starting up..."
+
+# ── Shared queue Redis (the prompt distributor's backing store) ──────────────
+# up.sh OWNS this wiring: it provisions the shared Redis BEFORE the agent pod
+# exists, so the MCP server's startup fail-fast ping can succeed on first boot,
+# and injects the REDIS_URL that matches it. Failure ABORTS the deploy — a pod
+# booted without its queue backing has a dead prompt path, which is exactly the
+# silent breakage this design exists to prevent. Deliberately NO `|| true`, no
+# `2>/dev/null`, no `| tail`: a broken queue must never look like a good deploy.
+#
+# Port 6380, not 6379: the redis Deployment runs hostNetwork:true and binds the
+# node's loopback (the only path an agent pod can reach — hostNetwork pods get
+# the NODE resolver, not cluster DNS, so a Service name never resolves), which
+# makes the port NODE-GLOBAL. sudo-letta-redis already owns node 6379.
+# redis-up.sh refuses to bind a port it does not own, loudly.
+SHARED_REDIS_PORT="${SUDO_AGENT_REDIS_PORT:-6380}"
+REDIS_URL="redis://127.0.0.1:${SHARED_REDIS_PORT}/0"
+export SUDO_AGENT_REDIS_PORT="$SHARED_REDIS_PORT"
+
+echo "→ Provisioning shared queue Redis (bin/redis-up.sh, node port $SHARED_REDIS_PORT)..."
+if ! bash "$SCRIPT_DIR/redis-up.sh"; then
+  echo "✗ FAILED to provision the shared Redis (bin/redis-up.sh)." >&2
+  echo "  Deploy aborted: without it the pod's prompt-distributor queue is dead on arrival." >&2
+  exit 1
+fi
+echo "→ Shared queue Redis ready: sudo-agent-redis at $REDIS_URL (hostNetwork, node loopback)"
+
+# ── API Key ──
+_read_key() {
+  grep '^DEEPSEEK_API_KEY=' "$1" 2>/dev/null | cut -d'=' -f2- | head -1
+}
+
+KEY="${DEEPSEEK_API_KEY:-}"
+if [[ -z "$KEY" ]] && [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
+  KEY=$(_read_key "$ENV_FILE")
+fi
+if [[ -z "$KEY" ]]; then
+  read -r -p "DeepSeek API key: " KEY
+  if [[ -n "$KEY" ]]; then
+    if ! grep -q '^DEEPSEEK_API_KEY=' "$ENV_FILE" 2>/dev/null; then
+      echo "DEEPSEEK_API_KEY=$KEY" >> "$ENV_FILE" || echo "⚠ Could not save key to $ENV_FILE — use sudo or chown" >&2
+    fi
+  fi
+fi
+if [[ -z "$KEY" ]]; then
+  echo "No API key provided." >&2; exit 1
+fi
+
+# ── Sudo password ──
+# The agent container is `privileged` and its shell relies on passwordless
+# sudo, so the deploy injects a SUDO_PASSWORD. Reuse the one already in .env
+# (so a re-deploy keeps the same password), otherwise generate a random one ONCE
+# and persist it — a per-deploy random would break any saved sudo contexts.
+if [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
+  SUDO_PASS=$(grep '^SUDO_PASSWORD=' "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- || true)
+fi
+if [[ -z "$SUDO_PASS" ]]; then
+  SUDO_PASS=$(tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 16)
+  echo "SUDO_PASSWORD=$SUDO_PASS" >> "$ENV_FILE"
+  echo "→ Generated sudo password: $SUDO_PASS"
+fi
+
+# ── Observer sidecar daemon script (shipped via the ConfigMap below) ──
+WATCH_SIDECAR="$SCRIPT_DIR/watch_sidecar.py"
+if [[ ! -f "$WATCH_SIDECAR" ]]; then
+  echo "✗ Missing $WATCH_SIDECAR (observer sidecar daemon)" >&2
+  exit 1
+fi
+
+# ── Token-level stream plugin (bin/watch_plugin/) ───────────────────
+# The sidecar alone cannot show a token before the model finishes it (state.db
+# only gets a row per COMPLETE message). The plugin is the real-time tap: it
+# hooks Hermes' native stream callbacks and appends every chunk to
+# /opt/data/watch/stream.jsonl. up.sh owns the whole wiring so a fresh agent
+# streams with no manual step:
+#   1. ship the plugin files in a ConfigMap mounted at the plugin dir that
+#      Hermes scans for user plugins (<HERMES_HOME>/plugins/<key>/);
+#   2. enable it in the per-agent config (plugins.enabled + reasoning deltas);
+#   3. AFTER the rollout, prove inside the pod that the hooks really
+#      registered — a deploy that silently ships no token stream is exactly
+#      the failure this repo refuses to accept.
+WATCH_PLUGIN_KEY="sudo-watch-stream"
+WATCH_PLUGIN_DIR="$SCRIPT_DIR/watch_plugin"
+COMM_GATE_KEY="sudo-comm-gate"
+COMM_GATE_DIR="$SCRIPT_DIR/comm_gate"
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "✗ python3 is required to enable $WATCH_PLUGIN_KEY in $PER_AGENT_CONFIG" >&2
+  echo "  (bin/watch_plugin_enable.py). Install python3 and re-run." >&2
+  exit 1
+fi
+for _f in plugin.yaml __init__.py; do
+  if [[ ! -f "$WATCH_PLUGIN_DIR/$_f" ]]; then
+    echo "✗ Missing $WATCH_PLUGIN_DIR/$_f (the $WATCH_PLUGIN_KEY plugin)" >&2
+    echo "  The token-level stream.sh view would be dead without it. Aborted." >&2
+    exit 1
+  fi
+done
+echo "→ Enabling $WATCH_PLUGIN_KEY in $PER_AGENT_CONFIG..."
+if ! python3 "$SCRIPT_DIR/watch_plugin_enable.py" "$PER_AGENT_CONFIG" "$WATCH_PLUGIN_KEY"; then
+  echo "✗ FAILED to enable $WATCH_PLUGIN_KEY in $PER_AGENT_CONFIG." >&2
+  echo "  Fix the config (or the helper) and re-run: without the plugin's" >&2
+  echo "  stream hooks, stream.sh would tail a file that never appears." >&2
+  exit 1
+fi
+
+# ── Comm-gate plugin (the "load the comm skill first" prerequisite gate) ────
+# Same ConfigMap-shipped, plugins.enabled wiring as the watch plugin, but it
+# registers NO stream hooks (only on_skill_lifecycle + pre_tool_call), so it
+# does NOT need plugins.stream_reasoning_deltas. It records comm-skill loads
+# per session and blocks a comm CLI until its matching skill was loaded.
+for _f in plugin.yaml __init__.py; do
+  if [[ ! -f "$COMM_GATE_DIR/$_f" ]]; then
+    echo "✗ Missing $COMM_GATE_DIR/$_f (the $COMM_GATE_KEY plugin)" >&2
+    echo "  The comm-skill prerequisite gate would be dead without it. Aborted." >&2
+    exit 1
+  fi
+done
+echo "→ Enabling $COMM_GATE_KEY in $PER_AGENT_CONFIG..."
+if ! python3 "$SCRIPT_DIR/comm_gate_enable.py" "$PER_AGENT_CONFIG" "$COMM_GATE_KEY"; then
+  echo "✗ FAILED to enable $COMM_GATE_KEY in $PER_AGENT_CONFIG." >&2
+  echo "  Fix the config (or the helper) and re-run." >&2
+  exit 1
+fi
+
+# Content digest of everything shipped via ConfigMap into the pod (the sidecar
+# daemon + the plugin). A ConfigMap-only change does NOT roll a Deployment, and
+# a running process never re-imports a module it already loaded — so without
+# this annotation a changed watch_sidecar.py or plugin would silently keep
+# running the OLD code in every live pod. It goes on the pod template, so
+# `kubectl apply` recreates the pod exactly when those files change.
+WATCH_SCRIPTS_SHA="$(sha256sum "$WATCH_SIDECAR" \
+    "$WATCH_PLUGIN_DIR/plugin.yaml" "$WATCH_PLUGIN_DIR/__init__.py" \
+    "$COMM_GATE_DIR/plugin.yaml" "$COMM_GATE_DIR/__init__.py" 2>/dev/null \
+  | awk '{print $1}' | sha256sum | awk '{print $1}')"
+if [[ -z "$WATCH_SCRIPTS_SHA" ]]; then
+  echo "✗ could not compute the watch-scripts digest — refusing to deploy an" >&2
+  echo "  unversioned sidecar/plugin (a stale one would go unnoticed)." >&2
+  exit 1
+fi
+echo "→ watch scripts digest: ${WATCH_SCRIPTS_SHA:0:12}"
+
+# ── Image content digest (rolls the pod when the IMAGE changes) ─────────────
+# The pod template pins `image: sudo-agent:latest` with imagePullPolicy:
+# IfNotPresent, so a REBUILT image under the same tag does NOT roll the
+# Deployment on its own: kubectl apply sees the tag and the watch-scripts
+# digest both unchanged and reports "deployment ... unchanged", leaving the
+# running pod on the OLD image. An image-only fix (e.g. a patch_memory_review.py
+# change) would silently never reach the pod. Pin the docker image's
+# content-addressable ID as a pod-template annotation so kubectl apply
+# recreates the pod exactly when the image content changes.
+IMAGE_SHA="$(docker image inspect sudo-agent:latest --format '{{.Id}}' 2>/dev/null)"
+if [[ -z "$IMAGE_SHA" ]]; then
+  echo "✗ could not read the sudo-agent:latest image ID — refusing to deploy an" >&2
+  echo "  unversioned image (an image-only change would silently never roll)." >&2
+  echo "  Build it first:  bash setup.sh   (or: docker build -t sudo-agent:latest -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
+  exit 1
+fi
+echo "→ sudo-agent image digest: ${IMAGE_SHA:0:12}"
+
+# ── Preserve operator-added env vars ─────────────────────────────────────────
+# up.sh REGENERATES this Deployment from the template below, so the live object
+# is REPLACED, not merged. Any env var an operator added to the running
+# deployment by hand (ANTHROPIC_API_KEY, OPENROUTER_API_KEY, API_SERVER_* ...)
+# would otherwise be silently DROPPED on the next roll — a deploy that quietly
+# strips a live credential or an API server, the same class of silent breakage
+# the queue wiring above exists to prevent. Carry forward every env entry on
+# the agent container that the template does not itself define.
+#   * Agent container only: the watch container's env has always been fully
+#     template-owned, so it has no extras to lose.
+#   * Extras are only read when the Deployment already exists. On a first
+#     deploy there is nothing to preserve, and a failed read yields no extras
+#     (the old behaviour) instead of aborting the roll.
+#   * Values are re-emitted through jq tojson, i.e. as YAML double-quoted
+#     scalars, so a value like `true` stays the string "true".
+TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","LLM_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","REDIS_URL"]'
+EXTRA_ENV="$(kubectl get deploy "$DEPLOY" -o json 2>/dev/null \
+  | jq -r --argjson known "$TEMPLATE_ENV_NAMES" '
+      .spec.template.spec.containers[]
+      | select(.name == "sudo-agent")
+      | .env[]?
+      | select(.name as $n | ($known | index($n)) | not)
+      | if .valueFrom
+        then "        - name: \(.name)\n          valueFrom: \(.valueFrom | tojson)"
+        else "        - name: \(.name)\n          value: \(.value | tojson)"
+        end
+    ' 2>/dev/null || true)"
+if [[ -n "$EXTRA_ENV" ]]; then
+  echo "→ Preserving operator-added env from the live deployment:" >&2
+  awk '/- name:/{printf "    %s\n", $3}' <<<"$EXTRA_ENV" >&2
+fi
+
+# ── Generate YAML ──
+# ── Heredoc expansion guard ─────────────────────────────────────────────────
+# The manifest below is an UNQUOTED heredoc, so bash performs command
+# substitution over its ENTIRE body — including the YAML comments. It is thus
+# possible, and it has happened, to write a comment that the shell silently
+# EXECUTES: the annotation comment here previously contained an unescaped
+# backtick-quoted kubectl invocation, so every single deploy ran kubectl,
+# failed, and substituted the empty result into the manifest while printing
+# the useless "must specify one of -f and -k" line. The manifest still
+# parsed, so nothing ever failed — a real apply error would have been lost in
+# a line operators had been trained to ignore.
+#
+# So the body is scanned before it is used. Exactly two things may appear:
+#   * the THREE $(sed 's/^/    /' ...) indent helpers that embed the ConfigMap
+#     payloads (no more, no fewer — a new one is either a mistake or needs a
+#     deliberate update here);
+#   * plain $VAR references (DEPLOY, NAME, ports, digest, ...).
+# Any backtick that is not backslash-escaped, or any extra command
+# substitution, aborts before anything is written. No silent fallback: if the
+# boundaries cannot be found, we refuse to deploy.
+_HEREDOC_OPEN='cat > "$YAML" <<YAMLEOF'
+_HEREDOC_CLOSE='YAMLEOF'
+_HD_START="$(awk -v open="$_HEREDOC_OPEN" '$0 == open {print NR; exit}' "$0")"
+_HD_END="$(awk -v s="${_HD_START:-0}" -v endmark="$_HEREDOC_CLOSE" 'NR > s && $0 == endmark {print NR; exit}' "$0")"
+if [[ -z "$_HD_START" || -z "$_HD_END" ]]; then
+  echo "✗ FATAL: could not locate the manifest heredoc in $0 (open='$_HEREDOC_OPEN'," >&2
+  echo "  close='$_HEREDOC_CLOSE'). The expansion guard cannot run, so this deploy" >&2
+  echo "  would be unverified. Refusing to continue." >&2
+  exit 1
+fi
+_HD_BODY="$(awk -v s="$_HD_START" -v e="$_HD_END" 'NR > s && NR < e' "$0")"
+# 1) every backtick must be backslash-escaped: drop the escaped pairs, and
+#    anything still holding a backtick is a command the shell would RUN.
+_HD_BACKTICKS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\`//g' | grep -c '`' || true)"
+# 2) the only command substitutions allowed are the three sed indent helpers.
+#    An ESCAPED \$( is inert (it renders as literal text and never runs), so
+#    it is removed before counting — that is what lets these comments document
+#    the hazard without tripping the guard.
+_HD_SUBS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\\$[(]//g' \
+             | grep -o '\$(' | wc -l | tr -d ' ')"
+_HD_KNOWN_SUBS=5
+if [[ "$_HD_BACKTICKS" -ne 0 || "$_HD_SUBS" -ne "$_HD_KNOWN_SUBS" ]]; then
+  echo "✗ FATAL: the manifest heredoc in $0 contains a command the shell would" >&2
+  echo "  EXECUTE on every deploy (unescaped backticks: $_HD_BACKTICKS; command" >&2
+  echo "  substitutions: $_HD_SUBS, expected $_HD_KNOWN_SUBS)." >&2
+  echo "  Escape backticks as \\\` and keep \$() to the sed indent helpers." >&2
+  echo "  Nothing was written; the deploy did not start." >&2
+  exit 1
+fi
+echo "→ Writing $YAML..."
+# ── Optional glimor seed (initContainer seeds the PVC BEFORE the agent runs) ──
+# When --from-glimor <dir> is given, an initContainer copies <dir>/hermes/ into
+# /opt/data BEFORE the Hermes process starts, so a fork wakes as the seeded
+# agent (never a blank Hermes). Idempotent: a .glimor-seeded marker skips
+# re-seeding on restarts (preserving the fork's runtime changes). A missing or
+# invalid glimor fails the initContainer (and the deploy) loudly.
+SEED_INITCONTAINERS=""
+SEED_VOLUME=""
+if [[ -n "${GLIMOR_DIR:-}" ]]; then
+  if [[ ! -d "$GLIMOR_DIR/hermes" ]] || [[ ! -f "$GLIMOR_DIR/hermes/SOUL.md" ]]; then
+    echo "✗ --from-glimor $GLIMOR_DIR: missing hermes/ or hermes/SOUL.md (a valid Hermes glimor needs both)" >&2
+    exit 1
+  fi
+  GLIMOR_ABS="$(cd "$GLIMOR_DIR" && pwd)"
+  SEED_INITCONTAINERS="      initContainers:
+      - name: seed-glimor
+        image: sudo-agent:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+        command: [\"sh\", \"-c\", \"if test -f /opt/data/.glimor-seeded; then exit 0; fi; if ! test -d /seed/hermes; then exit 1; fi; if ! test -f /seed/hermes/SOUL.md; then exit 1; fi; cp -a /seed/hermes/. /opt/data/ && chown -R 10000:10000 /opt/data && touch /opt/data/.glimor-seeded\"]
+        volumeMounts:
+        - name: data
+          mountPath: /opt/data
+        - name: seed
+          mountPath: /seed
+          readOnly: true"
+  SEED_VOLUME="      - name: seed
+        hostPath:
+          path: $GLIMOR_ABS
+          type: Directory"
+fi
+cat > "$YAML" <<YAMLEOF
+# Per-deployment API key Secret — created before the Deployment so
+# kubectl apply succeeds on the first run. The Secret is owned by
+# the same labels as the Deployment for consistent cleanup.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${DEPLOY}-api-key
+  labels:
+    app: sudo-agent
+    agent: $NAME
+type: Opaque
+data:
+  deepseek-api-key: $(printf '%s' "${KEY}" | base64 -w0)
+  llm-api-key: $(printf '%s' "${KEY}" | base64 -w0)
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $DEPLOY-data
+  labels:
+    app: sudo-agent
+    agent: $NAME
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $DEPLOY
+  labels:
+    app: sudo-agent
+    agent: $NAME
+spec:
+  replicas: 1
+  # Recreate, NOT RollingUpdate: every agent pod runs hostNetwork:true and
+  # binds a per-agent fixed port (MCP_PORT) plus takes the /opt/data/gateway.lock
+  # on the shared PVC, so a rolling update brings the NEW pod up beside the OLD
+  # one and the new pod crash-loops (port already in use / gateway host-lock
+  # held by the old pod) while the rollout hangs. The old pod MUST terminate
+  # before the new one starts (the same reason redis-up.sh uses Recreate).
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: sudo-agent
+      agent: $NAME
+  template:
+    metadata:
+      labels:
+        app: sudo-agent
+        agent: $NAME
+      annotations:
+        # Digest of the ConfigMap-shipped watch scripts (sidecar + plugin).
+        # Bumping it forces a new pod, which is the ONLY way a changed script
+        # takes effect: kubectl apply does not roll a Deployment for a
+        # ConfigMap edit, and a live process keeps the module it already
+        # imported. See the digest note in up.sh.
+        #
+        # NOTE: this heredoc is UNQUOTED, so bash expands \$(...) and
+        # \`backticks\` ANYWHERE in the body — including inside these YAML
+        # comments. That is not theoretical: a previous revision of this
+        # comment read \`kubectl apply\` unescaped, so every deploy actually
+        # RAN kubectl (with no -f/-k) and printed
+        #     error: must specify one of -f and -k
+        # into the deploy output, training everyone to ignore the one line a
+        # real apply failure would also produce. Backticks here MUST stay
+        # backslash-escaped; the manifest self-check after the heredoc is the
+        # backstop that catches it if someone forgets.
+        sudo-agent/watch-scripts-sha: "$WATCH_SCRIPTS_SHA"
+        # Content digest of the sudo-agent IMAGE (see the image-digest note
+        # above the manifest). Bumping it is the ONLY way an image-only change
+        # rolls the pod: the tag is 'latest' and imagePullPolicy is
+        # IfNotPresent, so without this annotation a rebuilt image would
+        # silently keep running the old one in every live pod.
+        sudo-agent/image-sha: "$IMAGE_SHA"
+    spec:
+      shareProcessNamespace: true
+      hostNetwork: true
+$SEED_INITCONTAINERS
+      containers:
+      - name: sudo-agent
+        image: sudo-agent:latest
+        imagePullPolicy: IfNotPresent
+        args: ["gateway", "run"]
+        securityContext:
+          privileged: true
+        env:
+        - name: DEEPSEEK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ${DEPLOY}-api-key
+              key: deepseek-api-key
+        # Env var a custom_providers entry references via `key_env` — so a
+        # Featherless/custom OpenAI-compatible endpoint's Bearer token resolves
+        # inside the pod without the key ever being written into config.yaml.
+        - name: LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ${DEPLOY}-api-key
+              key: llm-api-key
+        - name: SUDO_PASSWORD
+          value: "$SUDO_PASS"
+        - name: HERMES_YOLO_MODE
+          value: "true"
+        - name: MCP_PORT
+          value: "$MCP_PORT"
+        # Queue namespace for THIS agent's prompt queue in the SHARED Redis.
+        # One Redis serves the whole fleet, so the prefix must be unique per
+        # agent or two agents would steal each other's prompts.
+        - name: AGENT_NAME
+          value: "$NAME"
+        # The SHARED prompt-distributor Redis, reached on the NODE loopback
+        # (mcp_entrypoint.sh starts a per-pod local Redis only when this is
+        # unset — the offline fallback). NOT a Service name: a hostNetwork pod
+        # gets the node resolver, not cluster DNS, so a Service name cannot
+        # resolve. See bin/redis-up.sh.
+        - name: REDIS_URL
+          value: $REDIS_URL
+$EXTRA_ENV
+        volumeMounts:
+        - name: data
+          mountPath: /opt/data
+        - name: config
+          mountPath: /opt/data/config.yaml
+        # Token-level stream plugin: Hermes scans <HERMES_HOME>/plugins/<key>/
+        # for user plugins and HERMES_HOME is /opt/data in this image, so the
+        # ConfigMap below lands exactly where discovery looks. Read-only — the
+        # plugin writes its tape to /opt/data/watch/stream.jsonl instead.
+        - name: watch-plugin
+          mountPath: /opt/data/plugins/$WATCH_PLUGIN_KEY
+          readOnly: true
+        # Comm-gate plugin: same discovery dir, mounted read-only (it writes
+        # its per-session ledger to /opt/data/comm-gate/state.json instead).
+        - name: comm-gate-plugin
+          mountPath: /opt/data/plugins/$COMM_GATE_KEY
+          readOnly: true
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        # ── Self-repair probes: restart on crash/hang ───────────────────────
+        # The agent's MCP server (gateway run) listens on MCP_PORT (0.0.0.0).
+        # startupProbe gives it a generous window to boot; livenessProbe
+        # restarts a hung-but-alive agent (listener gone/stuck); readinessProbe
+        # keeps a not-yet-serving agent out of Service rotation. Process crash
+        # is already handled by restartPolicy: Always (the default).
+        startupProbe:
+          tcpSocket:
+            port: $MCP_PORT
+          periodSeconds: 5
+          failureThreshold: 30
+        readinessProbe:
+          tcpSocket:
+            port: $MCP_PORT
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          tcpSocket:
+            port: $MCP_PORT
+          periodSeconds: 20
+          failureThreshold: 3
+      # ── Observer sidecar container ────────────────────────────────────────
+      # Monitors the agent container (shared PID namespace), captures every
+      # message from the Hermes SQLite store into <PVC>/watch/events.jsonl,
+      # distills <PVC>/watch/transcript.txt, and serves the HTTP tap on
+      # WATCH_PORT. Same image (explicit command — the hermes image has no
+      # CMD); no docker socket; runs as uid 10000 so the watch dir on the
+      # PVC is owned by the agent uid.
+      - name: watch
+        image: sudo-agent:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python3", "/opt/watch-sidecar/watch_sidecar.py"]
+        securityContext:
+          runAsUser: 10000
+          runAsNonRoot: true
+        env:
+        - name: WATCH_PORT
+          value: "$WATCH_PORT"
+        - name: AGENT_NAME
+          value: "$NAME"
+        - name: DEPLOY_NAME
+          value: "$DEPLOY"
+        volumeMounts:
+        - name: data
+          mountPath: /opt/data
+        - name: watch-config
+          mountPath: /opt/watch-sidecar
+        # Same plugin mount as the agent container: stream.sh's pre-flight
+        # guard and the sidecar's /status check the manifest here, so a missing
+        # plugin is a loud error rather than an empty screen.
+        - name: watch-plugin
+          mountPath: /opt/data/plugins/$WATCH_PLUGIN_KEY
+          readOnly: true
+        - name: comm-gate-plugin
+          mountPath: /opt/data/plugins/$COMM_GATE_KEY
+          readOnly: true
+        # ── Self-repair probes: the sidecar serves GET /healthz -> 200 on
+        # WATCH_PORT (binds 0.0.0.0). livenessProbe restarts a hung sidecar;
+        # readinessProbe gates Service rotation on the tap being up.
+        startupProbe:
+          httpGet:
+            path: /healthz
+            port: $WATCH_PORT
+          periodSeconds: 3
+          failureThreshold: 10
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: $WATCH_PORT
+          periodSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: $WATCH_PORT
+          periodSeconds: 15
+          failureThreshold: 3
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: $DEPLOY-data
+$SEED_VOLUME
+      - name: config
+        hostPath:
+          path: $PER_AGENT_CONFIG
+          type: File
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+          type: Socket
+      - name: watch-config
+        configMap:
+          name: $DEPLOY-watch-config
+          defaultMode: 0755
+      - name: watch-plugin
+        configMap:
+          name: $DEPLOY-watch-plugin
+          defaultMode: 0755
+      - name: comm-gate-plugin
+        configMap:
+          name: $DEPLOY-comm-gate-plugin
+          defaultMode: 0755
+---
+# ── Observer sidecar (watch) ──────────────────────────────────────────────
+# ConfigMap consumed by the watch container: the daemon script (mounted
+# executable at /opt/watch-sidecar/) + its config.json (log_dir, poll
+# interval, port, noisy_sources for the reminder flag).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: $DEPLOY-watch-config
+  labels:
+    app: sudo-agent
+    agent: $NAME
+data:
+  watch_sidecar.py: |
+$(sed 's/^/    /' "$WATCH_SIDECAR")
+  config.json: |
+    {
+      "agent_name": "$NAME",
+      "deploy_name": "$DEPLOY",
+      "watch_port": $WATCH_PORT,
+      "poll_interval_sec": 2,
+      "log_dir": "/opt/data/watch",
+      "db_path": "/opt/data/state.db",
+      "stream_file": "/opt/data/watch/stream.jsonl",
+      "plugin_dir": "/opt/data/plugins/$WATCH_PLUGIN_KEY",
+      "noisy_sources": ["cron", "subagent"]
+    }
+---
+# ── Token-level stream plugin (mounted into BOTH containers) ────────────────
+# The agent container loads it from /opt/data/plugins/$WATCH_PLUGIN_KEY (the
+# user plugin dir for HERMES_HOME=/opt/data); the watch container gets the same
+# path so stream.sh and /status can prove the plugin is really installed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: $DEPLOY-watch-plugin
+  labels:
+    app: sudo-agent
+    agent: $NAME
+data:
+  plugin.yaml: |
+$(sed 's/^/    /' "$WATCH_PLUGIN_DIR/plugin.yaml")
+  __init__.py: |
+$(sed 's/^/    /' "$WATCH_PLUGIN_DIR/__init__.py")
+---
+# ── Comm-gate plugin (the "load the comm skill first" gate) ───────────────
+# Mounted into BOTH containers: the agent loads it as a plugin; the watch
+# container gets the same path so the deploy probe can prove it is installed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: $DEPLOY-comm-gate-plugin
+  labels:
+    app: sudo-agent
+    agent: $NAME
+data:
+  plugin.yaml: |
+$(sed 's/^/    /' "$COMM_GATE_DIR/plugin.yaml")
+  __init__.py: |
+$(sed 's/^/    /' "$COMM_GATE_DIR/__init__.py")
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $DEPLOY-mcp
+  labels:
+    app: sudo-agent
+    agent: $NAME
+spec:
+  type: ClusterIP
+  selector:
+    app: sudo-agent
+    agent: $NAME
+  ports:
+  - name: mcp
+    port: 8000
+    targetPort: $MCP_PORT
+---
+# Observer sidecar Service: stable port 8000 -> per-agent WATCH_PORT
+# (hostNetwork pods share the node's network namespace, so the sidecar itself
+# listens on a unique per-agent port; the Service gives it a stable name).
+apiVersion: v1
+kind: Service
+metadata:
+  name: $DEPLOY-watch
+  labels:
+    app: sudo-agent
+    agent: $NAME
+spec:
+  type: ClusterIP
+  selector:
+    app: sudo-agent
+    agent: $NAME
+  ports:
+  - name: watch
+    port: 8000
+    targetPort: $WATCH_PORT
+YAMLEOF
+
+if [[ ! -s "$YAML" ]]; then
+  echo "✗ Failed to write $YAML" >&2; exit 1
+fi
+
+# ── Structural self-check on the generated manifest ─────────────────────────
+# The manifest is built by an UNQUOTED heredoc, so bash expands command
+# substitutions and backticks anywhere in its body — INCLUDING inside the YAML
+# comments. That is how the spurious "error: must specify one of -f and -k"
+# got into every deploy's output: a comment containing an unescaped
+# kubectl-backtick pair was executed as a command substitution on every run and
+# its (failed) output silently substituted into the file. The manifest stayed
+# loadable, so nothing ever failed — which is precisely the danger: the real
+# apply error would have been buried in a line operators had learned to ignore.
+# Escaping is the fix; this check is the backstop. It refuses to hand a
+# MANGLED manifest to `kubectl apply`, so a future stray substitution (or a
+# failed `sed` emitting the embedded ConfigMap sources) aborts the deploy
+# loudly instead of shipping a pod whose sidecar/plugin files are empty.
+_manifest_check() {
+  local missing=() kind n
+  for kind in PersistentVolumeClaim Deployment; do
+    grep -qx "kind: ${kind}" "$YAML" || missing+=("kind: ${kind}")
+  done
+  n="$(grep -cx "kind: ConfigMap" "$YAML" || true)"
+  [[ "${n:-0}" -eq 3 ]] || missing+=("3x kind: ConfigMap (found ${n:-0})")
+  n="$(grep -cx "kind: Service" "$YAML" || true)"
+  [[ "${n:-0}" -eq 2 ]] || missing+=("2x kind: Service (found ${n:-0})")
+  # The ConfigMap payloads are produced by `sed` command substitutions: if one
+  # of those fails, bash substitutes an empty string and the pod would mount an
+  # empty sidecar/plugin. Prove the bodies are really there.
+  local pat
+  for pat in 'watch_sidecar.py: |' 'plugin.yaml: |' '__init__.py: |' \
+             '"stream_file"' "sudo-agent/watch-scripts-sha: \"$WATCH_SCRIPTS_SHA\"" \
+             "name: $DEPLOY-comm-gate-plugin" "hostPath:" \
+             "claimName: $DEPLOY-data"; do
+    grep -qF -- "$pat" "$YAML" || missing+=("$pat")
+  done
+  if (( ${#missing[@]} == 0 )); then
+    return 0
+  fi
+  echo "✗ FATAL: the generated manifest $YAML is INCOMPLETE — missing:" >&2
+  printf '    %s\n' "${missing[@]}" >&2
+  echo "  The manifest body is an unquoted heredoc, so bash expands command" >&2
+  echo "  substitutions and backticks in it — including inside YAML comments." >&2
+  echo "  A stray or backslash-unescaped one silently EXECUTES a command and" >&2
+  echo "  eats part of the file. Fix the template and re-run; nothing was applied." >&2
+  return 1
+}
+_manifest_check || exit 1
+
+echo "→ YAML written: $YAML"
+
+# ── Import images into containerd ─────────────────────────────────────────────
+# The pod runs `sudo-agent:latest` with imagePullPolicy: IfNotPresent, so if the
+# import silently fails, the pod keeps running whatever STALE copy containerd
+# already had — a deploy that lies about what it shipped. This repo has paid for
+# that trap once already (a hermes-agent:latest older than the queue work), so
+# the agent image is now verified AFTER import and its absence is FATAL.
+_ctr_images() {
+  k3s ctr images ls -q 2>/dev/null || ctr -n k8s.io images ls -q 2>/dev/null || true
+}
+
+_image_present() {
+  local img="$1" refs
+  refs="$(_ctr_images)"
+  grep -Fxq "$img" <<<"$refs" && return 0
+  grep -Fxq "docker.io/library/$img" <<<"$refs" && return 0
+  return 1
+}
+
+# _retry N "description" cmd [args...] — run cmd up to N times with backoff.
+# The import can transiently fail (containerd busy during a concurrent import,
+# a slow disk, a just-started k3s) — retry before declaring it fatal.
+_retry() {
+  local n="$1" desc="$2"; shift 2
+  local i=1
+  while (( i <= n )); do
+    if "$@"; then return 0; fi
+    echo "⚠ ($desc) attempt $i/$n failed — retrying in ${i}s..." >&2
+    sleep "$i"
+    (( i++ ))
+  done
+  return 1
+}
+
+_import_once() {
+  local img="$1"
+  docker save "$img" | k3s ctr image import - \
+    || docker save "$img" | ctr -n k8s.io image import -
+}
+
+# ── Build-on-missing ─────────────────────────────────────────────────────────
+# k8s-up.sh drives a DEPLOY, not a build — but a deploy whose image is absent
+# used to hard-fail ("nothing to import. Build it first: bash setup.sh") and
+# leave the operator to go re-run a setup step mid-deploy. Build the image HERE
+# instead, and fail ONLY if the build itself fails.
+_build_hermes_base() {
+  local tmp
+  tmp="$(mktemp -d)" || return 1
+  _retry 3 "git clone hermes-agent" git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$tmp" \
+    || { rm -rf "$tmp"; return 1; }
+  _retry 3 "docker build hermes-agent" docker build -t hermes-agent:latest "$tmp" \
+    || { rm -rf "$tmp"; return 1; }
+  rm -rf "$tmp"
+  return 0
+}
+
+# _ensure_image_built IMG — build IMG when it is missing. hermes-agent:latest is
+# the sudo-agent BASE image, cloned + built exactly as setup.sh does it; every
+# other image builds from THIS factory's Dockerfile into the repo as context.
+_ensure_image_built() {
+  local img="$1"
+  docker image inspect "$img" >/dev/null 2>&1 && return 0
+  echo "→ docker image $img is missing locally — building it now..." >&2
+  if [[ "$img" == "hermes-agent:latest" ]]; then
+    _build_hermes_base || return 1
+  else
+    _retry 3 "docker build $img" docker build -t "$img" -f "$REPO_DIR/Dockerfile" "$REPO_DIR" || return 1
+  fi
+  docker image inspect "$img" >/dev/null 2>&1
+}
+
+_import_image() {
+  local img="$1"
+  if ! docker image inspect "$img" >/dev/null 2>&1; then
+    _ensure_image_built "$img" || {
+      echo "✗ FATAL: docker image $img is missing and could not be built — nothing to import." >&2
+      echo "  Build it manually:  bash setup.sh   (or: docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
+      exit 1
+    }
+  fi
+  _retry 3 "image import $img" _import_once "$img" \
+    || echo "⚠ all image-import attempts reported failure for $img — verifying containerd..." >&2
+  if ! _image_present "$img"; then
+    echo "✗ FATAL: $img is NOT in containerd after import." >&2
+    echo "  The pod would keep running a stale copy (imagePullPolicy: IfNotPresent). Deploy aborted." >&2
+    exit 1
+  fi
+  echo "→ $img present in containerd"
+}
+
+# The image the pods RUN must actually CONTAIN the sources baked into it, or the
+# deploy ships a pod without the code you just changed. Compared by CONTENT (a
+# digest of the three files COPYed into the image), not by mtime: an mtime check
+# raises false alarms on a touch or a fresh clone, and — worse — a no-op rebuild
+# is a build-cache hit that does NOT refresh the image timestamp, so the alarm
+# could never be cleared. Loud, with an explicit override.
+_src_digest() {
+  # $1 = directory holding the three files the Dockerfile COPYs into the image
+  sha256sum "$1/hermes_prompt.py" "$1/mcp_server.py" "$1/mcp_entrypoint.sh" 2>/dev/null \
+    | awk '{print $1}' | sha256sum | awk '{print $1}'
+}
+
+_image_digest() {
+  docker run --rm --entrypoint sha256sum "$1" \
+    /opt/hermes-mcp/hermes_prompt.py \
+    /opt/hermes-mcp/mcp_server.py \
+    /opt/hermes-mcp/mcp_entrypoint.sh 2>/dev/null \
+    | awk '{print $1}' | sha256sum | awk '{print $1}'
+}
+
+_assert_image_fresh() {
+  local img="sudo-agent:latest" want got
+  if ! docker image inspect "$img" >/dev/null 2>&1; then
+    # Build-on-missing (see _ensure_image_built): a deploy must not dead-end on
+    # an absent image. Only a BUILD failure is fatal here.
+    _ensure_image_built "$img" || {
+      echo "✗ FATAL: could not build $img. Build it first:" >&2
+      echo "    docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\"   (or bash setup.sh)" >&2
+      exit 1
+    }
+  fi
+  want="$(_src_digest "$SCRIPT_DIR")"
+  got="$(_image_digest "$img")"
+  if [[ -z "$got" || -z "$want" ]]; then
+    echo "⚠ could not read the MCP files out of $img — skipping the image-freshness check" >&2
+  elif [[ "$want" != "$got" ]]; then
+    if [[ "${SUDO_AGENT_ALLOW_STALE_IMAGE:-}" == "1" ]]; then
+      echo "⚠ $img does NOT contain the current sources — proceeding only because SUDO_AGENT_ALLOW_STALE_IMAGE=1" >&2
+    else
+      echo "✗ FATAL: $img does not contain the current mcp_server.py / hermes_prompt.py /" >&2
+      echo "  mcp_entrypoint.sh (repo digest $want, image digest $got)." >&2
+      echo "  The pod would run WITHOUT your latest code (imagePullPolicy: IfNotPresent)." >&2
+      echo "  Rebuild:  docker build -t $img -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\"" >&2
+      echo "  Override: SUDO_AGENT_ALLOW_STALE_IMAGE=1 bash bin/up.sh --$NAME" >&2
+      exit 1
+    fi
+  fi
+  # Secondary, advisory only: the Dockerfile / memory patcher are not readable
+  # from the image, so fall back to a timestamp note for those two.
+  local created_epoch=0 newest=0 f m created
+  created="$(docker image inspect "$img" --format '{{.Created}}' 2>/dev/null || true)"
+  created_epoch="$(date -d "$created" +%s 2>/dev/null || echo 0)"
+  for f in "$REPO_DIR/Dockerfile" "$REPO_DIR/patch_memory_review.py"; do
+    [[ -f "$f" ]] || continue
+    m="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+    if (( m > newest )); then newest=$m; fi
+  done
+  if (( created_epoch > 0 && newest > created_epoch )); then
+    echo "⚠ note: $img predates $REPO_DIR/Dockerfile or patch_memory_review.py; rebuild if you changed them" >&2
+  fi
+}
+
+echo "→ Importing images..."
+_assert_image_fresh
+_import_image hermes-agent:latest
+_import_image sudo-agent:latest
+
+# ── Apply ──
+# --validate=false lets the generated manifest through even when the local
+# kubectl schema predates a field in it; if apply itself fails, abort so the
+# operator is never told a broken apply "deployed".
+echo "→ Deploying..."
+if ! kubectl apply -f "$YAML" --validate=false; then
+  echo "✗ kubectl apply failed. Check: kubectl cluster-info" >&2
+  exit 1
+fi
+
+# ── Prove the token-stream hooks actually registered ────────────────────────
+# Applying YAML is not evidence that the agent will stream anything. This runs
+# INSIDE the new pod and asks Hermes' own plugin manager how many callbacks are
+# registered for the stream hooks. 0 means the plugin was not discovered (wrong
+# path/ConfigMap) or not enabled (config), and the operator would have opened
+# stream.sh onto a file that never appears — the silent breakage this repo
+# refuses to ship. Runs as the hermes user so nothing here can leave root-owned
+# files in the agent's PVC.
+WATCH_PROBE='from hermes_cli import plugins as p
+p._ensure_plugins_discovered(force=True)
+want = ["on_stream_start", "on_stream_delta", "on_stream_end",
+        "pre_api_request", "post_api_request",
+        "pre_tool_call", "post_tool_call"]
+counts = {h: len(p.iter_hook_callbacks(h)) for h in want}
+missing = [h for h in want if counts[h] < 1]
+print(" ".join("%s=%d" % (h, counts[h]) for h in want))
+if missing:
+    print("MISSING: " + ",".join(missing))
+raise SystemExit(0 if not missing else 3)'
+
+if [[ "${SUDO_AGENT_SKIP_STREAM_PROBE:-}" == "1" ]]; then
+  echo "⚠ SUDO_AGENT_SKIP_STREAM_PROBE=1 — NOT proving the $WATCH_PLUGIN_KEY stream hooks" >&2
+else
+  echo "→ Waiting for $DEPLOY rollout (then proving the stream hooks)..."
+  if ! kubectl rollout status "deploy/$DEPLOY" --timeout="${SUDO_AGENT_ROLLOUT_TIMEOUT:-300}s"; then
+    echo "✗ rollout did not complete for $DEPLOY — the token stream is UNVERIFIED." >&2
+    echo "  Check: kubectl describe deploy/$DEPLOY ; kubectl get pods" >&2
+    exit 1
+  fi
+  PROBE_CMD=(/opt/hermes/.venv/bin/python -c "$WATCH_PROBE")
+  if kubectl exec "deploy/$DEPLOY" -c sudo-agent -- runuser -u hermes -- true >/dev/null 2>&1; then
+    PROBE_CMD=(runuser -u hermes -- /opt/hermes/.venv/bin/python -c "$WATCH_PROBE")
+  fi
+  _probe_out="$(kubectl exec "deploy/$DEPLOY" -c sudo-agent -- "${PROBE_CMD[@]}" 2>&1)"
+  _probe_rc=$?
+  echo "   $WATCH_PLUGIN_KEY hooks: ${_probe_out##*$'\n'}"
+  if [[ $_probe_rc -ne 0 ]]; then
+    echo "✗ FATAL: $WATCH_PLUGIN_KEY did NOT register its whole-runtime hooks in $DEPLOY." >&2
+    echo "  probe said: $_probe_out" >&2
+    echo "  Every hook in the list above must report >=1 callback: the token lanes" >&2
+    echo "  (on_stream_*), the input context / completion (pre|post_api_request) and" >&2
+    echo "  the tool lanes (pre|post_tool_call). A missing tool hook means stream.sh" >&2
+    echo "  would silently lose tool calls and their FULL results." >&2
+    echo "  Check the $DEPLOY-watch-plugin ConfigMap, its mount at" >&2
+    echo "  /opt/data/plugins/$WATCH_PLUGIN_KEY, and plugins.enabled in $PER_AGENT_CONFIG." >&2
+    echo "  Override (leaves the stream unverified): SUDO_AGENT_SKIP_STREAM_PROBE=1" >&2
+    exit 1
+  fi
+fi
+
+# ── Prove the comm-gate hooks actually registered ───────────────────────────
+# on_skill_lifecycle is registered ONLY by sudo-comm-gate, so a count of 0
+# means the plugin was not discovered/enabled and the "load the comm skill
+# first" gate would silently never arm. Reuses the rollout already waited on.
+COMM_GATE_PROBE='from hermes_cli import plugins as p
+p._ensure_plugins_discovered(force=True)
+n = len(p.iter_hook_callbacks("on_skill_lifecycle"))
+print("on_skill_lifecycle=%d" % n)
+raise SystemExit(0 if n >= 1 else 4)'
+
+if [[ "${SUDO_AGENT_SKIP_COMM_GATE_PROBE:-}" == "1" ]]; then
+  echo "⚠ SUDO_AGENT_SKIP_COMM_GATE_PROBE=1 — NOT proving the $COMM_GATE_KEY hooks" >&2
+else
+  CG_PROBE_CMD=(/opt/hermes/.venv/bin/python -c "$COMM_GATE_PROBE")
+  if kubectl exec "deploy/$DEPLOY" -c sudo-agent -- runuser -u hermes -- true >/dev/null 2>&1; then
+    CG_PROBE_CMD=(runuser -u hermes -- /opt/hermes/.venv/bin/python -c "$COMM_GATE_PROBE")
+  fi
+  _cg_out="$(kubectl exec "deploy/$DEPLOY" -c sudo-agent -- "${CG_PROBE_CMD[@]}" 2>&1)"
+  _cg_rc=$?
+  echo "   $COMM_GATE_KEY hooks: ${_cg_out##*$'\n'}"
+  if [[ $_cg_rc -ne 0 ]]; then
+    echo "✗ FATAL: $COMM_GATE_KEY did NOT register on_skill_lifecycle in $DEPLOY." >&2
+    echo "  probe said: $_cg_out" >&2
+    echo "  The comm-skill prerequisite gate would silently never arm. Check the" >&2
+    echo "  $DEPLOY-comm-gate-plugin ConfigMap, its mount at" >&2
+    echo "  /opt/data/plugins/$COMM_GATE_KEY, and plugins.enabled in $PER_AGENT_CONFIG." >&2
+    echo "  Override (leaves the gate unverified): SUDO_AGENT_SKIP_COMM_GATE_PROBE=1" >&2
+    exit 1
+  fi
+fi
+
+echo ""
+echo "✓ $DEPLOY deployed"
+echo "  Queue:  $REDIS_URL via shared sudo-agent-redis (one drain worker per pod)"
+echo "  Talk:   kubectl exec -it deploy/$DEPLOY -- hermes"
+echo "  Shell:  kubectl exec -it deploy/$DEPLOY -- bash"
+echo "  MCP:    http://$DEPLOY-mcp:8000/mcp"
+echo "  Watch:  http://$DEPLOY-watch:8000/status  (also /ps /events /stream /healthz)"
+echo "  Stream: bash bin/stream.sh --$NAME  (the WHOLE runtime, live:"
+echo "          tokens + FULL tool calls/results + activity beats + housekeeping"
+echo "          turns + the agent log; --no-logs / --no-activity to trim,"
+echo "          -t/--transcript for the clean digest)"
+echo "  Logs:   kubectl logs deploy/$DEPLOY -f"
+echo "  Stop:   bash bin/down.sh --$NAME"
