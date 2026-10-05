@@ -1,0 +1,22 @@
+{
+  "name": "@letta-ai/letta-local-adapter",
+  "version": "0.1.0",
+  "description": "Paperclip adapter for Letta Code agents running on the local backend (spawns `letta -p` headless, no Letta server required).",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@paperclipai/adapter-utils": "latest"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0",
+    "@types/node": "^20.0.0"
+  },
+  "peerDependencies": {
+    "@paperclipai/adapter-utils": "*"
+  }
+}
