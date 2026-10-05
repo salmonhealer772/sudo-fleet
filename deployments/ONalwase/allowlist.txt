@@ -1,0 +1,5 @@
+lc-local-backend/agents/<b64url(agent-id)>.json   (record, name=ONalwase)
+lc-local-backend/memfs/<agent-id>/memory/          (brain: system/persona.md + human.md)
+settings.json                                      (resume pointer -> <agent-id>)
+# Excluded: memory/.git + memory-worktrees/ (history), lc-local-backend/secrets/,
+#           conversations/ (recreated/never shipped).
