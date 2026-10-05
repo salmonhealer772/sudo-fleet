@@ -1,5 +1,5 @@
 kind: letta
 source_agent_id: agent-local-a290e69d-fc84-495e-b46c-c7ed8aaeeae0
 name: Marc
-model: deepseek/deepseek-v4-pro
+model: Qwen/Qwen3-Coder-30B-A3B-Instruct
 ports: []
