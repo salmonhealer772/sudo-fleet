@@ -12,6 +12,3 @@ __pycache__/
 state.db
 .hermes_history
 version_cache.json
-profile.png
-deployments/Marc/letta/lc-local-backend/memfs/
-deployments/Marc/letta/lc-local-backend/agents/
