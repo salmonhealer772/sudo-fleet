@@ -1,34 +1,13 @@
-/**
- * letta_local — Paperclip adapter for Letta Code agents running on the
- * LOCAL backend (no `letta server` required).
- *
- * Mechanism (mirrors hermes_local): spawn `letta -p "<prompt>" --backend local
- * --agent <id>` headlessly, capture the reply + token usage, and report back as
- * an AdapterExecutionResult. The agent runs whatever model it is already
- * configured for (e.g. Qwen3.8-27B on the local A6000 vLLM) — this adapter does
- * NOT bind a model; it just drives the existing local agent.
- *
- * Contract: implements ServerAdapterModule from `@paperclipai/adapter-utils`.
- */
-
 import { spawn } from "node:child_process";
 
-// ---- Types (kept local/loose so this compiles without a hard adapter-utils
-// import at authoring time; align to the real package on install) ----
+// --- Config ---
 export interface LettaLocalAgentConfig {
-  /** The agent id to target (`--agent <id>`). */
   agentId?: string;
-  /** Optional agent name (resolved on the letta side if agentId omitted). */
   agentName?: string;
-  /** Path to the letta CLI. Defaults to `letta` on PATH. */
   lettaPath?: string;
-  /** HOME for the child (the Letta local backend + agents live under /home/node/.letta). */
   home?: string;
-  /** Seconds before the child is killed. */
   timeoutSec?: number;
-  /** Backend mode; almost always "local". */
   backend?: "local" | "cloud";
-  /** Extra args appended to the spawn. */
   extraArgs?: string[];
 }
 
@@ -40,24 +19,7 @@ export interface LettaLocalRunResult {
   durationMs: number;
 }
 
-interface AdapterExecutionContextLike {
-  agentName: string;
-  agentConfig: unknown;
-  prompt: string;
-  sessionId?: string | null;
-  heartbeatContext?: unknown;
-}
-
-interface AdapterExecutionResultLike {
-  status: "success" | "error";
-  output?: string;
-  error?: string;
-  tokenUsage?: { input?: number; output?: number; total?: number };
-  session?: Record<string, unknown> | null;
-  displayId?: string;
-}
-
-/** Run a `letta -p` headless prompt against the local backend. */
+// --- Core: spawn `letta -p` headless (the hermes_local pattern) ---
 export async function runLettaLocal(
   config: LettaLocalAgentConfig,
   prompt: string,
@@ -69,104 +31,105 @@ export async function runLettaLocal(
     "-p", prompt,
     ...(config.extraArgs ?? []),
   ];
-
   return await new Promise<LettaLocalRunResult>((resolve) => {
     const start = Date.now();
-    const timeoutMs = (config.timeoutSec ?? 600) * 1000;
     const child = spawn(letta, args, {
       env: { ...process.env, ...(config.home ? { HOME: config.home } : {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
-
     let stdout = "";
     let stderr = "";
     let timedOut = false;
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-    }, timeoutMs);
-
+    const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, (config.timeoutSec ?? 600) * 1000);
     child.stdout.on("data", (d) => (stdout += d.toString()));
     child.stderr.on("data", (d) => (stderr += d.toString()));
-
-    child.on("close", (exitCode) => {
+    child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({
-        stdout,
-        stderr,
-        exitCode: exitCode ?? -1,
-        timedOut,
-        durationMs: Date.now() - start,
-      });
+      resolve({ stdout, stderr, exitCode: code ?? -1, timedOut, durationMs: Date.now() - start });
     });
-
     child.on("error", (err) => {
       clearTimeout(timer);
-      resolve({
-        stdout,
-        stderr: stderr + String(err),
-        exitCode: -1,
-        timedOut,
-        durationMs: Date.now() - start,
-      });
+      resolve({ stdout, stderr: stderr + String(err), exitCode: -1, timedOut, durationMs: Date.now() - start });
     });
   });
 }
 
-/** Best-effort token-usage estimate (letta CLI does not emit token counts in
- * `-p` text mode; we return null rather than fabricate). */
-function estimateUsage(): { input?: number; output?: number; total?: number } {
-  return {};
-}
-
-/**
- * The adapter module entry — the object Paperclip loads.
- *
- * `type` must be `"letta_local"`. Paperclip calls `execute()` per heartbeat.
- */
-export const adapter = {
-  type: "letta_local",
-
-  async execute(ctx: AdapterExecutionContextLike): Promise<AdapterExecutionResultLike> {
-    const cfg = (ctx.agentConfig ?? {}) as LettaLocalAgentConfig;
-    try {
-      const res = await runLettaLocal(cfg, ctx.prompt);
-
-      if (res.exitCode !== 0 && !res.timedOut) {
-        return {
-          status: "error",
-          error: res.stderr || `letta exited ${res.exitCode}`,
-          output: res.stdout,
-          tokenUsage: estimateUsage(),
-        };
-      }
-
-      return {
-        status: "success",
-        output: res.stdout,
-        error: res.stderr || undefined,
-        tokenUsage: estimateUsage(),
-        session: ctx.sessionId ? { sessionId: ctx.sessionId } : null,
-        displayId: cfg.agentId ?? cfg.agentName ?? ctx.agentName,
-      };
-    } catch (e) {
-      return { status: "error", error: String(e) };
-    }
-  },
-
-  async testEnvironment(ctx: {
-    agentConfig?: unknown;
-  }): Promise<{ ok: boolean; message?: string }> {
-    const cfg = (ctx.agentConfig ?? {}) as LettaLocalAgentConfig;
-    const res = await runLettaLocal(cfg, "Reply with exactly one word: ping");
-    return {
-      ok: res.exitCode === 0 && res.stdout.trim().length > 0,
-      message: res.exitCode === 0
-        ? `letta local OK (${res.durationMs}ms)`
-        : `letta failed: ${res.stderr || res.exitCode}`,
-    };
-  },
+// --- The Paperclip ServerAdapterModule (contract from @paperclipai/adapter-utils) ---
+type AdapterExecutionContextLike = {
+  agentName: string;
+  agentConfig: unknown;
+  prompt: string;
+  sessionId?: string | null;
+  heartbeatContext?: unknown;
 };
 
-export default adapter;
+type AdapterExecutionResultLike = {
+  status: "success" | "error";
+  output?: string;
+  error?: string;
+  tokenUsage?: { input?: number; output?: number; total?: number };
+  session?: Record<string, unknown> | null;
+  displayId?: string;
+};
+
+type ServerAdapterModule = {
+  type: string;
+  models: Array<{ id: string; name: string }>;
+  agentConfigurationDoc?: Record<string, unknown>;
+  execute(ctx: AdapterExecutionContextLike): Promise<AdapterExecutionResultLike>;
+  testEnvironment(ctx: { agentConfig?: unknown }): Promise<{ ok: boolean; message?: string }>;
+};
+
+/**
+ * Factory entry — Paperclip's plugin-loader (`buildExternalAdapters`) imports the
+ * package root and calls `createServerAdapter()` to get the ServerAdapterModule.
+ * (This is the contract; NOT a bare exported object.)
+ */
+export function createServerAdapter(): ServerAdapterModule {
+  return {
+    type: "letta_local",
+
+    // UI metadata only — does NOT bind a model. The agent runs whatever model it
+    // is already configured for (Qwen3.8-27B on the local A6000 vLLM).
+    models: [{ id: "letta-local", name: "Letta Code (local backend)" }],
+
+    agentConfigurationDoc: {
+      agentId: { type: "string", required: false, description: "Agent id for `--agent <id>`" },
+      agentName: { type: "string", required: false, description: "Display name" },
+      lettaPath: { type: "string", required: false, description: "Path to the letta CLI (default `letta`)" },
+      home: { type: "string", required: false, description: "HOME for the child process" },
+      timeoutSec: { type: "number", required: false, description: "Child timeout seconds (default 600)" },
+    },
+
+    async execute(ctx) {
+      const cfg = (ctx.agentConfig ?? {}) as LettaLocalAgentConfig;
+      try {
+        const res = await runLettaLocal(cfg, ctx.prompt);
+        if (res.exitCode !== 0 && !res.timedOut) {
+          return { status: "error", error: res.stderr || `letta exited ${res.exitCode}`, output: res.stdout, tokenUsage: {} };
+        }
+        return {
+          status: "success",
+          output: res.stdout,
+          error: res.stderr || undefined,
+          tokenUsage: {},
+          session: ctx.sessionId ? { sessionId: ctx.sessionId } : null,
+          displayId: cfg.agentId ?? cfg.agentName ?? ctx.agentName,
+        };
+      } catch (e) {
+        return { status: "error", error: String(e) };
+      }
+    },
+
+    async testEnvironment(ctx) {
+      const cfg = (ctx.agentConfig ?? {}) as LettaLocalAgentConfig;
+      const res = await runLettaLocal(cfg, "Reply with exactly one word: ping");
+      return {
+        ok: res.exitCode === 0 && res.stdout.trim().length > 0,
+        message: res.exitCode === 0 ? `letta local OK (${res.durationMs}ms)` : `letta failed: ${res.stderr || res.exitCode}`,
+      };
+    },
+  };
+}
+
+export default createServerAdapter;
