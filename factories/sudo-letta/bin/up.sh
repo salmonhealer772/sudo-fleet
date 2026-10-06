@@ -832,7 +832,7 @@ PYEOF' || true
     # Commit the MemFS so the seeded skills load (best-effort: a no-op commit on
     # an already-clean tree is fine, and never a reason to fail the deploy).
     kubectl exec "$POD" -- bash -c "git -C '$_memfs_memory' init -q -b main 2>/dev/null; git -C '$_memfs_memory' add -A 2>/dev/null && git -C '$_memfs_memory' -c user.email=factory@localhost -c user.name=factory commit -q -m 'seed comm skills' >/dev/null 2>&1 || true"
-    echo "→ comm skills seeded into agent MemFS: list-siblings message-agent check-agent"
+    echo "→ skills seeded into agent MemFS: list-siblings message-agent check-agent switch-agent-model"
   else
     echo "⚠ no MemFS memory dir found (agent not created yet) — comm skills will land on the next deploy or the first --from-glimor fork" >&2
   fi
