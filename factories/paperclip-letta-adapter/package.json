@@ -1,7 +1,7 @@
 {
   "name": "@letta-ai/letta-local-adapter",
-  "version": "0.1.0",
-  "description": "Paperclip adapter for Letta Code agents on the local backend (spawns `letta -p` headless; no Letta server).",
+  "version": "0.2.0",
+  "description": "Paperclip adapter for the LIVE sudo-letta agent in k8s (drives the running pod via its MCP letta_prompt door; no local clone).",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
