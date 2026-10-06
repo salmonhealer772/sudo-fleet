@@ -1,6 +1,16 @@
 /**
  * letta_local — Paperclip adapter that drives the LIVE sudo-letta agent (k8s).
  *
+ * v0.2.1 — same rewire, plus a fix for losing long replies: the live door
+ * answers with `text/event-stream`, and sse-starlette injects a keep-alive
+ * COMMENT frame (`: ping - <ts>`) every 15s while a tool call is in flight. A
+ * call that outlived 15s therefore produced a body that no longer started with
+ * `event:`/`data:`, the old decoder returned `{}`, and the run died with
+ * "Cannot read properties of undefined (reading 'length')". `decodeMcpBody` is
+ * now a real SSE frame parser (skips comment/ping lines, joins multi-line data,
+ * matches the JSON-RPC reply id), `mcpRpc` fails loud on an unusable reply, and
+ * a malformed reply is retried once before giving up.
+ *
  * v0.2.0 — ONE JOB: a Paperclip heartbeat must run its prompt INSIDE the live
  * `deploy/sudo-<agent>` pod (the one `stream.sh --<agent>` tails), NOT in a
  * detached clone.
@@ -38,7 +48,7 @@
 
 import { appendFileSync } from "node:fs";
 
-const ADAPTER_VERSION = "0.2.0";
+const ADAPTER_VERSION = "0.2.1";
 const TRACE_PATH = process.env.PAPERCLIP_LETTA_TRACE ?? "/paperclip/adapter-trace.log";
 
 function trace(line: string): void {
@@ -49,9 +59,17 @@ function trace(line: string): void {
   }
 }
 
+/** Small backoff helper (used between bounded MCP retries). */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const DEFAULT_NAMESPACE = "sudo-fleet";
 const DEFAULT_TOOL = "letta_prompt";
 const DEFAULT_TIMEOUT_SEC = 600;
+/** Bounded retries for a single door (a malformed reply only; never a timeout). */
+const MAX_ATTEMPTS = 2;
+const RETRY_DELAY_MS = 1500;
 /** Last-resort door: the live ONalwase deployment (namespace sudo-fleet). */
 const FALLBACK_MCP_URL = "http://sudo-onalwase-mcp.sudo-fleet.svc.cluster.local:8000/mcp";
 
@@ -145,28 +163,78 @@ function resolvePrompt(ctx: any): string {
 
 type McpSession = { id?: string };
 
-function decodeMcpBody(raw: string): any {
-  const text = (raw ?? "").trim();
-  if (!text) return {};
-  if (text.startsWith("event:") || text.startsWith("data:")) {
-    for (const line of text.split("\n")) {
-      if (line.startsWith("data:")) {
-        const chunk = line.slice(5).trim();
-        if (!chunk) continue;
-        try {
-          return JSON.parse(chunk);
-        } catch {
-          continue;
-        }
-      }
+/**
+ * Decode an MCP (streamable HTTP) response body.
+ *
+ * The live door answers a request with `text/event-stream` (sse-starlette), and
+ * sse-starlette emits a keep-alive COMMENT frame — `: ping - <timestamp>` —
+ * every 15s while a long tool call is still in flight (`_ping`,
+ * DEFAULT_PING_INTERVAL = 15). A tool call that outlives that interval
+ * therefore gets a body that STARTS with the comment, not with `event:`/`data:`.
+ *
+ * The previous implementation only entered SSE parsing when the trimmed body
+ * started with `event:`/`data:` and otherwise fell through to JSON.parse(); a
+ * leading ping made it return `{}`, the caller then saw `result === undefined`,
+ * and `JSON.stringify(undefined).length` threw
+ * "Cannot read properties of undefined (reading 'length')" — losing the reply.
+ *
+ * Parse SSE frames properly instead: skip comment (ping) lines, join the
+ * multi-line `data:` payload of each frame per the SSE spec, then choose the
+ * frame that is the JSON-RPC reply we asked for.
+ */
+function decodeMcpBody(raw: string, expectedId?: string): any {
+  const text = raw ?? "";
+  if (!text.trim()) return {};
+
+  // Fast path: a plain (non-SSE) JSON body.
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      /* fall through to SSE parsing */
     }
-    return {};
   }
-  try {
-    return JSON.parse(text);
-  } catch {
-    return {};
+
+  // SSE: walk lines, accumulate `data:` payloads into frames. Blank line ends a
+  // frame; a line starting with ':' is a comment (keep-alive ping) — ignore it.
+  const frames: string[] = [];
+  let data: string[] = [];
+  const flush = () => {
+    if (data.length) frames.push(data.join("\n"));
+    data = [];
+  };
+  for (const line of text.split(/\r?\n/)) {
+    if (line === "") {
+      flush();
+      continue;
+    }
+    if (line.startsWith(":")) continue; // comment / ping — not payload
+    if (line.startsWith("data:")) {
+      data.push(line.slice(5).replace(/^ /, ""));
+      continue;
+    }
+    // event: / id: / retry: — frame metadata, not needed here
   }
+  flush();
+
+  const parsed: any[] = [];
+  for (const frame of frames) {
+    if (!frame.trim()) continue;
+    try {
+      parsed.push(JSON.parse(frame));
+    } catch {
+      /* not JSON (or a partial frame) — skip */
+    }
+  }
+  if (!parsed.length) return {};
+
+  if (expectedId !== undefined) {
+    const match = parsed.find((p) => p && String(p.id ?? "") === String(expectedId));
+    if (match) return match;
+  }
+  const withPayload = parsed.find((p) => p && (p.result !== undefined || p.error !== undefined));
+  return withPayload ?? parsed[parsed.length - 1];
 }
 
 const fetchFn: any = (globalThis as any).fetch;
@@ -200,7 +268,11 @@ async function mcpPost(url: string, payload: unknown, session: McpSession, timeo
     if (sid) session.id = sid;
     const raw = await res.text();
     if (!res.ok) throw new Error(`HTTP ${res.status}: ${raw.slice(0, 200)}`);
-    return decodeMcpBody(raw);
+    const expectedId =
+      payload && typeof payload === "object" && "id" in (payload as any)
+        ? String((payload as any).id)
+        : undefined;
+    return decodeMcpBody(raw, expectedId);
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -215,7 +287,14 @@ async function mcpRpc(
 ): Promise<any> {
   const reply = await mcpPost(url, { jsonrpc: "2.0", id: method, method, params }, session, timeoutMs);
   if (reply && reply.error) throw new Error(`MCP ${method} failed: ${JSON.stringify(reply.error)}`);
-  return reply ? reply.result : reply;
+  // Fail LOUDLY and legibly on an unusable reply (empty body, unparsable stream,
+  // wrong frame) instead of letting `undefined` travel downstream and surface as
+  // a confusing TypeError.
+  if (!reply || (reply as any).result === undefined) {
+    const seen = reply === undefined ? "undefined" : JSON.stringify(reply).slice(0, 200);
+    throw new Error(`MCP ${method} returned no result (reply=${seen})`);
+  }
+  return (reply as any).result;
 }
 
 async function mcpNotify(
@@ -282,55 +361,72 @@ export async function runLettaLive(
   let timedOut = false;
 
   for (const url of candidates) {
-    const session: McpSession = {};
-    try {
-      const init = await mcpRpc(
-        url,
-        "initialize",
-        {
-          protocolVersion: "2024-11-05",
-          capabilities: {},
-          clientInfo: { name: "paperclip-letta-local", version: ADAPTER_VERSION },
-        },
-        session,
-        Math.min(15000, timeoutMs),
-      );
-      await mcpNotify(url, "notifications/initialized", {}, session, 5000);
-      trace(
-        "MCP-INIT url=" +
-          url +
-          " server=" +
-          JSON.stringify(init?.serverInfo ?? null) +
-          " sid=" +
-          (session.id ?? "-"),
-      );
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const session: McpSession = {};
+      try {
+        const init = await mcpRpc(
+          url,
+          "initialize",
+          {
+            protocolVersion: "2024-11-05",
+            capabilities: {},
+            clientInfo: { name: "paperclip-letta-local", version: ADAPTER_VERSION },
+          },
+          session,
+          Math.min(15000, timeoutMs),
+        );
+        await mcpNotify(url, "notifications/initialized", {}, session, 5000);
+        trace(
+          "MCP-INIT url=" +
+            url +
+            " server=" +
+            JSON.stringify(init?.serverInfo ?? null) +
+            " sid=" +
+            (session.id ?? "-"),
+        );
 
-      const result = await mcpRpc(
-        url,
-        "tools/call",
-        { name: tool, arguments: { prompt, new_chat: config.newChat === true, mode } },
-        session,
-        timeoutMs,
-      );
-      const out = unwrapToolResult(result);
-      const text = typeof out === "string" ? out : JSON.stringify(out, null, 2);
-      const isError = !!(result && (result as any).isError);
-      trace("MCP-DONE url=" + url + " mode=" + mode + " out=" + text.length + " isError=" + isError);
-      return {
-        stdout: text,
-        stderr: isError ? `MCP tool ${tool} reported an error` : "",
-        exitCode: isError ? 1 : 0,
-        timedOut: false,
-        durationMs: Date.now() - started,
-        url,
-      };
-    } catch (e: any) {
-      const msg = String(e?.message ?? e);
-      if (String(e?.name) === "AbortError" || /abort/i.test(msg) || /timed? ?out/i.test(msg)) {
-        timedOut = true;
+        const result = await mcpRpc(
+          url,
+          "tools/call",
+          { name: tool, arguments: { prompt, new_chat: config.newChat === true, mode } },
+          session,
+          timeoutMs,
+        );
+        const out = unwrapToolResult(result);
+        // `out` can legitimately be undefined (e.g. a tool that returns no text).
+        // JSON.stringify(undefined) is undefined, so never read .length unguarded.
+        const text =
+          typeof out === "string"
+            ? out
+            : out === undefined || out === null
+              ? ""
+              : JSON.stringify(out, null, 2);
+        const isError = !!(result && (result as any).isError);
+        trace("MCP-DONE url=" + url + " mode=" + mode + " out=" + text.length + " isError=" + isError);
+        return {
+          stdout: text,
+          stderr: isError ? `MCP tool ${tool} reported an error` : "",
+          exitCode: isError ? 1 : 0,
+          timedOut: false,
+          durationMs: Date.now() - started,
+          url,
+        };
+      } catch (e: any) {
+        const msg = String(e?.message ?? e);
+        const aborted =
+          String(e?.name) === "AbortError" || /abort/i.test(msg) || /timed? ?out/i.test(msg);
+        if (aborted) timedOut = true;
+        errors.push(attempt > 1 ? `${url} (attempt ${attempt}) -> ${msg}` : `${url} -> ${msg}`);
+        trace("MCP-FAIL url=" + url + " attempt=" + attempt + " " + msg);
+        // A malformed/empty reply is worth one more shot; a real abort or
+        // timeout is not (it would only multiply the wall clock).
+        if (!aborted && attempt < MAX_ATTEMPTS) {
+          trace("MCP-RETRY url=" + url + " attempt=" + (attempt + 1));
+          await sleep(RETRY_DELAY_MS * attempt);
+        } else {
+          break;
+        }
       }
-      errors.push(`${url} -> ${msg}`);
-      trace("MCP-FAIL url=" + url + " " + msg);
     }
   }
 
