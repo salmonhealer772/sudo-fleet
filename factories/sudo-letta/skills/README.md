@@ -1,22 +1,31 @@
-# sudo-letta comm skills
+# sudo-letta skills
 
-The three comm-tool skills an agent is born with, one directory per skill (each
-is a single `SKILL.md`, matching the MemFS layout Letta auto-loads from
+The skills an agent is born with, one directory per skill (each is a single
+`SKILL.md`, matching the MemFS layout Letta auto-loads from
 `memfs/<agent-id>/memory/skills/<name>/SKILL.md`):
+
+Comm layer — the three tools every agent needs to talk to its siblings:
 
 - `list-siblings/`  → the "who exists and how do I reach them" procedure
 - `message-agent/`  → the reach-and-message-any-sibling recipe (the mesh's core)
 - `check-agent/`    → the "read a sibling's trail at any depth" recipe
 
-These are the SKILL half of the comm layer; the TOOL half is the matching mod
-packages in this repo's `mods/` dir (installed at deploy time by
+Operations — shipped the same way, not part of the comm layer:
+
+- `switch-agent-model/` → switch the model an agent runs on (Hermes engineer OR
+  Letta planner), check a handle is available, and verify for real that the
+  switch took effect.
+
+The comm three are the SKILL half of the comm layer; the TOOL half is the
+matching mod packages in this repo's `mods/` dir (installed at deploy time by
 `bin/up.sh` — see the `COMM_MODS` block). Tool + skill + persona align
 so the agent actually reaches for them; a tool without its skill is a bare
 callable nobody uses.
 
 `bin/up.sh` copies this `skills/` dir into the pod and drops it into
 the agent's MemFS `memory/skills/` on every deploy (see the "comm-layer skills"
-block there), so every planner is born able to list/message/check its siblings.
+block there), so every planner is born able to list/message/check its siblings
+and switch any agent's model.
 
 CANONICAL SOURCE: this repo on `main`, at `factories/sudo-letta/skills/`.
 These are first-class files, not a vendored snapshot — edit them here; the
