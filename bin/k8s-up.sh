@@ -206,6 +206,24 @@ for svc in sudo-marc-mcp sudo-marc-watch sudo-caesar-mcp sudo-caesar-watch; do
     || die "Service $svc missing"
 done
 
+# --- 5. Paperclip control plane + AUTO-HIRE ---------------------------------
+# sudo-fleet ships with Paperclip (docs/PAPERCLIP.md). Standing the fleet up
+# brings the control plane up too, then hires every agent that now exists — so
+# "the fleet is up" and "every agent is hired with a heartbeat" are the same
+# event, with no manual step.
+# Deliberately NON-FATAL: the router pair is the fleet, and it must come up even
+# on a box too small for the control plane. Re-run bin/paperclip-up.sh later.
+step "5/5 Paperclip control plane + auto-hire"
+if [[ -x "$FLEET_HOME/bin/paperclip-up.sh" ]]; then
+  if bash "$FLEET_HOME/bin/paperclip-up.sh"; then
+    bash "$FLEET_HOME/bin/paperclip-adopt.sh" || warn "auto-hire reported failures — see above"
+  else
+    warn "bin/paperclip-up.sh failed — fleet is up, but Paperclip/auto-hire did not complete"
+  fi
+else
+  warn "bin/paperclip-up.sh missing — Paperclip control plane NOT installed"
+fi
+
 ok "router pair running: sudo-marc (planner) + sudo-caesar (engineer)"
 kubectl get pods -l 'agent in (marc,caesar)' -o wide
 echo ""

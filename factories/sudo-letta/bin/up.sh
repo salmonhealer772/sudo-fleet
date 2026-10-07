@@ -895,6 +895,22 @@ FLEETBLOCK
 
   echo "→ Letta configured"
 fi
+# ── Paperclip auto-hire ──────────────────────────────────────────────────────
+# Standing an agent up ALSO hires it. sudo-fleet ships with Paperclip (the
+# control plane), and an agent that exists in the cluster but not in Paperclip
+# is a wiring bug — so the hire happens here, automatically, right after the
+# deployment is Ready. Non-fatal on purpose: a fleet without the control plane
+# still deploys, and bin/paperclip-adopt.sh (also run on every boot, and at the
+# end of bin/k8s-up.sh) reconciles anything that was missed.
+_FLEET_HOME="$(cd "$REPO_DIR/../.." && pwd)"
+if [[ -x "$_FLEET_HOME/bin/paperclip-hire.sh" && -f /logs/paperclip/paperclip.env ]]; then
+  echo ""
+  echo "→ hiring $DEPLOY in Paperclip (auto-hire)"
+  bash "$_FLEET_HOME/bin/paperclip-hire.sh" --name "${NAME^}" --deploy "$DEPLOY" \
+    || echo "⚠ Paperclip auto-hire failed for $DEPLOY (non-fatal; run bin/paperclip-adopt.sh)" >&2
+fi
+unset _FLEET_HOME
+
 echo "  Talk:   kubectl exec -it deploy/$DEPLOY -- bash -c 'letta'"
 echo "  Shell:  kubectl exec -it deploy/$DEPLOY -- bash"
 echo "  MCP:    http://$DEPLOY-mcp:8000/mcp"
