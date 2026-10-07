@@ -267,7 +267,7 @@ pc_exec sh -c "cat > /paperclip/adapter-plugins.json" <<JSON
   {
     "packageName": "@letta-ai/letta-local-adapter",
     "localPath": "$ADAPTER_DIR",
-    "version": "0.2.1",
+    "version": "0.3.1",
     "type": "letta_local",
     "installedAt": "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
   }

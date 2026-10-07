@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-local-adapter",
-  "version": "0.2.1",
+  "version": "0.3.1",
   "description": "Paperclip adapter for the LIVE sudo-letta agent in k8s (drives the running pod via its MCP letta_prompt door; no local clone).",
   "type": "module",
   "main": "dist/index.js",

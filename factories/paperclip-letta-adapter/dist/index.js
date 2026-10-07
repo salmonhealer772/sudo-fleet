@@ -46,7 +46,7 @@
  * rewritten for the fix to take effect.
  */
 import { appendFileSync } from "node:fs";
-const ADAPTER_VERSION = "0.3.0";
+const ADAPTER_VERSION = "0.3.1";
 const TRACE_PATH = process.env.PAPERCLIP_LETTA_TRACE ?? "/paperclip/adapter-trace.log";
 function trace(line) {
     try {
@@ -369,7 +369,15 @@ export async function runLettaLive(config, prompt) {
                     JSON.stringify(init?.serverInfo ?? null) +
                     " sid=" +
                     (session.id ?? "-"));
-                const result = await mcpRpc(url, "tools/call", { name: tool, arguments: { prompt, new_chat: config.newChat === true, mode } }, session, timeoutMs);
+                const toolArgs = { prompt, mode };
+                // Only send `new_chat` when a fresh conversation is actually wanted.
+                // The Hermes door (`hermes_prompt`) has no such parameter and rejects
+                // the whole call with "unexpected_keyword_argument" if it is present —
+                // and omitting it is equivalent for the Letta door, whose default is
+                // false. So: presence of the key means "start a new chat".
+                if (config.newChat === true)
+                    toolArgs.new_chat = true;
+                const result = await mcpRpc(url, "tools/call", { name: tool, arguments: toolArgs }, session, timeoutMs);
                 const out = unwrapToolResult(result);
                 // `out` can legitimately be undefined (e.g. a tool that returns no text).
                 // JSON.stringify(undefined) is undefined, so never read .length unguarded.
