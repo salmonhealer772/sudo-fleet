@@ -306,7 +306,17 @@ if [[ -f "$CRED" ]]; then
 fi
 
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@paperclip.local}"
-ADMIN_PW="$(_rand_hex | cut -c1-24)"
+# The password MUST survive a re-run: the first run creates the user, so a
+# second run has to sign IN with the same secret to mint a key. Persist it.
+PW_FILE="$LOG_DIR/admin.pw"
+if [[ -s "$PW_FILE" ]]; then
+  ADMIN_PW="$(cat "$PW_FILE")"
+  ok "reusing stored admin password"
+else
+  ADMIN_PW="$(_rand_hex | cut -c1-24)"
+  ( umask 077; printf '%s\n' "$ADMIN_PW" > "$PW_FILE" )
+  chmod 600 "$PW_FILE" 2>/dev/null || $SUDO chmod 600 "$PW_FILE" 2>/dev/null || true
+fi
 
 if pc_curl http://127.0.0.1:3100/api/health 2>/dev/null | grep -q '"bootstrapStatus":"ready"'; then
   ok "instance already bootstrapped — signing in"
@@ -336,14 +346,14 @@ else
     -H 'Content-Type: application/json' -H "Origin: $ORIGIN" -H "Referer: $ORIGIN/" \
     -d "{\"email\":\"$EMAIL\",\"password\":\"$PW\"}"
 fi
-curl -sS -b "$JAR" -c "$JAR" -X POST "$API/board-api-keys" \
+curl -sS -b "$JAR" -c "$JAR" -X POST "$API/api/board-api-keys" \
   -H 'Content-Type: application/json' -H "Origin: $ORIGIN" -H "Referer: $ORIGIN/" \
   -d '{"name":"sudo-fleet-autohire"}' -o /tmp/pc-key.json
 echo "KEY:"; cat /tmp/pc-key.json; echo
 BOOT
 cat /tmp/pc-boot.out
 
-BOARD_KEY="$(sed -n 's/.*"key":"\([^"]*\)".*/\1/p' /tmp/pc-boot.out | tail -1)"
+BOARD_KEY="$(sed -n 's/.*"token":"\([^"]*\)".*/\1/p' /tmp/pc-boot.out | tail -1)"
 [[ -n "$BOARD_KEY" ]] || die "could not mint a board API key — see output above"
 ok "board API key minted"
 
