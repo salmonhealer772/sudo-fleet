@@ -44,16 +44,24 @@ PER_AGENT_CONFIG="$CONFIG_DIR/$NAME.yaml"
 
 # Per-agent MCP server port. Every sudo-agent pod runs hostNetwork:true, so all
 # pods share the node's network namespace and a single fixed port would collide.
-# Derive a stable, unique port from the agent name (stays below the ephemeral
-# range, 32768+). The Service below exposes a stable port 8000 and forwards
-# (targetPort) to this unique per-agent port.
-MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 24768 ))
+# Derive a stable, unique port from the agent name. The window MUST stay clear
+# of BOTH reserved ranges on a single-node cluster:
+#   * 30000-32767 — the Kubernetes NodePort range. A hostNetwork pod listening
+#     inside it is UNREACHABLE from other pods: kube-proxy's KUBE-NODEPORTS
+#     handling intercepts the packet (there is no NodePort there, so it is
+#     dropped and the client just times out). Verified live: an agent whose
+#     hash landed on 30765 got "fetch failed" on EVERY heartbeat through its
+#     `sudo-<agent>-mcp` service while agents on 26926/22700 worked.
+#   * 32768+ — the ephemeral range.
+# So the window is 8000..29999 (22000 values), which is clear of both.
+# The Service below exposes a stable port 8000 and forwards (targetPort) here.
+MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
 
 # Per-agent WATCH (observer sidecar) port — same hostNetwork collision rules
 # as MCP_PORT, but hashed from a DIFFERENT string ("$NAME-watch") so it never
 # collides with the MCP port. Guard bumps by 1 in the (astronomically rare) case
 # the two hashes land on the same port.
-WATCH_PORT=$(( 8000 + $(printf '%s-watch' "$NAME" | cksum | cut -d' ' -f1) % 24768 ))
+WATCH_PORT=$(( 8000 + $(printf '%s-watch' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
 if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
   WATCH_PORT=$(( MCP_PORT + 1 ))
 fi
