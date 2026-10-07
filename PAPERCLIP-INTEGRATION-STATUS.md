@@ -1,37 +1,74 @@
-# Paperclip Integration — Status (2026-10-06)
+# Paperclip Integration — Status (2026-10-07)
 
 ## Where we are
-Building a "Paperclip section" in sudo-fleet so normal sudo-fleet agents (ONalwase/Marc = Letta planners, Caesar = Hermes engineer) can be registered as Paperclip agents, get heartbeats, and work the Paperclip issue/goal system. ONalwase is the designated **fleet manager** (always-on; scans goals, decomposes into child issues, assigns to Marc/Caesar, follows up; silent unless asked or something breaks).
 
-Target repo: `salmonhealer772/sudo-fleet`, branch `paperclip`. New code home: `factories/paperclip-ops/ops/` (comm-style: `docs/-CONTRACT.md`, `features/.feature`, `skills//SKILL.md`, `tests/test_*.py`, `tools/*.py`).
+Paperclip is now **native to sudo-fleet**: bringing the fleet up brings the
+control plane up and hires every agent, and building an agent hires that agent.
+The core deliverable — **new-agent auto-hire** — is done and proven live, not
+self-reported.
 
-## What's DONE (verified — files actually on origin)
-### Live / Paperclip side
-- Paperclip deployed in k3s ns `paperclip` (+ Postgres), bootstrap `ready`, admin creds in `/logs/paperclip/credentials.txt`.
-- **3 Paperclip agents hired**: ONalwase (`letta_local`→`sudo-onalwase-mcp`, heartbeat 5s), Marc (`letta_local`→`sudo-marc-mcp`, 600s), Caesar (`hermes_gateway`→`sudo-caesar-mcp`, 600s).
-- Custom `letta_local` adapter registered + driving the LIVE pod (not a clone), `inbox` mode, heartbeat prompt delivered.
+Target repo: `salmonhealer772/sudo-fleet`, branch `paperclip`. Code home:
+`bin/paperclip-{up,hire,adopt}.sh`, `factories/paperclip-letta-adapter/`,
+`docs/PAPERCLIP.md`.
 
-### Repo (verified files on `paperclip-ops/*` branches)
-- `paperclip_api.py` (control-plane: issues/goals/routines) ✅
-- `issue_triage.py` ✅
-- `task_planning.py` ✅
-- `summarize_status.py` + `status_card_query.py` ✅
-- 9 `docs/*-CONTRACT.md` ✅
-- (partial) tests/conftest/fakes ✅
-- 10 official Paperclip skills imported into memory + the `fa-glm-skills` repo.
+## Proven on a fresh VM (paperclip-test, Ubuntu 24.04, 2 vCPU / 4 GB, 2026-10-07)
 
-## What's MISSING (reported "DONE" but branches are EMPTY on origin)
-⚠️ These were self-reported complete by the DeepSeek lings but **0 files landed**:
-- `paperclip-ops/adapter-env` — the CRITICAL env-forwarding fix (forward PAPERCLIP_* run JWT/env through letta_local so ONalwase can self-auth). REBUILD REQUIRED.
-- `paperclip-ops/goal-decompose` — goal→child-issue graph engine.
-- `paperclip-ops/assign-picker` — role→live-agent mapping (dynamic roster).
-- `paperclip-ops/attention-detector` — "needs human" escalation.
-- `paperclip-ops/fleet-manager` — the manager SKILL + heartbeat Objective contract.
-- `paperclip-ops/harness` (fa-glm-h6) — ops_gate/ops_tools/conftest (never persisted).
+Box: `64.176.193.148`, root password auth. Clean install from the repo README.
 
-## What's NEXT (next session)
-1. REBUILD the 6 missing pieces (NOT re-trust self-reports — verify each branch has real files before accepting).
-2. Merge all `paperclip-ops/*` into `paperclip` (file-disjoint; do merges + read-back myself).
-3. Run the full pytest suite once merged.
-4. Deploy live: re-apply adapter env-forwarding to the cluster, set ONalwase's manager prompt (scan goals → decompose → assign → follow up → silent unless asked/breaking).
-5. Prove end-to-end: set a Goal → ONalwase decomposes → assigns Marc/Caesar → child issue. ## Correct next anchor
+1. `bash setup.sh` → COMPLETE. Docker + k3s (v1.36.5+k3s1) + all three images
+   (`hermes-agent:latest`, `sudo-agent:latest`, `sudo-letta:latest`).
+2. `cd bin && bash k8s-up.sh` → Marc 2/2, Caesar 2/2, then step 5/5 deployed
+   Paperclip (ns `paperclip`, Postgres 1/1, app 1/1, `/api/health` ok,
+   external adapter `letta_local` loaded) and hired **both** agents:
+   `✓ all sudo-fleet agents are hired in Paperclip`.
+3. `bash factories/sudo-letta/bin/up.sh --smoketest` → a **brand-new** agent,
+   and its deploy log ends with
+   `✓ hired 'Smoketest' as Paperclip agent 0f23f9b0-…` — no manual step.
+4. Issue `SUD-3` created and assigned to that new agent → `todo` →
+   `in_progress` → **`done`** in 75 s, with an agent-authored comment
+   (`authorType: "agent"`, `createdByRunId` set).
+
+### Read-backs
+
+| Check | Result |
+|---|---|
+| agents hired | Marc `eee275f1…`, Caesar `e70ed882…`, Smoketest `0f23f9b0…`, all `adapterType: letta_local` |
+| heartbeat | `{enabled: true, intervalSec: 120, maxConcurrentRuns: 1}` on all three |
+| heartbeat runs | `MCP-DONE … isError=false`, `CLOSE exit=0`; agent status `idle` |
+| MCP doors | `sudo-{marc,caesar,smoketest}-mcp` services all have endpoints |
+| live-agent completion | `letta -p "Reply with exactly: PONG"` → `PONG` |
+| `tags` | `["origin:letta-code","git-memory-enabled"]` (no tutorial/onboarding tags → real persona) |
+| `context_window_limit` | `128000`, under the served cap (no 400 overflow) |
+| memfs | git-committed (`seed-fork-state`, `seed comm skills`) |
+| issues | `SUD-1` (Marc) done; `SUD-3` (new agent) done |
+
+## What landed (branch `paperclip`)
+
+- `bin/paperclip-up.sh` — deploy the control plane, register the `letta_local`
+  external adapter from a **prebuilt** `dist/`, then bootstrap an instance admin
+  + board API key + company into `/logs/paperclip/paperclip.env` (0600).
+- `bin/paperclip-hire.sh` — hire one agent: record + heartbeat + injected
+  `PAPERCLIP_*` env into the agent's own Deployment.
+- `bin/paperclip-adopt.sh` — reconcile every `sudo-*` deployment.
+- Wiring so it is automatic: `k8s-up.sh` step 5/5, both factory `up.sh` scripts,
+  and `k8s-auto-up.sh` on every boot.
+- Adapter v0.3.1 — `apiUrl` config + a Paperclip control-plane block appended to
+  every heartbeat prompt (the env-forwarding piece a previous session reported
+  done but never landed).
+- Repo-level fixes found by this run: stale `sudo-agent` heredoc guard (blocked
+  the Caesar deploy), `letta model set` double-prefixing the model handle,
+  letta's stale `deepseek` catalog (now connected as `openai-compatible`), and
+  the adapter sending `new_chat` to a door that has no such parameter.
+
+## Still open
+
+- `k8s-down.sh` does not tear Paperclip down as a unit.
+- The seeded planner persona (Marc) sometimes answers a heartbeat without
+  closing the assigned issue (`SUD-2` stayed `in_progress`). Wiring is fine —
+  runs are delivered and succeed — but planner-style agents need the
+  manager/objective contract.
+- The earlier `paperclip-ops/*` branches (goal-decompose, assign-picker,
+  attention-detector, fleet-manager, adapter-env, issue-triage, paperclip-api)
+  are still separate and unmerged; they are a *manager-agent* layer on top of
+  this auto-hire base and are not required for it to work.
+- Demo-default exposure: NodePort `:31310`, no TLS, no edge gate.

@@ -46,6 +46,18 @@ TAVILY_API_KEY=$TAVILY_API_KEY       # may be empty
 > `factories/sudo-letta/` (their own live `.env`/`deployments/` stay untracked).
 > `sudo-fleet/deployments/{Marc,Caesar}/` (the committed glimors) ARE tracked.
 
+## Paperclip is built in (auto-hire)
+
+sudo-fleet ships with **Paperclip**, the agent control plane, and every agent it
+stands up is **hired automatically** — Marc, Caesar, ONalwase, and any new agent
+you build. `bin/k8s-up.sh` deploys the control plane after the router pair and
+hires everything; each `up.sh --<agent>` hires the agent it just built; and
+`bin/k8s-auto-up.sh` reconciles on every boot. Hired means: an agent record on
+the `letta_local` MCP-door adapter pointed at the LIVE pod, `runtimeConfig`
+heartbeat enabled, and `PAPERCLIP_*` credentials injected into the agent's own
+Deployment so it can close the issue it was woken for. See
+[`docs/PAPERCLIP.md`](docs/PAPERCLIP.md).
+
 ## Custom / Featherless provider
 
 To use a custom OpenAI-compatible endpoint (e.g. Featherless), set the
