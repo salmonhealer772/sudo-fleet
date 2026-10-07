@@ -509,13 +509,15 @@ _HD_BODY="$(awk -v s="$_HD_START" -v e="$_HD_END" 'NR > s && NR < e' "$0")"
 # 1) every backtick must be backslash-escaped: drop the escaped pairs, and
 #    anything still holding a backtick is a command the shell would RUN.
 _HD_BACKTICKS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\`//g' | grep -c '`' || true)"
-# 2) the only command substitutions allowed are the three sed indent helpers.
-#    An ESCAPED \$( is inert (it renders as literal text and never runs), so
-#    it is removed before counting — that is what lets these comments document
-#    the hazard without tripping the guard.
+# 2) the only command substitutions allowed are the three sed indent helpers
+#    that embed the ConfigMap payloads, PLUS the two `$(printf '%s' "$KEY" |
+#    base64 -w0)` Secret encoders — so 7 in total. An ESCAPED \$( is inert (it
+#    renders as literal text and never runs), so it is removed before counting —
+#    that is what lets these comments document the hazard without tripping the
+#    guard.
 _HD_SUBS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\\$[(]//g' \
              | grep -o '\$(' | wc -l | tr -d ' ')"
-_HD_KNOWN_SUBS=5
+_HD_KNOWN_SUBS=7
 if [[ "$_HD_BACKTICKS" -ne 0 || "$_HD_SUBS" -ne "$_HD_KNOWN_SUBS" ]]; then
   echo "✗ FATAL: the manifest heredoc in $0 contains a command the shell would" >&2
   echo "  EXECUTE on every deploy (unescaped backticks: $_HD_BACKTICKS; command" >&2
@@ -654,7 +656,7 @@ $SEED_INITCONTAINERS
             secretKeyRef:
               name: ${DEPLOY}-api-key
               key: deepseek-api-key
-        # Env var a custom_providers entry references via `key_env` — so a
+        # Env var a custom_providers entry references via \`key_env\` — so a
         # Featherless/custom OpenAI-compatible endpoint's Bearer token resolves
         # inside the pod without the key ever being written into config.yaml.
         - name: LLM_API_KEY
