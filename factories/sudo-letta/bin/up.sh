@@ -558,6 +558,30 @@ if [[ -n "$POD" ]]; then
   # Self-verifying — no hard-coded provider list to drift out of date.
   CONNECT_PROVIDER="${LLM_PROVIDER:-}"
 
+  # ── Known-stale built-in provider: deepseek ────────────────────────────
+  # letta-code's built-in `deepseek` provider ships a static catalog whose
+  # upstream name for `deepseek-v4-pro` is the OLD string
+  # "deepseek-ai/DeepSeek-V4-Pro". api.deepseek.com now rejects that and every
+  # prompt dies with a 400:
+  #   400: {"message":"The supported API model names are deepseek-flash,
+  #         deepseek-v4-pro, but you passed deepseek-ai/DeepSeek-V4-Pro."}
+  # (verified live, 2026-10-07: `deepseek/deepseek-v4-pro` and the bare id both
+  # route through the stale catalog entry and 400). DeepSeek's API IS
+  # OpenAI-compatible, and the `openai-compatible` provider passes the model id
+  # through VERBATIM — so connecting it that way works and needs no catalog:
+  #   letta connect openai-compatible --base-url https://api.deepseek.com/v1
+  #   model = openai-compatible/deepseek-v4-pro   ->  "PONG" (verified live)
+  # Only do this when a base URL was configured (a bare `deepseek` provider with
+  # no endpoint keeps the built-in path). LLM_CONNECT_PROVIDER overrides either
+  # way for an endpoint that really does need its own built-in provider.
+  if [[ -n "${LLM_CONNECT_PROVIDER:-}" ]]; then
+    CONNECT_PROVIDER="$LLM_CONNECT_PROVIDER"
+    echo "→ provider overridden by LLM_CONNECT_PROVIDER=$CONNECT_PROVIDER"
+  elif [[ "$CONNECT_PROVIDER" == "deepseek" && -n "${LLM_BASE_URL:-}" ]]; then
+    echo "→ connecting deepseek's OpenAI-compatible API as 'openai-compatible' (letta's built-in deepseek catalog maps deepseek-v4-pro to the stale upstream name deepseek-ai/DeepSeek-V4-Pro, which the API now 400s)"
+    CONNECT_PROVIDER="openai-compatible"
+  fi
+
   _connect_letta() {  # $1 = provider name as `letta connect` should see it
     local cmd="letta --backend local connect $1 --api-key $API_KEY"
     [[ -n "${LLM_BASE_URL:-}" ]] && cmd="$cmd --base-url $LLM_BASE_URL"
