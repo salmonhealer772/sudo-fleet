@@ -111,18 +111,33 @@ for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
 done
 unset _wk
 
-# ── Web-search key gate (fail ONCE, clearly) ─────────────────────────────────
-# The Letta web-search mod refuses to install for a blind agent, so Marc's
-# factory up.sh exits FATAL — and the deploy is wrapped in `_retry 3`, so the
-# operator got the same confusing FATAL three times before k8s-up gave up.
-# Detect it HERE, once, with the actual fix, and skip the retry churn entirely.
+# ── Web-search key gate (WARN ONCE, clearly — never break the install) ──────
+# A missing web-search key is NOT fatal: Marc + Caesar still deploy and run,
+# only `web_search` is unavailable (the agents run blind). The factory up.sh
+# has the same warn-not-die gate, so `_retry 3` never churns on it. We warn
+# ONCE, here, with the exact one-line fix to add the key later.
 _have_ws=0
 for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
   [[ -n "${!_wk:-}" ]] && _have_ws=1
 done
 unset _wk
 if [[ "$_have_ws" -ne 1 ]]; then
-  die "no web-search key in $FLEET_ENV — the Letta web-search mod refused a blind agent; add TAVILY_API_KEY"
+  echo "" >&2
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+  echo "!!  SHIT, YOU NEED A TAVILY KEY — WEB SEARCH IS OFF              !!" >&2
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+  echo "" >&2
+  echo "  No web-search key in $FLEET_ENV. This is NOT fatal: the install" >&2
+  echo "  CONTINUES and Marc + Caesar deploy + run normally. But web_search" >&2
+  echo "  is DISABLED — the agents have NO internet access (they run BLIND)." >&2
+  echo "" >&2
+  echo "  FIX IT LATER — NO REINSTALL, ONE LINE:" >&2
+  echo "    echo 'TAVILY_API_KEY=tvly-YOUR_KEY_HERE' >> $FLEET_ENV && (cd $FLEET_HOME/bin && bash k8s-up.sh)" >&2
+  echo "" >&2
+  echo "  Get a key (free tier): https://tavily.com" >&2
+  echo "  Any ONE provider key works: EXA_API_KEY, TAVILY_API_KEY, PARALLEL_API_KEY, PERPLEXITY_API_KEY" >&2
+  echo "  Or per-agent, from inside the pod:  /secret set TAVILY_API_KEY <key>" >&2
+  echo "" >&2
 fi
 
 # Re-seed the factory .env files so the `sudo bash up.sh` calls (sudo strips the

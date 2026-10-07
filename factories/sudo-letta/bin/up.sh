@@ -27,6 +27,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+FLEET_DIR="$(cd "$REPO_DIR/../.." && pwd)"
 ENV_FILE="$REPO_DIR/.sudo-letta/.env"
 YAML_DIR="$REPO_DIR/deployments"
 DEPLOY="sudo-$NAME"
@@ -123,20 +124,27 @@ if [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
     [[ -n "${_val}" ]] && eval "${_opt}="\${_val}"" || true
   done
   unset _opt _val
-  # Web-search provider key gate: a deployed agent MUST have at least one of
-  # the search provider keys (fleet env above or agent-scoped /secret). If we
-  # are injecting none at all, fail the deploy LOUDLY — the web-search mod
-  # would install but every web_search call would fail at runtime.
+  # Web-search provider key gate: warn LOUDLY when no search provider key
+  # is present (fleet env above or agent-scoped /secret). NOT fatal — a
+  # missing web-search key must never break the install: the agent deploys
+  # and runs, web_search is just unavailable until a key is added later.
   _have_key=0
   for _opt in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
     [[ -n "${!_opt:-}" ]] && _have_key=1
   done
   unset _opt
   if [[ "$_have_key" -ne 1 ]]; then
-    echo "✗ FATAL: no web-search provider key found in $ENV_FILE." >&2
-    echo "  Add at least one of: EXA_API_KEY, TAVILY_API_KEY, PARALLEL_API_KEY, PERPLEXITY_API_KEY" >&2
-    echo "  (the web-search mod cannot search without one; refusing to deploy a blind agent)" >&2
-    exit 1
+    echo "" >&2
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "!!  SHIT, YOU NEED A TAVILY KEY — WEB SEARCH IS OFF              !!" >&2
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "  No web-search provider key in $ENV_FILE." >&2
+    echo "  This is NOT fatal: the deploy CONTINUES and the agent runs. But" >&2
+    echo "  web_search is DISABLED — no internet (the agent runs BLIND) until" >&2
+    echo "  you add a key. Add one later, NO reinstall:" >&2
+    echo "    echo 'TAVILY_API_KEY=tvly-YOUR_KEY_HERE' >> $FLEET_DIR/.env && (cd $FLEET_DIR/bin && bash k8s-up.sh)" >&2
+    echo "  Any ONE works: EXA_API_KEY / TAVILY_API_KEY / PARALLEL_API_KEY / PERPLEXITY_API_KEY" >&2
+    echo "  Or an agent-scoped secret:  /secret set TAVILY_API_KEY <key>" >&2
   fi
 fi
 
