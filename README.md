@@ -46,6 +46,29 @@ TAVILY_API_KEY=$TAVILY_API_KEY       # may be empty
 > `factories/sudo-letta/` (their own live `.env`/`deployments/` stay untracked).
 > `sudo-fleet/deployments/{Marc,Caesar}/` (the committed glimors) ARE tracked.
 
+## Web search (Tavily) is OPTIONAL
+
+The install **never** fails because of a missing web-search key. With no key the
+agents still deploy and run normally — `web_search` is simply unavailable, and
+both `setup.sh` and `bin/k8s-up.sh` print a loud warning that says so (the
+agents run "blind": no internet access).
+
+Add it later, **without a reinstall** — one line (this is also printed by the
+warning itself):
+
+```bash
+echo 'TAVILY_API_KEY=tvly-YOUR_KEY_HERE' >> sudo-fleet/.env \
+  && (cd sudo-fleet/bin && bash k8s-up.sh)
+```
+
+Get a key at <https://tavily.com> (free tier). Any ONE provider key works:
+`EXA_API_KEY`, `TAVILY_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`.
+`k8s-up.sh` is idempotent — re-running it re-seeds the factory `.env` files
+(`factories/sudo-letta/.sudo-letta/.env`) and re-applies the deployments, so the
+new key reaches Marc with no clean install. You can also set it per-agent from
+inside a pod: `/secret set TAVILY_API_KEY <key>` (an agent-scoped secret takes
+precedence over the fleet-wide env fallback).
+
 ## Paperclip is built in (auto-hire)
 
 sudo-fleet ships with **Paperclip**, the agent control plane, and every agent it

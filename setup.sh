@@ -199,8 +199,22 @@ if [[ -n "${_KEY}" && "${_KEY}" == "${_TRIAL_KEY}" ]]; then
   echo "└─────────────────────────────────────────────────────────────┘" >&2
   echo "" >&2
   unset _KEY
-  _KEY="$(_ask "LLM API key (real key, NOT the trial key):")"
-  [[ -n "${_KEY}" ]] || die "No key provided — aborting. Add a real key to $FLEET_ENV and re-run."
+  if [[ -t 0 ]]; then
+    # Interactive: re-prompt for the real key (a human types the next line).
+    _KEY="$(_ask "LLM API key (real key, NOT the trial key):")"
+    [[ -n "${_KEY}" ]] || die "No key provided — aborting. Add a real key to $FLEET_ENV and re-run."
+  else
+    # NON-INTERACTIVE (piped stdin): NEVER re-prompt here. A second `read` on a
+    # pipe silently eats the NEXT line, shifting EVERY remaining field by one —
+    # the base URL lands in LLM_API_KEY / DEEPSEEK_API_KEY / API_KEY and the
+    # Tavily key lands in LLM_BASE_URL (the "keys came out as https://..."
+    # corruption). Drop the trial key, warn loudly, keep the 3-line order intact.
+    warn "trial key REJECTED — no LLM key stored. Add a real one to $FLEET_ENV later:"
+    warn "  LLM_API_KEY=<real-key> bash $FLEET_HOME/setup.sh   # re-runnable, idempotent"
+    # Keep it SET-but-empty: setup.sh runs under `set -u`, and an unset _KEY
+    # would abort at the first ${_KEY} use below.
+    _KEY=""
+  fi
 fi
 
 # --- (2) LLM API URL — defaults to deepseek if left blank (plain) -------------
@@ -282,7 +296,23 @@ for _wk in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
   fi
 done
 unset _wk
-[[ "$_have_ws" -eq 1 ]] || warn "no web-search key (EXA_/TAVILY_/PARALLEL_/PERPLEXITY_) in $FLEET_ENV — sudo-letta up.sh --marc will fail without one"
+if [[ "$_have_ws" -ne 1 ]]; then
+  warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  warn "!!  SHIT, YOU NEED A TAVILY KEY — WEB SEARCH IS OFF             !!"
+  warn "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  warn "  A missing web-search key is NOT fatal. The install CONTINUES and both"
+  warn "  agents deploy + run — but web_search is DISABLED, so they have NO"
+  warn "  internet access (they run BLIND) until you add a key."
+  warn ""
+  warn "  FIX IT LATER — NO REINSTALL, ONE LINE:"
+  warn "    echo 'TAVILY_API_KEY=tvly-YOUR_KEY_HERE' >> $FLEET_ENV && (cd $FLEET_HOME/bin && bash k8s-up.sh)"
+  warn ""
+  warn "  Get a key (free tier): https://tavily.com"
+  warn "  Any ONE provider key works: EXA_API_KEY, TAVILY_API_KEY, PARALLEL_API_KEY, PERPLEXITY_API_KEY"
+  warn "  Or per-agent, from inside the pod:  /secret set TAVILY_API_KEY <key>"
+else
+  ok "web-search key present — web_search will work"
+fi
 ok "API keys validated + exported"
 
 # --- 2. Docker ------------------------------------------------------------------
