@@ -1,8 +1,8 @@
 # comm/ — the fleet communication layer for Hermes engineers
 
 This directory is the **Hermes-side** packaging of the native cross-agent
-communication layer: three tools + three skills + a persona snippet, so every
-Hermes engineer (`sudo-agent`) is born able to talk to, and check on, any
+communication layer: three tools + three comm skills + a persona snippet, so
+every Hermes engineer (`sudo-agent`) is born able to talk to, and check on, any
 sibling agent.
 
 The canonical source of truth for these is this repo on `main`, at
@@ -27,6 +27,14 @@ Three folders, three layers that must align:
 3. `check-agent` — read a sibling's trail at any depth (`GET ...-watch/events?n=N`
    or the compressed `transcript.txt` read; `n=-1` = the whole file). Answers
    both "what has it been doing" and "what is it doing right now".
+
+## The operations skill (shipped the same way)
+
+- `skills/switch-agent-model/` — switch the model an agent runs on (Hermes
+  engineer OR Letta planner), check a handle is available, and verify for real
+  that the switch took effect. Not part of the comm layer, but it lives in
+  `comm/skills/` because that is where the `sudo-agent` factory seeds
+  `$HERMES_HOME/skills/` from on first boot.
 
 ## How it becomes a default (the wiring)
 
