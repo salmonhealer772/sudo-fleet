@@ -359,6 +359,15 @@ ok "board API key minted"
 
 COMPANY_ID="$(pc_curl -H "Authorization: Bearer $BOARD_KEY" \
   "http://127.0.0.1:3100/api/companies" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)"
+if [[ -z "$COMPANY_ID" ]]; then
+  # A fresh instance has NO company (only a first admin) — hiring agents and
+  # creating issues all needs one, so create the fleet's company here.
+  ok "no company yet — creating the sudo-fleet company"
+  COMPANY_ID="$(pc_curl -X POST \
+    -H "Authorization: Bearer $BOARD_KEY" -H 'Content-Type: application/json' \
+    -d '{"name":"sudo-fleet","description":"The sudo-fleet agent room (agents hired automatically by sudo-fleet)."}' \
+    "http://127.0.0.1:3100/api/companies" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)"
+fi
 [[ -n "$COMPANY_ID" ]] || die "no company returned for the board key"
 
 step "6/6 Store credentials + company"
