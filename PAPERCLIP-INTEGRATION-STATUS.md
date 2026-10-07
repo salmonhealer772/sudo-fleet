@@ -42,6 +42,25 @@ Box: `64.176.193.148`, root password auth. Clean install from the repo README.
 | memfs | git-committed (`seed-fork-state`, `seed comm skills`) |
 | issues | `SUD-1` (Marc) done; `SUD-3` (new agent) done |
 
+## Clean-room repro (same day, from the final commit)
+
+All fleet + control-plane state wiped (`ns paperclip`, every `sudo-*`
+deployment/service/configmap/secret/PVC, `/logs/paperclip`), then a **pristine
+clone** of the branch tip (`d8ecda3`) was used end to end:
+
+1. `bash bin/k8s-up.sh` → Marc 2/2, Caesar 2/2, Paperclip deployed fresh,
+   `✓ all sudo-fleet agents are hired in Paperclip` — Marc `3c4e96a6…`,
+   Caesar `a864e11e…`.
+2. `bash factories/sudo-letta/bin/up.sh --reprobe` → NEW agent, log ends
+   `✓ hired 'Reprobe' as Paperclip agent 4dff7a8d-…`.
+3. Issue assigned to Reprobe → `done` at `2026-10-07T07:03:42Z` with an
+   agent-authored comment (`authorType: "agent"`, `authorAgentId:
+   4dff7a8d-…`, `createdByRunId: 6769b39a-…`).
+
+This run is also what found the NodePort-range defect (reprobe first hashed to
+port 30765 and could not be reached from another pod — see
+[`docs/PAPERCLIP.md`](docs/PAPERCLIP.md#pitfalls-this-integration-had-to-solve-all-fixed-in-repo)).
+
 ## What landed (branch `paperclip`)
 
 - `bin/paperclip-up.sh` — deploy the control plane, register the `letta_local`
@@ -57,16 +76,24 @@ Box: `64.176.193.148`, root password auth. Clean install from the repo README.
   done but never landed).
 - Repo-level fixes found by this run: stale `sudo-agent` heredoc guard (blocked
   the Caesar deploy), `letta model set` double-prefixing the model handle,
-  letta's stale `deepseek` catalog (now connected as `openai-compatible`), and
-  the adapter sending `new_chat` to a door that has no such parameter.
+  letta's stale `deepseek` catalog (now connected as `openai-compatible`), the
+  adapter sending `new_chat` to a door that has no such parameter, and
+  per-agent MCP/WATCH ports colliding with the Kubernetes NodePort range
+  (30000–32767) which made a hostNetwork agent unreachable from other pods.
 
 ## Still open
 
 - `k8s-down.sh` does not tear Paperclip down as a unit.
-- The seeded planner persona (Marc) sometimes answers a heartbeat without
-  closing the assigned issue (`SUD-2` stayed `in_progress`). Wiring is fine —
-  runs are delivered and succeed — but planner-style agents need the
-  manager/objective contract.
+- One of four issue runs on the seeded **planner** persona (Marc) stayed
+  `in_progress` (`SUD-2`). Wiring was fine — a run was delivered and succeeded
+  — so this is agent behaviour (answering without closing), and it needs the
+  manager/objective contract rather than a wiring fix. Fresh agents close
+  reliably (3 of 3), and Paperclip's own recovery closed the blocked
+  clean-room issue once the door was reachable.
+- A fresh agent is briefly unreachable for the few seconds its pod restarts
+  after auto-hire injects `PAPERCLIP_*` env. Creating an issue inside that
+  window now yields a blocked issue that Paperclip's recovery re-drives, but a
+  readiness gate before the hire returns would be cleaner.
 - The earlier `paperclip-ops/*` branches (goal-decompose, assign-picker,
   attention-detector, fleet-manager, adapter-env, issue-triage, paperclip-api)
   are still separate and unmerged; they are a *manager-agent* layer on top of

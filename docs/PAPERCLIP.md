@@ -96,6 +96,15 @@ needs instance-admin auth that does not exist yet at that point.
   deploy entirely (an unescaped backtick in a YAML comment + a
   command-substitution budget that did not count the two `base64` Secret
   encoders).
+- **Per-agent ports must avoid the NodePort range.** Every agent pod is
+  `hostNetwork: true` and listens on a port derived from its name. The window
+  used to be `8000 + hash % 24768` = 8000..32767, which overlaps the Kubernetes
+  NodePort range 30000–32767 — and a hostNetwork listener inside that range is
+  **unreachable from other pods** (kube-proxy intercepts the packet, finds no
+  such NodePort, and drops it: the client just times out). An agent named
+  `reprobe` hashed to 30765 and failed every heartbeat with `fetch failed`
+  while agents on 26926 / 22700 / 20247 worked. The window is now
+  `8000 + hash % 22000` = 8000..29999.
 
 ## Residual / not done
 
