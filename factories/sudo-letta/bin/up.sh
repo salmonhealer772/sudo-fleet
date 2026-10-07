@@ -625,31 +625,72 @@ PYEOF' 2>/dev/null | tr -d '\r' | tail -1)"
         | sed 's/.*"\([^"]*\)"$/\1/')"
     fi
 
-    echo "→ Selecting model '$MODEL_HANDLE' for agent ${AGENT_ID_RESOLVED:-<none yet>}..."
-    if [[ -n "$AGENT_ID_RESOLVED" ]]; then
-      MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$MODEL_HANDLE' --agent '$AGENT_ID_RESOLVED'" 2>&1 || true)"
-    else
-      MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$MODEL_HANDLE'" 2>&1 || true)"
-    fi
-    printf '%s\n' "$MODEL_SET_OUT" | tail -3
-
-    if ! printf '%s' "$MODEL_SET_OUT" | grep -q '"model"'; then
-      # Second attempt with the raw id: covers an endpoint whose reported id is
-      # not the same string as the provider-qualified handle.
+    # `letta model set` qualifies its argument with the CONNECTED provider
+    # itself. Passing the already-qualified handle therefore double-prefixes it
+    # ("deepseek/deepseek/deepseek-v4-pro") and every prompt then dies with:
+    #   Unknown model "deepseek/deepseek/deepseek-v4-pro" for provider "deepseek"
+    # (verified live on a fresh box, 2026-10-07). So pass the BARE model id
+    # first — letta prefixes the provider — and fall back to the
+    # provider-qualified handle only for an endpoint whose reported id is not
+    # the same string as the handle.
+    _mset() {
       if [[ -n "$AGENT_ID_RESOLVED" ]]; then
-        MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$LLM_MODEL' --agent '$AGENT_ID_RESOLVED'" 2>&1 || true)"
+        kubectl exec "$POD" -- bash -c "letta --backend local model set '$1' --agent '$AGENT_ID_RESOLVED'" 2>&1 || true
       else
-        MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$LLM_MODEL'" 2>&1 || true)"
+        kubectl exec "$POD" -- bash -c "letta --backend local model set '$1'" 2>&1 || true
       fi
+    }
+    echo "→ Selecting model '$LLM_MODEL' (bare id; letta qualifies it) for agent ${AGENT_ID_RESOLVED:-<none yet>}..."
+    MODEL_SET_OUT="$(_mset "$LLM_MODEL")"
+    printf '%s\n' "$MODEL_SET_OUT" | tail -3
+    if ! printf '%s' "$MODEL_SET_OUT" | grep -q '"model"'; then
+      echo "→ retrying with the provider-qualified handle '$MODEL_HANDLE'..."
+      MODEL_SET_OUT="$(_mset "$MODEL_HANDLE")"
       printf '%s\n' "$MODEL_SET_OUT" | tail -3
     fi
+    unset -f _mset
 
     if [[ -z "$AGENT_ID_RESOLVED" ]]; then
       echo "⚠ No agent exists in the pod yet, so LLM_MODEL could not be pinned. After the"
-      echo "  first prompt creates it, run:  kubectl exec $POD -- letta --backend local model set '$MODEL_HANDLE' --agent <agent-id>"
+      echo "  first prompt creates it, run:  kubectl exec $POD -- letta --backend local model set '$LLM_MODEL' --agent <agent-id>"
     elif ! printf '%s' "$MODEL_SET_OUT" | grep -q '"model"'; then
       echo "⚠ Model selection did not confirm — check: kubectl exec $POD -- letta --backend local model list --byok"
     fi
+
+    # ── Normalize the record's model handle ────────────────────────────────
+    # Belt and braces: whatever `model set` wrote, the agent RECORD is the
+    # source of truth, and a handle that repeats the provider
+    # ("prov/prov/id") is never valid. Collapse it (fixing an already-broken
+    # PVC from a previous deploy too) and report the final value.
+    NORM_OUT="$(kubectl exec -i "$POD" -c sudo-letta -- python3 - "$CONNECT_PROVIDER" "$MODEL_HANDLE" <<'PYNORM' 2>&1 || true
+import glob, json, os, sys
+prov, handle = sys.argv[1], sys.argv[2]
+bad_prefix = prov + "/" + prov + "/"
+for p in sorted(glob.glob("/home/node/.letta/lc-local-backend/agents/*.json")):
+    try:
+        d = json.load(open(p))
+    except Exception as e:
+        print("skip", p, e); continue
+    m = d.get("model") or ""
+    fixed = m
+    # collapse prov/prov/... -> prov/...  (however many times it repeats)
+    while fixed.startswith(bad_prefix):
+        fixed = fixed[len(prov) + 1:]
+    if not fixed or fixed.count("/") == 0:
+        fixed = handle
+    ms = d.setdefault("model_settings", {})
+    changed = fixed != m or ms.get("provider_type") != prov
+    d["model"] = fixed
+    ms["provider_type"] = prov
+    if changed:
+        tmp = p + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d, f, indent=2); f.write("\n")
+        os.replace(tmp, p)
+    print(("normalized " if changed else "ok         "), os.path.basename(p), "model=", fixed, "provider_type=", ms.get("provider_type"))
+PYNORM
+)"
+    printf '%s\n' "$NORM_OUT" | tail -3
   fi
 
   # Create settings with permissions
