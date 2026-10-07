@@ -48,7 +48,7 @@
 
 import { appendFileSync } from "node:fs";
 
-const ADAPTER_VERSION = "0.2.1";
+const ADAPTER_VERSION = "0.3.0";
 const TRACE_PATH = process.env.PAPERCLIP_LETTA_TRACE ?? "/paperclip/adapter-trace.log";
 
 function trace(line: string): void {
@@ -81,6 +81,13 @@ export interface LettaLocalAgentConfig {
   namespace?: string;
   timeoutSec?: number;
   agentName?: string;
+  /**
+   * Paperclip control-plane base URL as reachable from the LIVE agent pod.
+   * Appended to the prompt so the agent can call back (checkout / comment /
+   * mark the issue done) using the PAPERCLIP_API_KEY already in its env.
+   * Falls back to PAPERCLIP_API_URL from the adapter's own environment.
+   */
+  apiUrl?: string;
   // legacy keys — accepted, ignored (the live pod owns these)
   agentId?: string;
   lettaPath?: string;
@@ -113,8 +120,63 @@ function resolveConfig(ctx: any): LettaLocalAgentConfig {
   );
 }
 
+/** First non-empty string among the args, trimmed. */
+function firstString(...vals: unknown[]): string {
+  for (const v of vals) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+/**
+ * The control-plane callback block.
+ *
+ * A heartbeat has to be able to FINISH the task it was woken for, and the only
+ * actor that can close a Paperclip issue is the agent itself (the run's adapter
+ * cannot do it for them). The live pod owns the credentials — bin/paperclip-hire.sh
+ * injects PAPERCLIP_API_URL / PAPERCLIP_API_KEY / PAPERCLIP_AGENT_ID /
+ * PAPERCLIP_COMPANY_ID into the agent's Deployment — so this block only has to
+ * tell the agent those exist and hand it the exact call to make.
+ */
+function controlPlaneBlock(cfg: LettaLocalAgentConfig, c: any, issue: any): string {
+  const apiUrl = firstString(cfg.apiUrl, process.env.PAPERCLIP_API_URL).replace(/\/+$/, "");
+  const issueId = issue ? firstString(issue.id, issue.identifier) : "";
+  if (!apiUrl && !issueId) return "";
+  const runId = firstString(c?.runId, c?.paperclipRunId, c?.paperclipWake?.runId);
+
+  const L: string[] = [];
+  L.push("## Paperclip control plane");
+  L.push(
+    "You are running as a Paperclip agent." +
+      (apiUrl ? ` The control plane is at ${apiUrl}.` : " The control plane URL is in $PAPERCLIP_API_URL."),
+  );
+  L.push(
+    "Your credentials are already in this pod's environment: $PAPERCLIP_API_KEY (bearer token), $PAPERCLIP_AGENT_ID, $PAPERCLIP_COMPANY_ID.",
+  );
+  if (issueId) {
+    L.push("");
+    L.push(
+      `This run is for Paperclip task ${issueId}. When the work is actually finished, close the task with a comment — run exactly this with your shell tool, then reply with the JSON it printed:`,
+    );
+    L.push("");
+    L.push("```sh");
+    L.push(
+      `curl -sS -X PATCH "${apiUrl || "$PAPERCLIP_API_URL"}/api/issues/${issueId}" \\\n` +
+        `  -H "Authorization: Bearer $PAPERCLIP_API_KEY" -H "Content-Type: application/json"` +
+        (runId ? ` -H "X-Paperclip-Run-Id: ${runId}"` : "") +
+        ` \\\n  -d '{"status":"done","comment":"<one line: what you did>"}'`,
+    );
+    L.push("```");
+    L.push("");
+    L.push(
+      'If you cannot finish it, PATCH the same URL with "status":"blocked" and a "comment" saying exactly what is blocking you. Never leave the task silent.',
+    );
+  }
+  return L.join("\n");
+}
+
 /** Build the task prompt from Paperclip's execution context. */
-function resolvePrompt(ctx: any): string {
+function resolvePrompt(ctx: any, cfg: LettaLocalAgentConfig = {}): string {
   const c = ctx && ctx.context && typeof ctx.context === "object" ? ctx.context : {};
   const wake = c.paperclipWake && typeof c.paperclipWake === "object" ? c.paperclipWake : {};
   const issue =
@@ -154,6 +216,8 @@ function resolvePrompt(ctx: any): string {
       /* best effort */
     }
   }
+  const control = controlPlaneBlock(cfg, c, issue);
+  if (control) bits.push(control);
   return bits.join("\n\n");
 }
 
@@ -462,12 +526,13 @@ export function createServerAdapter(): any {
       newChat: { type: "boolean", required: false, description: "Start a fresh conversation (default false = resume)" },
       namespace: { type: "string", required: false, description: `k8s namespace of the live deployment (default ${DEFAULT_NAMESPACE})` },
       agentName: { type: "string", required: false, description: "Agent name; derives sudo-<name>-mcp.<namespace>.svc.cluster.local" },
+      apiUrl: { type: "string", required: false, description: "Paperclip control-plane base URL as reachable from the LIVE agent pod (appended to the prompt so the agent can close its own task)" },
       timeoutSec: { type: "number", required: false, description: `Hard cap on the MCP conversation (default ${DEFAULT_TIMEOUT_SEC})` },
     },
 
     async execute(ctx: any) {
       const cfg = resolveConfig(ctx);
-      const prompt = resolvePrompt(ctx);
+      const prompt = resolvePrompt(ctx, cfg);
       const startedAt = new Date().toISOString();
 
       trace(

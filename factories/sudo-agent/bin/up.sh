@@ -1199,6 +1199,20 @@ else
   fi
 fi
 
+# ── Paperclip auto-hire ──────────────────────────────────────────────────────
+# Standing an agent up ALSO hires it. sudo-fleet ships with Paperclip (the
+# control plane); an agent that exists in the cluster but not in Paperclip is a
+# wiring bug. Non-fatal so a fleet without the control plane still deploys;
+# bin/paperclip-adopt.sh reconciles later (it also runs on every boot).
+_FLEET_HOME="$(cd "$REPO_DIR/../.." && pwd)"
+if [[ -x "$_FLEET_HOME/bin/paperclip-hire.sh" && -f /logs/paperclip/paperclip.env ]]; then
+  echo ""
+  echo "→ hiring $DEPLOY in Paperclip (auto-hire)"
+  bash "$_FLEET_HOME/bin/paperclip-hire.sh" --name "${NAME^}" --deploy "$DEPLOY" \
+    || echo "⚠ Paperclip auto-hire failed for $DEPLOY (non-fatal; run bin/paperclip-adopt.sh)" >&2
+fi
+unset _FLEET_HOME
+
 echo ""
 echo "✓ $DEPLOY deployed"
 echo "  Queue:  $REDIS_URL via shared sudo-agent-redis (one drain worker per pod)"
