@@ -8,9 +8,10 @@
   swap, so **Fn acts as Command — Fn+C copies, Fn+V pastes**) and applies
   **no** per-device override on the external board.
 - **`--chinese`** — *"the chinese keyboard"*: his baseline **left completely
-  alone**, **plus** a per-device override on the external board only, mapping
-  `L/R Ctrl → Command` and `L/R Alt → Command`, so `Ctrl+C`, `Ctrl+V` and
-  `Alt+Tab` work with the Windows-keyboard hand position.
+  alone**, **plus** a per-device override on the external board only, in the
+  **paired form** (bare pass-through + modified-key), so `Ctrl+C`, `Ctrl+V`
+  and `Alt+Tab` work with the Windows-keyboard hand position **and** `Ctrl+C`
+  still works as a shell interrupt in the terminal — both at the same time.
 
 The MacBook's built-in keyboard is never given a per-device override in either
 mode; it just follows his global baseline.
@@ -40,7 +41,7 @@ summary, and exits non-zero on FAIL. Switching modes needs **no GUI step**.
 | | `--mac` ("my mac keyboard") | `--chinese` ("the chinese keyboard") |
 |---|---|---|
 | global mapping | **his baseline, re-applied verbatim** if drifted | **left completely alone** |
-| board (external) override | none (board follows his baseline) | `L/R Ctrl → Cmd`, `L/R Alt → Cmd` |
+| board (external) override | none (board follows his baseline) | paired: bare Ctrl/Alt pass through + held Ctrl→Cmd, held Alt→Alt+Tab |
 | copy / paste | Fn+C / Fn+V (Fn is Command) | Ctrl+C / Ctrl+V |
 | app switcher | Fn+Tab | Alt+Tab |
 | built-in keyboard | stock (follows baseline) | stock (follows baseline) |
@@ -57,16 +58,26 @@ tool ever writes, and only in `--mac`):
 ```
 
 The `--chinese` board override (per-device only, scoped with
-`--matching '{"VendorID":9610,"ProductID":268}'`, i.e. `0x258A`/`0x010C`):
+`--matching '{"VendorID":9610,"ProductID":268}'`, i.e. `0x258A`/`0x010C`) is the
+**paired form**: four entries, bare pass-through + modified-key. It exists
+specifically so `Ctrl+C` works **both** as copy/paste **and** as a shell
+interrupt in the terminal at the same time:
 
 ```json
 {"UserKeyMapping":[
-  {"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},  /* L Ctrl -> L Cmd */
-  {"HIDKeyboardModifierMappingSrc":30064771300,"HIDKeyboardModifierMappingDst":30064771303},  /* R Ctrl -> R Cmd */
-  {"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},  /* L Alt  -> R Cmd */
-  {"HIDKeyboardModifierMappingSrc":30064771302,"HIDKeyboardModifierMappingDst":30064771303}   /* R Alt  -> R Cmd */
+  {"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},  /* bare L Ctrl -> L Cmd (Ctrl+C/V = Cmd+C/V) */
+  {"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},  /* bare L Alt  -> R Cmd (Alt+Tab) */
+  {"HIDKeyboardModifierMappingSrc":47244640384,"HIDKeyboardModifierMappingDst":47244640391},  /* held Ctrl   -> Cmd (0x1:0xE3) */
+  {"HIDKeyboardModifierMappingSrc":47244640386,"HIDKeyboardModifierMappingDst":47244640515}   /* held Alt    -> Alt+Cmd (0x1:0x1000003) */
 ]}
 ```
+
+The `47244640xxx` entries are the "this modifier is held while this key is
+pressed" form (`0x100000000 + key`). Net effect: **bare Ctrl stays a real
+Control key** — the terminal still receives a Control key, so `Ctrl+C` still
+interrupts — while **held Ctrl becomes Command**, so `Ctrl+C`/`Ctrl+V` reach
+the app as `Cmd+C`/`Cmd+V`. Both work at once. (The old all-bare form mapped
+bare Ctrl → Cmd and killed SIGINT in the terminal; it is rejected.)
 
 ## `--status` — the three layers, separately
 
@@ -87,8 +98,10 @@ board_attached=yes|no                         (d) is the board plugged in
   external board, `Ctrl+C` does *not* copy (it sends Control) — proof there is
   no board override.
 - `--chinese`: on the external board **Ctrl+C** copies, **Ctrl+V** pastes,
-  **Alt+Tab** opens the app switcher. On the built-in keyboard Ctrl+C still
-  sends Control (the override is scoped to the board only).
+  **Alt+Tab** opens the app switcher — and in a terminal **Ctrl+C** still
+  interrupts (bare Ctrl stays a real Control key; held Ctrl is Command). On
+  the built-in keyboard Ctrl+C still sends Control (the override is scoped to
+  the board only).
 - `--status` prints the three layers — no typing required.
 
 ## Persistence (deliberately minimal)
@@ -120,6 +133,10 @@ is on the Mac).
   (The old `neutralized-key-binds-on-start` logic and `.disabled` handling are
   removed.)
 - No watcher, no LaunchAgent that writes `UserKeyMapping`.
+- The `--chinese` override is the **paired form** (bare pass-through +
+  modified-key), never the all-bare form: bare Ctrl must stay a real Control
+  key so `Ctrl+C` still interrupts in a terminal, while held Ctrl becomes
+  Command for copy/paste.
 
 ## Prior art — checked, not blindly adopted
 
