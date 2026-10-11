@@ -62,3 +62,72 @@ Residual papercut: the `watch` sidecar container overrides the image entrypoint
 `runAsUser: 10000`, so gid 109 is NOT active there. It touches no docker today
 (verified: zero docker/nsenter references in `watch_sidecar.py`), but anything
 docker-ish added to the sidecar later must arm the gid itself.
+
+## Change-protocol findings — 2026-10-11
+
+Findings from running `docs/CHANGE-PROTOCOL.md` against the live Paperclip
+deployment (procedure and full worked example in that doc).
+
+### PC-1. fabean (tailnet box) unreachable from the lima host — HIGH — unresolved
+
+Finding: the fabean-side Paperclip (and its nginx basic-auth front) could not be
+inspected; every check against it is unverified and must be reported OPEN.
+
+Evidence: `ssh -o ConnectTimeout=10 who@100.117.138.128 true` →
+`Connection timed out`.
+
+Unresolved: yes.
+
+### PC-2. Paperclip heartbeat floor is 10s on the local pod, not 1s — MEDIUM — unresolved
+
+Finding: the "1s heartbeat" startup `sed`-patch of the built `dist/config.js` is
+NOT present in the local k3s paperclip; the floor in the running image is 10s.
+If a 1s floor is required, it is represented nowhere in the image or the repo, so
+any redeploy resets it to 10s.
+
+Evidence: `/app/server/dist/config.js:244` reads
+`Math.max(10000, Number(process.env.HEARTBEAT_SCHEDULER_INTERVAL_MS) || 30000)`.
+
+Unresolved: yes — the 1s floor must be moved into the image or into the
+`HEARTBEAT_SCHEDULER_INTERVAL_MS` env, not re-applied by hand after deploy.
+
+### PC-3. Bootstrap invite already consumed — INFO — resolved (by design)
+
+Finding: the instance is already bootstrapped, so an unattended re-`claim` would
+fail. The repo's `bin/paperclip-up.sh` already branches on this and signs in
+with the persisted admin password instead of re-claiming.
+
+Evidence: `/api/health` → `"bootstrapStatus":"ready","bootstrapInviteActive":false`.
+
+Unresolved: no.
+
+### PC-4. Advertised nginx basic-auth layer absent from the local image — MEDIUM — unresolved
+
+Finding: no `nginx.conf` or `htpasswd` exists anywhere in the local paperclip
+image; there is no reverse-proxy auth layer on this box at all. The empty-htpasswd
+drift (auth "on" but the credential file is zero bytes) is a fabean-side artifact
+and could not be verified this run.
+
+Evidence: `find / -iname nginx.conf -o -iname htpasswd` inside the pod → nothing.
+
+Unresolved: yes (fabean unreachable).
+
+### PC-5. NodePort 31310 exposed with no edge auth gate — LOW — unresolved
+
+Finding: `svc/paperclip-node` (NodePort 3100:31310) exposes the app on
+`192.168.5.15:31310` with no TLS and no proxy auth in front. `/api/health` is
+open; the API endpoints are guarded only by the app's own auth.
+
+Evidence: `curl /api/health` → 200; `curl /api/companies` (no auth) → 403;
+`curl /api/companies` (Bearer bogus) → 401.
+
+Unresolved: yes.
+
+### PC-6. No recent database backup — LOW — unresolved
+
+Finding: the health endpoint reports `database_backup_missing`.
+
+Evidence: `/api/health` →
+`"databaseBackup":{"enabled":true,"status":"warning",...}`.
+
+Unresolved: yes.
