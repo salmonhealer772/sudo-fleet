@@ -135,7 +135,15 @@ fi
 LLM_BASE_URL="${LLM_BASE_URL:-https://api.deepseek.com/v1}"
 LLM_PROVIDER="${LLM_PROVIDER:-deepseek}"
 if _is_custom_endpoint "$LLM_BASE_URL"; then
-  [[ -z "$LLM_MODEL" ]] && read -r -p "LLM model (required for custom endpoint, e.g. deepseek-ai/DeepSeek-V4-Pro): " LLM_MODEL
+  if [[ -z "$LLM_MODEL" ]]; then
+    if [[ -f "$ENV_FILE" ]]; then
+      LLM_MODEL="$(sed -n 's/^LLM_MODEL=//p' "$ENV_FILE" 2>/dev/null | head -n1)"
+    fi
+    if [[ -z "$LLM_MODEL" ]]; then
+      read -r -p "LLM model (required for custom endpoint, e.g. deepseek-ai/DeepSeek-V4-Pro): " LLM_MODEL
+    fi
+  fi
+  [[ -z "$LLM_MODEL" ]] && { echo "ERROR: LLM_MODEL is required for custom endpoint $LLM_BASE_URL"; exit 1; }
 else
   LLM_MODEL="${LLM_MODEL:-deepseek-v4-pro}"
 fi
