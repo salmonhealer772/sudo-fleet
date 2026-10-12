@@ -21,7 +21,7 @@ fi
 # Auto-detect kubeconfig
 if [[ -z "${KUBECONFIG:-}" ]]; then
   for cfg in "/etc/rancher/k3s/k3s.yaml" "/home/world15/.kube/config" "$HOME/.kube/config"; do
-    if [[ -f "$cfg" ]]; then export KUBECONFIG="$cfg"; break; fi
+    if [[ -r "$cfg" ]]; then export KUBECONFIG="$cfg"; break; fi
   done
 fi
 
@@ -39,4 +39,4 @@ fi
 # To continue an older chat, use /resume INSIDE the session (verified safe:
 # the clean 4/4 registry is kept). Revisit this flag when a letta-code
 # release containing PR #4697 ships.
-kubectl exec -it "deploy/sudo-$NAME" -- bash -c 'letta --new'
+kubectl -n sudo-fleet exec -it "deploy/sudo-$NAME" -- bash -c 'letta --new'
