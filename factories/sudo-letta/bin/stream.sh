@@ -114,7 +114,7 @@ trap 'cleanup' INT TERM EXIT
 # ── kubeconfig: stream.sh runs on the HOST; sudo changes HOME/kubectl context ──
 if [ -z "${KUBECONFIG:-}" ]; then
   for cfg in "/etc/rancher/k3s/k3s.yaml" "/home/world15/.kube/config" "$HOME/.kube/config"; do
-    if [ -f "$cfg" ]; then export KUBECONFIG="$cfg"; break; fi
+    if [ -r "$cfg" ]; then export KUBECONFIG="$cfg"; break; fi
   done
 fi
 
