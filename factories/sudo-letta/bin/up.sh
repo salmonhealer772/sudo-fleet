@@ -27,6 +27,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+FLEET_DIR="$(cd "$REPO_DIR/../.." && pwd)"
 ENV_FILE="$REPO_DIR/.sudo-letta/.env"
 YAML_DIR="$REPO_DIR/deployments"
 DEPLOY="sudo-$NAME"
@@ -42,16 +43,24 @@ NODE_HOSTNAME="$(hostname | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9.-' '-' |
 
 # Per-agent MCP server port. Every sudo-letta pod runs hostNetwork:true, so all
 # pods share the node's network namespace and a single fixed port would collide.
-# Derive a stable, unique port from the agent name (stays below the ephemeral
-# range, 32768+). The Service below exposes a stable port 8000 and forwards
-# (targetPort) to this unique per-agent port.
-MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 24768 ))
+# Derive a stable, unique port from the agent name. The window MUST stay clear
+# of BOTH reserved ranges on a single-node cluster:
+#   * 30000-32767 — the Kubernetes NodePort range. A hostNetwork pod listening
+#     inside it is UNREACHABLE from other pods: kube-proxy's KUBE-NODEPORTS
+#     handling intercepts the packet (there is no NodePort there, so it is
+#     dropped and the client just times out). Verified live: an agent whose
+#     hash landed on 30765 got "fetch failed" on EVERY heartbeat through its
+#     `sudo-<agent>-mcp` service while agents on 26926/22700 worked.
+#   * 32768+ — the ephemeral range.
+# So the window is 8000..29999 (22000 values), which is clear of both.
+# The Service below exposes a stable port 8000 and forwards (targetPort) here.
+MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
 
 # Per-agent WATCH (observer sidecar) port — same hostNetwork collision rules
 # as MCP_PORT, but hashed from a DIFFERENT string ("$NAME-watch") so it never
 # collides with the MCP port. Guard bumps by 1 in the (astronomically rare) case
 # the two hashes land on the same port.
-WATCH_PORT=$(( 8000 + $(printf '%s-watch' "$NAME" | cksum | cut -d' ' -f1) % 24768 ))
+WATCH_PORT=$(( 8000 + $(printf '%s-watch' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
 if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
   WATCH_PORT=$(( MCP_PORT + 1 ))
 fi
@@ -115,20 +124,27 @@ if [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
     [[ -n "${_val}" ]] && eval "${_opt}="\${_val}"" || true
   done
   unset _opt _val
-  # Web-search provider key gate: a deployed agent MUST have at least one of
-  # the search provider keys (fleet env above or agent-scoped /secret). If we
-  # are injecting none at all, fail the deploy LOUDLY — the web-search mod
-  # would install but every web_search call would fail at runtime.
+  # Web-search provider key gate: warn LOUDLY when no search provider key
+  # is present (fleet env above or agent-scoped /secret). NOT fatal — a
+  # missing web-search key must never break the install: the agent deploys
+  # and runs, web_search is just unavailable until a key is added later.
   _have_key=0
   for _opt in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
     [[ -n "${!_opt:-}" ]] && _have_key=1
   done
   unset _opt
   if [[ "$_have_key" -ne 1 ]]; then
-    echo "✗ FATAL: no web-search provider key found in $ENV_FILE." >&2
-    echo "  Add at least one of: EXA_API_KEY, TAVILY_API_KEY, PARALLEL_API_KEY, PERPLEXITY_API_KEY" >&2
-    echo "  (the web-search mod cannot search without one; refusing to deploy a blind agent)" >&2
-    exit 1
+    echo "" >&2
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "!!  SHIT, YOU NEED A TAVILY KEY — WEB SEARCH IS OFF              !!" >&2
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
+    echo "  No web-search provider key in $ENV_FILE." >&2
+    echo "  This is NOT fatal: the deploy CONTINUES and the agent runs. But" >&2
+    echo "  web_search is DISABLED — no internet (the agent runs BLIND) until" >&2
+    echo "  you add a key. Add one later, NO reinstall:" >&2
+    echo "    echo 'TAVILY_API_KEY=tvly-YOUR_KEY_HERE' >> $FLEET_DIR/.env && (cd $FLEET_DIR/bin && bash k8s-up.sh)" >&2
+    echo "  Any ONE works: EXA_API_KEY / TAVILY_API_KEY / PARALLEL_API_KEY / PERPLEXITY_API_KEY" >&2
+    echo "  Or an agent-scoped secret:  /secret set TAVILY_API_KEY <key>" >&2
   fi
 fi
 
@@ -558,6 +574,30 @@ if [[ -n "$POD" ]]; then
   # Self-verifying — no hard-coded provider list to drift out of date.
   CONNECT_PROVIDER="${LLM_PROVIDER:-}"
 
+  # ── Known-stale built-in provider: deepseek ────────────────────────────
+  # letta-code's built-in `deepseek` provider ships a static catalog whose
+  # upstream name for `deepseek-v4-pro` is the OLD string
+  # "deepseek-ai/DeepSeek-V4-Pro". api.deepseek.com now rejects that and every
+  # prompt dies with a 400:
+  #   400: {"message":"The supported API model names are deepseek-flash,
+  #         deepseek-v4-pro, but you passed deepseek-ai/DeepSeek-V4-Pro."}
+  # (verified live, 2026-10-07: `deepseek/deepseek-v4-pro` and the bare id both
+  # route through the stale catalog entry and 400). DeepSeek's API IS
+  # OpenAI-compatible, and the `openai-compatible` provider passes the model id
+  # through VERBATIM — so connecting it that way works and needs no catalog:
+  #   letta connect openai-compatible --base-url https://api.deepseek.com/v1
+  #   model = openai-compatible/deepseek-v4-pro   ->  "PONG" (verified live)
+  # Only do this when a base URL was configured (a bare `deepseek` provider with
+  # no endpoint keeps the built-in path). LLM_CONNECT_PROVIDER overrides either
+  # way for an endpoint that really does need its own built-in provider.
+  if [[ -n "${LLM_CONNECT_PROVIDER:-}" ]]; then
+    CONNECT_PROVIDER="$LLM_CONNECT_PROVIDER"
+    echo "→ provider overridden by LLM_CONNECT_PROVIDER=$CONNECT_PROVIDER"
+  elif [[ "$CONNECT_PROVIDER" == "deepseek" && -n "${LLM_BASE_URL:-}" ]]; then
+    echo "→ connecting deepseek's OpenAI-compatible API as 'openai-compatible' (letta's built-in deepseek catalog maps deepseek-v4-pro to the stale upstream name deepseek-ai/DeepSeek-V4-Pro, which the API now 400s)"
+    CONNECT_PROVIDER="openai-compatible"
+  fi
+
   _connect_letta() {  # $1 = provider name as `letta connect` should see it
     local cmd="letta --backend local connect $1 --api-key $API_KEY"
     [[ -n "${LLM_BASE_URL:-}" ]] && cmd="$cmd --base-url $LLM_BASE_URL"
@@ -625,31 +665,72 @@ PYEOF' 2>/dev/null | tr -d '\r' | tail -1)"
         | sed 's/.*"\([^"]*\)"$/\1/')"
     fi
 
-    echo "→ Selecting model '$MODEL_HANDLE' for agent ${AGENT_ID_RESOLVED:-<none yet>}..."
-    if [[ -n "$AGENT_ID_RESOLVED" ]]; then
-      MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$MODEL_HANDLE' --agent '$AGENT_ID_RESOLVED'" 2>&1 || true)"
-    else
-      MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$MODEL_HANDLE'" 2>&1 || true)"
-    fi
-    printf '%s\n' "$MODEL_SET_OUT" | tail -3
-
-    if ! printf '%s' "$MODEL_SET_OUT" | grep -q '"model"'; then
-      # Second attempt with the raw id: covers an endpoint whose reported id is
-      # not the same string as the provider-qualified handle.
+    # `letta model set` qualifies its argument with the CONNECTED provider
+    # itself. Passing the already-qualified handle therefore double-prefixes it
+    # ("deepseek/deepseek/deepseek-v4-pro") and every prompt then dies with:
+    #   Unknown model "deepseek/deepseek/deepseek-v4-pro" for provider "deepseek"
+    # (verified live on a fresh box, 2026-10-07). So pass the BARE model id
+    # first — letta prefixes the provider — and fall back to the
+    # provider-qualified handle only for an endpoint whose reported id is not
+    # the same string as the handle.
+    _mset() {
       if [[ -n "$AGENT_ID_RESOLVED" ]]; then
-        MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$LLM_MODEL' --agent '$AGENT_ID_RESOLVED'" 2>&1 || true)"
+        kubectl exec "$POD" -- bash -c "letta --backend local model set '$1' --agent '$AGENT_ID_RESOLVED'" 2>&1 || true
       else
-        MODEL_SET_OUT="$(kubectl exec "$POD" -- bash -c "letta --backend local model set '$LLM_MODEL'" 2>&1 || true)"
+        kubectl exec "$POD" -- bash -c "letta --backend local model set '$1'" 2>&1 || true
       fi
+    }
+    echo "→ Selecting model '$LLM_MODEL' (bare id; letta qualifies it) for agent ${AGENT_ID_RESOLVED:-<none yet>}..."
+    MODEL_SET_OUT="$(_mset "$LLM_MODEL")"
+    printf '%s\n' "$MODEL_SET_OUT" | tail -3
+    if ! printf '%s' "$MODEL_SET_OUT" | grep -q '"model"'; then
+      echo "→ retrying with the provider-qualified handle '$MODEL_HANDLE'..."
+      MODEL_SET_OUT="$(_mset "$MODEL_HANDLE")"
       printf '%s\n' "$MODEL_SET_OUT" | tail -3
     fi
+    unset -f _mset
 
     if [[ -z "$AGENT_ID_RESOLVED" ]]; then
       echo "⚠ No agent exists in the pod yet, so LLM_MODEL could not be pinned. After the"
-      echo "  first prompt creates it, run:  kubectl exec $POD -- letta --backend local model set '$MODEL_HANDLE' --agent <agent-id>"
+      echo "  first prompt creates it, run:  kubectl exec $POD -- letta --backend local model set '$LLM_MODEL' --agent <agent-id>"
     elif ! printf '%s' "$MODEL_SET_OUT" | grep -q '"model"'; then
       echo "⚠ Model selection did not confirm — check: kubectl exec $POD -- letta --backend local model list --byok"
     fi
+
+    # ── Normalize the record's model handle ────────────────────────────────
+    # Belt and braces: whatever `model set` wrote, the agent RECORD is the
+    # source of truth, and a handle that repeats the provider
+    # ("prov/prov/id") is never valid. Collapse it (fixing an already-broken
+    # PVC from a previous deploy too) and report the final value.
+    NORM_OUT="$(kubectl exec -i "$POD" -c sudo-letta -- python3 - "$CONNECT_PROVIDER" "$MODEL_HANDLE" <<'PYNORM' 2>&1 || true
+import glob, json, os, sys
+prov, handle = sys.argv[1], sys.argv[2]
+bad_prefix = prov + "/" + prov + "/"
+for p in sorted(glob.glob("/home/node/.letta/lc-local-backend/agents/*.json")):
+    try:
+        d = json.load(open(p))
+    except Exception as e:
+        print("skip", p, e); continue
+    m = d.get("model") or ""
+    fixed = m
+    # collapse prov/prov/... -> prov/...  (however many times it repeats)
+    while fixed.startswith(bad_prefix):
+        fixed = fixed[len(prov) + 1:]
+    if not fixed or fixed.count("/") == 0:
+        fixed = handle
+    ms = d.setdefault("model_settings", {})
+    changed = fixed != m or ms.get("provider_type") != prov
+    d["model"] = fixed
+    ms["provider_type"] = prov
+    if changed:
+        tmp = p + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d, f, indent=2); f.write("\n")
+        os.replace(tmp, p)
+    print(("normalized " if changed else "ok         "), os.path.basename(p), "model=", fixed, "provider_type=", ms.get("provider_type"))
+PYNORM
+)"
+    printf '%s\n' "$NORM_OUT" | tail -3
   fi
 
   # Create settings with permissions
@@ -832,7 +913,7 @@ PYEOF' || true
     # Commit the MemFS so the seeded skills load (best-effort: a no-op commit on
     # an already-clean tree is fine, and never a reason to fail the deploy).
     kubectl exec "$POD" -- bash -c "git -C '$_memfs_memory' init -q -b main 2>/dev/null; git -C '$_memfs_memory' add -A 2>/dev/null && git -C '$_memfs_memory' -c user.email=factory@localhost -c user.name=factory commit -q -m 'seed comm skills' >/dev/null 2>&1 || true"
-    echo "→ comm skills seeded into agent MemFS: list-siblings message-agent check-agent"
+    echo "→ skills seeded into agent MemFS: list-siblings message-agent check-agent switch-agent-model"
   else
     echo "⚠ no MemFS memory dir found (agent not created yet) — comm skills will land on the next deploy or the first --from-glimor fork" >&2
   fi
@@ -895,6 +976,22 @@ FLEETBLOCK
 
   echo "→ Letta configured"
 fi
+# ── Paperclip auto-hire ──────────────────────────────────────────────────────
+# Standing an agent up ALSO hires it. sudo-fleet ships with Paperclip (the
+# control plane), and an agent that exists in the cluster but not in Paperclip
+# is a wiring bug — so the hire happens here, automatically, right after the
+# deployment is Ready. Non-fatal on purpose: a fleet without the control plane
+# still deploys, and bin/paperclip-adopt.sh (also run on every boot, and at the
+# end of bin/k8s-up.sh) reconciles anything that was missed.
+_FLEET_HOME="$(cd "$REPO_DIR/../.." && pwd)"
+if [[ -x "$_FLEET_HOME/bin/paperclip-hire.sh" && -f /logs/paperclip/paperclip.env ]]; then
+  echo ""
+  echo "→ hiring $DEPLOY in Paperclip (auto-hire)"
+  bash "$_FLEET_HOME/bin/paperclip-hire.sh" --name "${NAME^}" --deploy "$DEPLOY" \
+    || echo "⚠ Paperclip auto-hire failed for $DEPLOY (non-fatal; run bin/paperclip-adopt.sh)" >&2
+fi
+unset _FLEET_HOME
+
 echo "  Talk:   kubectl exec -it deploy/$DEPLOY -- bash -c 'letta'"
 echo "  Shell:  kubectl exec -it deploy/$DEPLOY -- bash"
 echo "  MCP:    http://$DEPLOY-mcp:8000/mcp"

@@ -11,8 +11,10 @@ set -euo pipefail
 #               at login — we only restore it if it drifted.
 #   --chinese   "the chinese keyboard" = his baseline (LEFT COMPLETELY ALONE)
 #               PLUS a per-device override on the external "Gaming Keyboard"
-#               only (L/R Ctrl -> Command, L/R Alt -> Command), so Ctrl+C /
-#               Ctrl+V / Alt+Tab work with the Windows-keyboard hand position.
+#               only, in the PAIRED form (bare pass-through + modified-key):
+#               bare Ctrl stays a real Control key (Ctrl+C still interrupts in
+#               a terminal) while held Ctrl becomes Command (Ctrl+C/Ctrl+V =
+#               Cmd+C/Cmd+V) and held Alt drives Alt+Tab. Both work at once.
 #   --status    read-only report of the three layers, separately:
 #               (a) his baseline global mapping, (b) the board override,
 #               (c) the remembered mode, (d) whether the board is attached.
@@ -57,12 +59,19 @@ BOARD_PRODUCT="Gaming Keyboard"
 # This is the ONLY global mapping we ever apply, and only in --mac.
 BASELINE_MAP_JSON='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771299,"HIDKeyboardModifierMappingDst":1095216660483},{"HIDKeyboardModifierMappingSrc":1095216660483,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":280379760050192,"HIDKeyboardModifierMappingDst":30064771132}]}'
 
-# The per-device override for the external board in --chinese:
-#   L Ctrl -> L Cmd   (Ctrl+C copy / Ctrl+V paste)
-#   R Ctrl -> R Cmd
-#   L Alt  -> R Cmd   (Alt+Tab app switcher)
-#   R Alt  -> R Cmd
-CHINESE_MAP_JSON='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":30064771300,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771302,"HIDKeyboardModifierMappingDst":30064771303}]}'
+# The per-device override for the external board in --chinese, in the PAIRED
+# form (bare pass-through + modified-key), so Ctrl+C works as BOTH copy and a
+# shell interrupt at the same time. NEVER regress to the old all-bare form,
+# which mapped bare Ctrl -> Cmd and killed SIGINT in the terminal.
+#   bare L Ctrl -> L Cmd    (30064771296 -> 30064771299; Ctrl+C/Ctrl+V = Cmd+C/Cmd+V)
+#   bare L Alt  -> R Cmd    (30064771298 -> 30064771303; Alt+Tab)
+#   held Ctrl   -> Cmd      (47244640384 -> 47244640391; 0x1:0xE3 = Left Command)
+#   held Alt    -> Alt + Cmd(47244640386 -> 47244640515; 0x1:0x1000003)
+# The 47244640xxx entries are the "this modifier is held while this key is
+# pressed" form (0x100000000 + key). Net: bare Ctrl stays a REAL Ctrl, so the
+# terminal still receives a Control key and Ctrl+C still interrupts; held Ctrl
+# becomes Command, so Ctrl+C/Ctrl+V reach the app as Cmd+C/Cmd+V.
+CHINESE_MAP_JSON='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":47244640384,"HIDKeyboardModifierMappingDst":47244640391},{"HIDKeyboardModifierMappingSrc":47244640386,"HIDKeyboardModifierMappingDst":47244640515}]}'
 
 EMPTY_MAP_JSON='{"UserKeyMapping":[]}'
 MATCH_JSON='{"VendorID":9610,"ProductID":268}'
@@ -100,7 +109,7 @@ STATE_DIR="/Users/aidanmcohen/.sudofleet-keyboard"
 MODE_FILE="$STATE_DIR/mode"
 MATCH='{"VendorID":9610,"ProductID":268}'
 BASELINE='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771299,"HIDKeyboardModifierMappingDst":1095216660483},{"HIDKeyboardModifierMappingSrc":1095216660483,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":280379760050192,"HIDKeyboardModifierMappingDst":30064771132}]}'
-CHINESE='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":30064771300,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":30064771302,"HIDKeyboardModifierMappingDst":30064771303}]}'
+CHINESE='{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":30064771296,"HIDKeyboardModifierMappingDst":30064771299},{"HIDKeyboardModifierMappingSrc":30064771298,"HIDKeyboardModifierMappingDst":30064771303},{"HIDKeyboardModifierMappingSrc":47244640384,"HIDKeyboardModifierMappingDst":47244640391},{"HIDKeyboardModifierMappingSrc":47244640386,"HIDKeyboardModifierMappingDst":47244640515}]}'
 EMPTY='{"UserKeyMapping":[]}'
 
 mkdir -p "$STATE_DIR"
@@ -221,7 +230,7 @@ ship() {
 usage() {
   echo "usage: sudo bash factories/mac/keyboard-mode.sh {--mac|--chinese|--status|--toggle|--off}"
   echo "  --mac       'my mac keyboard' = his baseline global mapping, verbatim; no board override"
-  echo "  --chinese   'the chinese keyboard' = his baseline (untouched) + Ctrl/Alt->Cmd on the external board"
+  echo "  --chinese   'the chinese keyboard' = his baseline (untouched) + paired Ctrl/Alt->Cmd override on the board (Ctrl+C works as copy AND interrupt)"
   echo "  --status    read-only: baseline global, board override, remembered mode, board attached"
   echo "  --toggle    flip between mac and chinese"
   echo "  --off       remove our board override + state + any old LaunchAgent; leave his baseline + plist alone"
@@ -293,7 +302,7 @@ do_mac() {
 do_chinese() {
   echo "keyboard-mode --chinese: 'the chinese keyboard' = baseline (untouched) + board override"
   echo "  Mac: $MAC_USER@$MAC_IP   board: $BOARD_PRODUCT (VID 0x258A PID 0x010C)"
-  echo "  board override: L/R Ctrl -> Command, L/R Alt -> Command (Ctrl+C/V, Alt+Tab)"
+  echo "  board override: paired form — bare Ctrl stays real (Ctrl+C interrupts), held Ctrl -> Command (Ctrl+C/V copies), held Alt -> Alt+Tab"
   echo "  global baseline left completely alone"
   echo ""
   apply_mode chinese
