@@ -119,6 +119,18 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
     warn "$FLEET_HOME/bin/k8s-up.sh missing — cannot re-apply workload"
   fi
 
+  # --- 3b. Reconcile Paperclip auto-hire ----------------------------------------
+  # Every boot re-hires any agent missing from the control plane, so a NEW agent
+  # (or a control plane that was down when the agent was built) converges on its
+  # own. No-op when Paperclip is not installed in this cluster.
+  if [[ -x "$FLEET_HOME/bin/paperclip-adopt.sh" ]]; then
+    if bash "$FLEET_HOME/bin/paperclip-adopt.sh" --quiet; then
+      ok "Paperclip auto-hire reconciled"
+    else
+      warn "Paperclip auto-hire reconcile reported failures"
+    fi
+  fi
+
   # --- 4. Record boot proof ------------------------------------------------------
   mkdir -p "$PROOF_DIR"
   _boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || date +%s)"

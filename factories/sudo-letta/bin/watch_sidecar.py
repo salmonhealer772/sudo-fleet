@@ -345,11 +345,14 @@ def self_pid_tree():
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
             continue
-        ppid = _read_file("/proc/%s/stat" % entry).split(")")[-1].split()[1]
         try:
+            # Parse INSIDE the guard: a transiently-short /proc/<pid>/stat
+            # during process exit must not escape (an uncaught IndexError
+            # here killed the monitor-loop worker thread).
+            ppid = _read_file("/proc/%s/stat" % entry).split(")")[-1].split()[1]
             if int(ppid) in tree:
                 tree.add(int(entry))
-        except (IndexError, ValueError):
+        except (IndexError, ValueError, OSError):
             pass
     return tree
 

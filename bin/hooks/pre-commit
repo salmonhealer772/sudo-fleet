@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+#
+# sudo-fleet — change-protocol enforcement (pre-commit hook)
+#
+# ENFORCES the change protocol: a COMPLEX change (one that touches deployment or
+# runtime surface) may not be committed unless a verification record for it
+# exists under docs/verifications/.
+#
+#   COMPLEX = touches any of:
+#       - deployments/             (glimor / deploy trees)
+#       - a k8s manifest           (*.yaml / *.yml — treated as deploy surface)
+#       - a Dockerfile
+#       - setup.sh
+#       - anything under bin/ or kube-scripts/
+#     ...and is NOT purely documentation (*.md / README / test fixtures).
+#
+#   REQUIRED: a record docs/verifications/<YYYY-MM-DD>-<short-slug>.md
+#     containing the four section headings RUNTIME, CONFIG, AUTH, EXPOSURE
+#     (case-insensitive; the same words as YAML/JSON keys are also accepted).
+#     A record created within this very commit, OR already committed within the
+#     last 24 hours, satisfies the requirement.
+#
+# Deliberately lenient (all pass without a record):
+#   1. merge commit  — MERGE_HEAD is set; the merged commits were each verified
+#                      on their own branch before merging.
+#   2. amend of an already-verified change — an amend reuses the original
+#                      commit's verification; nothing new is being introduced.
+#   3. revert of a verified change — undoing a verified change adds no new surface.
+#
+# FAST & LOCAL by design: git + grep only. No network, no kubectl, no inspection
+# of the deploy target — this is the gate, not the verifier.
+#
+# Genuine-emergency bypass:  git commit --no-verify
+#   A bypass skips verification, so the change lands unverified — record the
+#   bypass (and the reason) so the gap stays visible instead of silently closed.
+
+set -u
+
+NOW_EPOCH="$(date +%s)"
+WINDOW_SECONDS=$((24 * 60 * 60))
+
+# ---- classify_path <path>  ->  echoes "complex" | "doc" ------------------------
+classify_path() {
+  local f="${1#./}"   # strip a leading "./"
+
+  # Documentation / test fixtures — never complex.
+  case "$f" in
+    *.md)                                   echo doc; return ;;
+    README*|*/README*)                      echo doc; return ;;
+    tests/*|*/tests/*|test/*|*/test/*)      echo doc; return ;;
+    *fixture*|*fixtures*|*_test.*|*_spec.*|*conftest*) echo doc; return ;;
+  esac
+
+  # Deployment / runtime surface — complex.
+  case "$f" in
+    deployments/*|*/deployments/*)          echo complex; return ;;
+    *.yaml|*.yml)                           echo complex; return ;;
+    *Dockerfile*)                           echo complex; return ;;
+    setup.sh|*/setup.sh)                    echo complex; return ;;
+    bin/*|*/bin/*)                          echo complex; return ;;
+    kube-scripts/*|*/kube-scripts/*)        echo complex; return ;;
+  esac
+
+  echo doc
+}
+
+# ---- is_verification_record_name <basename> -------------------------------------
+is_verification_record_name() {
+  printf '%s' "$1" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}-[A-Za-z0-9][A-Za-z0-9._-]*\.md$'
+}
+
+# ---- missing_sections  (reads record markdown on stdin) -------------------------
+# Echoes the required section names absent from the record (space-separated);
+# empty output = record is complete.
+missing_sections() {
+  local content sec missing=""
+  content="$(cat)"
+  for sec in RUNTIME CONFIG AUTH EXPOSURE; do
+    if ! printf '%s\n' "$content" | grep -Eqi "^#{1,6}[[:space:]]*([0-9]+[.)][[:space:]]+)?${sec}([[:space:]]|$)" && \
+       ! printf '%s\n' "$content" | grep -Eqi "^[[:space:]]*[\"']?${sec}[\"']?[[:space:]]*:"; then
+      missing="$missing $sec"
+    fi
+  done
+  printf '%s' "${missing# }"
+}
+
+# ---- head_has_any_record ---------------------------------------------------------
+# True if HEAD already contains a valid verification record (any age). Used to
+# recognise "amend of an already-verified change".
+head_has_any_record() {
+  git rev-parse -q --verify HEAD >/dev/null 2>&1 || return 1
+  local records f
+  records="$(git ls-tree -r --name-only HEAD -- docs/verifications 2>/dev/null)"
+  [ -n "$records" ] || return 1
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    is_verification_record_name "${f##*/}" || continue
+    if [ -z "$(git show "HEAD:$f" 2>/dev/null | missing_sections)" ]; then
+      return 0
+    fi
+  done <<EOF
+$records
+EOF
+  return 1
+}
+
+# ---- is_amend --------------------------------------------------------------------
+# True if this invocation is `git commit --amend` (Linux: walk parent cmdlines).
+is_amend() {
+  local pid=$PPID i cmd
+  for i in 1 2 3; do
+    [ -n "$pid" ] || break
+    if [ -r "/proc/$pid/cmdline" ]; then
+      cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+      case " $cmd " in
+        *" --amend "*) return 0 ;;
+      esac
+    fi
+    pid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)"
+  done
+  return 1
+}
+
+# ============================== main =============================================
+
+STAGED="$(git diff --cached --name-only --diff-filter=ACMRD 2>/dev/null)"
+
+# Nothing staged (e.g. empty commit, or a merge whose staged diff is empty) —
+# nothing to enforce.
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+# 1) Merge commit — MERGE_HEAD is set while the merge is being committed.
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  echo "pre-commit: merge commit (MERGE_HEAD set) — skipping change-protocol check;"
+  echo "             the merged commits were each verified on their own branch."
+  exit 0
+fi
+
+# 2) Amend of an already-verified change — an amend reuses the original commit's
+#    verification, so no fresh record is required.
+if is_amend && head_has_any_record; then
+  echo "pre-commit: amend of an already-verified change — reusing the original"
+  echo "             verification record; skipping the fresh-record requirement."
+  exit 0
+fi
+
+# 3) Revert of a verified change — undoing a verified change adds no new surface.
+#    (git revert does not normally invoke pre-commit; this is a defensive guard
+#     for a manual `git commit` whose in-progress message is a revert.)
+GITDIR="$(git rev-parse --git-dir 2>/dev/null)"
+if [ -n "$GITDIR" ] && [ -f "$GITDIR/COMMIT_EDITMSG" ] && \
+   grep -Eqi '^[[:space:]]*Revert[[:space:]]+' "$GITDIR/COMMIT_EDITMSG" 2>/dev/null; then
+  echo "pre-commit: revert of an already-verified change — skipping."
+  exit 0
+fi
+
+# Classify the staged paths; collect those that trigger the complex-change rule.
+complex_files="$(printf '%s\n' "$STAGED" | while IFS= read -r f; do
+  if [ "$(classify_path "$f")" = "complex" ]; then printf '%s\n' "$f"; fi
+done)"
+
+if [ -z "$complex_files" ]; then
+  echo "pre-commit: docs-only / fixture change — no verification record required."
+  printf '%s\n' "$STAGED" | sed 's/^/  checked: /'
+  exit 0
+fi
+
+echo "pre-commit: COMPLEX change detected — a verification record is required."
+printf '%s\n' "$complex_files" | sed 's/^/  complex: /'
+
+# Find a satisfying record:
+#   (a) created within THIS commit, or
+#   (b) already committed within the last 24 hours.
+valid_record=""
+incomplete_record=""
+
+# (a) record staged in this commit (read the staged blob from the index).
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    docs/verifications/*)
+      if is_verification_record_name "${f##*/}"; then
+        miss="$(git show ":$f" 2>/dev/null | missing_sections)"
+        if [ -z "$miss" ]; then
+          valid_record="$f (created in this commit)"
+          break
+        else
+          incomplete_record="$f (missing:$miss)"
+        fi
+      fi
+      ;;
+  esac
+done <<EOF
+$STAGED
+EOF
+
+# (b) record already committed within the last 24 hours.
+if [ -z "$valid_record" ] && git rev-parse -q --verify HEAD >/dev/null 2>&1; then
+  committed_records="$(git ls-tree -r --name-only HEAD -- docs/verifications 2>/dev/null)"
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    is_verification_record_name "${f##*/}" || continue
+    ct="$(git log -1 --format=%ct HEAD -- "$f" 2>/dev/null)"
+    [ -n "$ct" ] || continue
+    age=$(( NOW_EPOCH - ct ))
+    if [ "$age" -le "$WINDOW_SECONDS" ]; then
+      miss="$(git show "HEAD:$f" 2>/dev/null | missing_sections)"
+      if [ -z "$miss" ]; then
+        valid_record="$f (committed ${age}s ago)"
+        break
+      fi
+    fi
+  done <<EOF
+$committed_records
+EOF
+fi
+
+if [ -n "$valid_record" ]; then
+  echo "  record:   $valid_record"
+  exit 0
+fi
+
+# Reject.
+expected_path="docs/verifications/$(date +%F)-<short-slug>.md"
+echo ""
+echo "pre-commit: BLOCKED — complex change without a verification record."
+echo ""
+echo "  Complex files (deployment/runtime surface):"
+printf '%s\n' "$complex_files" | sed 's/^/    - /'
+echo ""
+echo "  Expected record at: $expected_path"
+echo "  Required sections (case-insensitive): RUNTIME, CONFIG, AUTH, EXPOSURE"
+if [ -n "$incomplete_record" ]; then
+  echo "  A record is staged but incomplete: $incomplete_record"
+fi
+echo ""
+echo "  Add the record and commit again, or bypass with  git commit --no-verify"
+echo "  in a genuine emergency (a bypass must itself be recorded)."
+exit 1

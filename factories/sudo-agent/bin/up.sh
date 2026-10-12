@@ -44,16 +44,24 @@ PER_AGENT_CONFIG="$CONFIG_DIR/$NAME.yaml"
 
 # Per-agent MCP server port. Every sudo-agent pod runs hostNetwork:true, so all
 # pods share the node's network namespace and a single fixed port would collide.
-# Derive a stable, unique port from the agent name (stays below the ephemeral
-# range, 32768+). The Service below exposes a stable port 8000 and forwards
-# (targetPort) to this unique per-agent port.
-MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 24768 ))
+# Derive a stable, unique port from the agent name. The window MUST stay clear
+# of BOTH reserved ranges on a single-node cluster:
+#   * 30000-32767 — the Kubernetes NodePort range. A hostNetwork pod listening
+#     inside it is UNREACHABLE from other pods: kube-proxy's KUBE-NODEPORTS
+#     handling intercepts the packet (there is no NodePort there, so it is
+#     dropped and the client just times out). Verified live: an agent whose
+#     hash landed on 30765 got "fetch failed" on EVERY heartbeat through its
+#     `sudo-<agent>-mcp` service while agents on 26926/22700 worked.
+#   * 32768+ — the ephemeral range.
+# So the window is 8000..29999 (22000 values), which is clear of both.
+# The Service below exposes a stable port 8000 and forwards (targetPort) here.
+MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
 
 # Per-agent WATCH (observer sidecar) port — same hostNetwork collision rules
 # as MCP_PORT, but hashed from a DIFFERENT string ("$NAME-watch") so it never
 # collides with the MCP port. Guard bumps by 1 in the (astronomically rare) case
 # the two hashes land on the same port.
-WATCH_PORT=$(( 8000 + $(printf '%s-watch' "$NAME" | cksum | cut -d' ' -f1) % 24768 ))
+WATCH_PORT=$(( 8000 + $(printf '%s-watch' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
 if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
   WATCH_PORT=$(( MCP_PORT + 1 ))
 fi
@@ -509,13 +517,15 @@ _HD_BODY="$(awk -v s="$_HD_START" -v e="$_HD_END" 'NR > s && NR < e' "$0")"
 # 1) every backtick must be backslash-escaped: drop the escaped pairs, and
 #    anything still holding a backtick is a command the shell would RUN.
 _HD_BACKTICKS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\`//g' | grep -c '`' || true)"
-# 2) the only command substitutions allowed are the three sed indent helpers.
-#    An ESCAPED \$( is inert (it renders as literal text and never runs), so
-#    it is removed before counting — that is what lets these comments document
-#    the hazard without tripping the guard.
+# 2) the only command substitutions allowed are the three sed indent helpers
+#    that embed the ConfigMap payloads, PLUS the two `$(printf '%s' "$KEY" |
+#    base64 -w0)` Secret encoders — so 7 in total. An ESCAPED \$( is inert (it
+#    renders as literal text and never runs), so it is removed before counting —
+#    that is what lets these comments document the hazard without tripping the
+#    guard.
 _HD_SUBS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\\$[(]//g' \
              | grep -o '\$(' | wc -l | tr -d ' ')"
-_HD_KNOWN_SUBS=5
+_HD_KNOWN_SUBS=7
 if [[ "$_HD_BACKTICKS" -ne 0 || "$_HD_SUBS" -ne "$_HD_KNOWN_SUBS" ]]; then
   echo "✗ FATAL: the manifest heredoc in $0 contains a command the shell would" >&2
   echo "  EXECUTE on every deploy (unescaped backticks: $_HD_BACKTICKS; command" >&2
@@ -654,7 +664,7 @@ $SEED_INITCONTAINERS
             secretKeyRef:
               name: ${DEPLOY}-api-key
               key: deepseek-api-key
-        # Env var a custom_providers entry references via `key_env` — so a
+        # Env var a custom_providers entry references via \`key_env\` — so a
         # Featherless/custom OpenAI-compatible endpoint's Bearer token resolves
         # inside the pod without the key ever being written into config.yaml.
         - name: LLM_API_KEY
@@ -1198,6 +1208,20 @@ else
     exit 1
   fi
 fi
+
+# ── Paperclip auto-hire ──────────────────────────────────────────────────────
+# Standing an agent up ALSO hires it. sudo-fleet ships with Paperclip (the
+# control plane); an agent that exists in the cluster but not in Paperclip is a
+# wiring bug. Non-fatal so a fleet without the control plane still deploys;
+# bin/paperclip-adopt.sh reconciles later (it also runs on every boot).
+_FLEET_HOME="$(cd "$REPO_DIR/../.." && pwd)"
+if [[ -x "$_FLEET_HOME/bin/paperclip-hire.sh" && -f /logs/paperclip/paperclip.env ]]; then
+  echo ""
+  echo "→ hiring $DEPLOY in Paperclip (auto-hire)"
+  bash "$_FLEET_HOME/bin/paperclip-hire.sh" --name "${NAME^}" --deploy "$DEPLOY" \
+    || echo "⚠ Paperclip auto-hire failed for $DEPLOY (non-fatal; run bin/paperclip-adopt.sh)" >&2
+fi
+unset _FLEET_HOME
 
 echo ""
 echo "✓ $DEPLOY deployed"
