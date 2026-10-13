@@ -39,4 +39,8 @@ fi
 # To continue an older chat, use /resume INSIDE the session (verified safe:
 # the clean 4/4 registry is kept). Revisit this flag when a letta-code
 # release containing PR #4697 ships.
-kubectl -n sudo-fleet exec -it "deploy/sudo-$NAME" -- bash -c 'letta --new'
+NS="$(kubectl get deploy --all-namespaces \
+      -o jsonpath='{range .items[?(@.metadata.name=="sudo-'"$NAME"'")]}{.metadata.namespace}{end}' \
+      2>/dev/null || true)"
+NS="${NS:-default}"
+kubectl -n "$NS" exec -it "deploy/sudo-$NAME" -- bash -c 'letta --new'
