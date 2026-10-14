@@ -12,7 +12,7 @@ What this script does:
      the authorization URL + state back out of the reply.
   2. Opens that URL in the default browser (Brave) — that is the ONE link the
      operator clicks "Allow" on.
-  3. Binds a loopback listener on http://127.0.0.1:8787 (the registered GCP
+  3. Binds a loopback listener on http://127.0.0.1:8747 (the registered GCP
      redirect URI) and waits for Google's redirect.
   4. Forwards the `code` + `state` from the redirect to the pod's
      /oauth2callback route.
@@ -36,7 +36,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 POD_HOST = "192.0.2.15"   # lima k3s host LAN IP (the pod is hostNetwork)
 POD_PORT = 27462            # sudo-gws MCP port (8000 + cksum("gws") % 22000)
 REDIRECT_HOST = "127.0.0.1"
-REDIRECT_PORT = 8787        # loopback port on THIS Mac (must match the GCP URI)
+REDIRECT_PORT = 8747        # loopback port on THIS Mac (must match the GCP URI)
 MCP_PATH = "/mcp"
 
 REDIRECT_URI = f"http://{REDIRECT_HOST}:{REDIRECT_PORT}/oauth2callback"
