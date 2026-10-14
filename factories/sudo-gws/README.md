@@ -25,8 +25,9 @@ Service URL — without ever doing its own auth.
 # deploy (build image -> import -> secret -> PVC/Service/Deployment -> /health)
 bash factories/sudo-gws/kube-scripts/up.sh
 
-# one-time OAuth consent tunnel (Mac browser -> pod)
-bash factories/sudo-gws/kube-scripts/oauth-tunnel.sh
+# one-time OAuth consent — run ONCE on the operator's Mac (opens Brave,
+# catches the loopback redirect, forwards the code to the pod)
+python3 factories/sudo-gws/kube-scripts/oauth-consent.py
 
 # teardown (keeps the PVC + secret so the refresh token survives a redeploy)
 bash factories/sudo-gws/kube-scripts/down.sh
@@ -39,11 +40,16 @@ bash factories/sudo-gws/kube-scripts/down.sh
 | MCP (ClusterIP, fleet `-mcp` convention) | `http://sudo-gws-mcp:8000/mcp` |
 | MCP (host LAN, baked fleet address) | `http://192.0.2.15:27462/mcp` |
 | Health | `http://192.0.2.15:27462/health` |
-| OAuth redirect URI (register in Google) | `http://localhost:8000/oauth2callback` |
+| OAuth redirect URI (register in Google) | `http://127.0.0.1:8787/oauth2callback` |
 
 Port `27462 = 8000 + cksum("gws") % 22000` — the same per-agent `MCP_PORT`
 derivation the fleet uses, so it cannot collide with any agent port and is
 stable across redeploys.
+
+The redirect URI (`127.0.0.1:8787`) is a loopback address ON THE OPERATOR'S
+MAC, not on the pod. Google only permits `http://` for loopback hosts, so the
+consent browser redirects to the Mac's own loopback; `oauth-consent.py` catches
+it there and forwards the one-time code to the pod over the LAN.
 
 ## The operator's gated boundary
 

@@ -7,8 +7,14 @@ chat and do NOT commit them to git.
 
 ## The two values you must register
 
+- **Application type (client type):** `Desktop app` (a.k.a. installed app).
+  This is the type Google intends for the "user consents in their own browser
+  via a loopback redirect" pattern. No public HTTPS URL is needed.
 - **Redirect URI (copy this exactly):**
-  `http://localhost:8000/oauth2callback`
+  `http://127.0.0.1:8787/oauth2callback`
+  This is a LOOPBACK URI — it lands on YOUR Mac (the consent browser), not on
+  the pod. Google allows plain `http://` for loopback hosts (127.0.0.1 /
+  localhost) and rejects `http://` for anything else.
 - **Scopes requested** (the server requests exactly these for Drive+Docs+Sheets;
   they are derived automatically from `--tools drive docs sheets`):
   - `openid`
@@ -47,25 +53,46 @@ chat and do NOT commit them to git.
 4. **Create the OAuth client**
    https://console.cloud.google.com/apis/credentials
    - **+ Create credentials → OAuth client ID**.
-   - Application type: **Web application**.
+   - Application type: **Desktop app**.
    - Name: `sudo-gws`.
-   - **Authorized redirect URIs → Add URI:**
-     `http://localhost:8000/oauth2callback`
+   - Under **Authorized redirect URIs → Add URI**, paste:
+     `http://127.0.0.1:8787/oauth2callback`
    - Click **Create**.
 
 5. **Copy the two values** from the dialog (or reopen the client and re-copy):
    - **Client ID** → `GWS_CLIENT_ID`
    - **Client secret** → `GWS_CLIENT_SECRET`
 
-6. Hand them back through the secrets store. Then run
-   `bash factories/sudo-gws/kube-scripts/up.sh` again (with those two env vars
-   set) so the secret is created with real values, and start the consent tunnel:
-   `bash factories/sudo-gws/kube-scripts/oauth-tunnel.sh`.
+6. Hand them back through the secrets store, then re-run
+   `bash factories/sudo-gws/kube-scripts/up.sh` (with those two env vars set)
+   so the secret is created with real values.
 
-## Why the redirect URI is `localhost`, not the node IP
+## The consent click-path (what happens after the client exists)
 
-Google rejects a non-loopback `http://` redirect URI (it must be `https://` for
-anything but `localhost`/`127.0.0.1`). The consent browser runs on your Mac, so
-we make the server's callback reachable at the Mac's loopback: a reverse SSH
-tunnel maps `Mac:8000 -> pod:27462`. Register `http://localhost:8000/oauth2callback`
-and run `oauth-tunnel.sh` before you click the authorization URL.
+On your Mac, run ONE command:
+
+```sh
+python3 oauth-consent.py
+```
+
+It will: ask the pod to start the flow, open the authorization link in Brave,
+wait for Google to bounce back to `http://127.0.0.1:8787/oauth2callback` on
+your Mac, and forward the code to the pod — which exchanges it and stores the
+refresh token on its PVC. You click **Allow** once and you are done.
+
+If the script is not already on your Mac, fetch it first (same one-liner):
+
+```sh
+curl -fsSL -o oauth-consent.py \
+  https://raw.githubusercontent.com/salmonhealer772/sudo-fleet/main/factories/sudo-gws/kube-scripts/oauth-consent.py \
+  && python3 oauth-consent.py
+```
+
+## Why the redirect URI is a loopback on YOUR Mac
+
+Google only accepts `http://` redirect URIs for loopback hosts. The consent
+browser runs on your Mac, so the redirect URI is a loopback address ON THE MAC
+(`127.0.0.1:8787`). The helper script catches that redirect locally and hands
+the one-time code to the pod over the LAN (`192.0.2.15:27462`). There is no
+reverse tunnel and no log scraping — the pod does the token exchange itself
+because it already holds the client secret and the PKCE verifier.
