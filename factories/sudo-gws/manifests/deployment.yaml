@@ -64,19 +64,20 @@ spec:
             # ── Single-user identity ────────────────────────────────────────
             - name: USER_GOOGLE_EMAIL
               value: "aidanmcohen@gmail.com"
-            # ── OAuth redirect + origin (loopback for the consent tunnel) ───
-            # The consent browser runs on the operator's Mac; a reverse SSH
-            # tunnel maps Mac:8000 -> this pod's 27462, so the registered
-            # redirect URI is the Mac's loopback (Google allows http:// only
-            # for loopback hosts — a non-loopback http:// IP is rejected).
+            # ── OAuth redirect (loopback on the operator's Mac) ───
+            # The consent browser runs on the operator's Mac. The registered
+            # redirect URI is a loopback address ON THE MAC (127.0.0.1:8787),
+            # not on the pod: Google allows http:// only for loopback hosts.
+            # oauth-consent.py catches that local redirect and forwards the
+            # code to this pod's /oauth2callback over the LAN.
             - name: GOOGLE_OAUTH_REDIRECT_URI
-              value: "http://localhost:8000/oauth2callback"
+              value: "http://127.0.0.1:8787/oauth2callback"
             - name: OAUTHLIB_INSECURE_TRANSPORT
               value: "1"
             - name: WORKSPACE_MCP_BASE_URI
-              value: "http://localhost:8000"
+              value: "http://127.0.0.1:8787"
             - name: OAUTH_ALLOWED_ORIGINS
-              value: "http://localhost:8000"
+              value: "http://127.0.0.1:8787"
             # ── Listen port + credential store ──────────────────────────────
             # WORKSPACE_MCP_HOST=0.0.0.0: legacy streamable-http defaults to
             # 127.0.0.1 (it has no MCP-level auth provider), which would be
