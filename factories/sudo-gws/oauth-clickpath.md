@@ -11,7 +11,7 @@ chat and do NOT commit them to git.
   This is the type Google intends for the "user consents in their own browser
   via a loopback redirect" pattern. No public HTTPS URL is needed.
 - **Redirect URI (copy this exactly):**
-  `http://127.0.0.1:8787/oauth2callback`
+  `http://127.0.0.1:8747/oauth2callback`
   This is a LOOPBACK URI — it lands on YOUR Mac (the consent browser), not on
   the pod. Google allows plain `http://` for loopback hosts (127.0.0.1 /
   localhost) and rejects `http://` for anything else.
@@ -56,7 +56,7 @@ chat and do NOT commit them to git.
    - Application type: **Desktop app**.
    - Name: `sudo-gws`.
    - Under **Authorized redirect URIs → Add URI**, paste:
-     `http://127.0.0.1:8787/oauth2callback`
+     `http://127.0.0.1:8747/oauth2callback`
    - Click **Create**.
 
 5. **Copy the two values** from the dialog (or reopen the client and re-copy):
@@ -76,7 +76,7 @@ python3 oauth-consent.py
 ```
 
 It will: ask the pod to start the flow, open the authorization link in Brave,
-wait for Google to bounce back to `http://127.0.0.1:8787/oauth2callback` on
+wait for Google to bounce back to `http://127.0.0.1:8747/oauth2callback` on
 your Mac, and forward the code to the pod — which exchanges it and stores the
 refresh token on its PVC. You click **Allow** once and you are done.
 
@@ -92,7 +92,7 @@ curl -fsSL -o oauth-consent.py \
 
 Google only accepts `http://` redirect URIs for loopback hosts. The consent
 browser runs on your Mac, so the redirect URI is a loopback address ON THE MAC
-(`127.0.0.1:8787`). The helper script catches that redirect locally and hands
+(`127.0.0.1:8747`). The helper script catches that redirect locally and hands
 the one-time code to the pod over the LAN (`192.168.5.15:27462`). There is no
 reverse tunnel and no log scraping — the pod does the token exchange itself
 because it already holds the client secret and the PKCE verifier.
