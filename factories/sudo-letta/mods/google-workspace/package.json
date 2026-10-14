@@ -1,0 +1,38 @@
+{
+  "name": "@letta-ai/google-workspace",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that adds agent-callable tools to read and write the operator's Google Drive, Docs and Sheets through the fleet-shared google-workspace MCP service (one shared OAuth token; no per-agent auth).",
+  "author": "forge",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "fleet",
+    "google",
+    "workspace",
+    "drive",
+    "docs",
+    "sheets",
+    "mcp"
+  ],
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "tools",
+      "events.tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}

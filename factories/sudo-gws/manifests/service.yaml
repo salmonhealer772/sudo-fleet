@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sudo-gws-mcp
+  namespace: default
+  labels:
+    app: sudo-gws
+    kind: google-workspace-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app: sudo-gws
+    kind: google-workspace-mcp
+  ports:
+    # Stable service port 8000 -> the pod's deterministic hostNetwork port
+    # (27462 = 8000 + cksum("gws") % 22000, the fleet's per-agent MCP_PORT
+    # convention). Agents reach it as ClusterIP:8000; the operator's browser
+    # reaches it (for OAuth consent) via the reverse tunnel to 27462.
+    - name: mcp
+      port: 8000
+      targetPort: 27462
+      protocol: TCP

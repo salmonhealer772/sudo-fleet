@@ -416,6 +416,19 @@ if ! python3 "$SCRIPT_DIR/comm_gate_enable.py" "$PER_AGENT_CONFIG" "$COMM_GATE_K
   exit 1
 fi
 
+# ── Fleet-shared Google Workspace MCP (mcp_servers entry) ───────────────
+# Hermes native MCP client discovers remote MCP servers from the top-level
+# mcp_servers block. Add the shared google-workspace server to EVERY agent
+# so the operator’s Drive/Docs/Sheets tools (mcp_google_workspace_*) are
+# available fleet-wide with no manual step. Idempotent; surgical text edit
+# (never a YAML round-trip, so hand-maintained config is preserved).
+echo "→ Adding google-workspace MCP server to $PER_AGENT_CONFIG..."
+if ! python3 "$SCRIPT_DIR/mcp_servers_enable.py" "$PER_AGENT_CONFIG"; then
+  echo "✗ FAILED to add google-workspace mcp_servers to $PER_AGENT_CONFIG." >&2
+  echo "  Fix the config (or the helper) and re-run." >&2
+  exit 1
+fi
+
 # Content digest of everything shipped via ConfigMap into the pod (the sidecar
 # daemon + the plugin). A ConfigMap-only change does NOT roll a Deployment, and
 # a running process never re-imports a module it already loaded — so without

@@ -40,3 +40,13 @@ memory:
   user_profile_enabled: true
   write_approval: false
   nudge_interval: 1
+
+# ── Fleet-shared Google Workspace MCP (Drive + Docs + Sheets) ─────────────
+# Remote MCP-over-HTTP server; Hermes native MCP client discovers it at
+# startup and registers mcp_google_workspace_* tools. One shared OAuth token
+# (operator consented once) — no per-agent auth. Upstream: factories/sudo-gws.
+# The per-agent config/<name>.yaml gets this via bin/mcp_servers_enable.py on
+# every up.sh deploy; this entry is the tracked template/seed.
+mcp_servers:
+  google_workspace:
+    url: "http://192.0.2.15:27462/mcp"
