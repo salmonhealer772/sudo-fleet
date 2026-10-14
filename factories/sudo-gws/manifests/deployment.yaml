@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sudo-gws
+  namespace: default
+  labels:
+    app: sudo-gws
+    kind: google-workspace-mcp
+spec:
+  # Recreate, not RollingUpdate: hostNetwork + a fixed port (27462) means a
+  # rolling update would try to bind the same node port from two pods at once.
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sudo-gws
+      kind: google-workspace-mcp
+  template:
+    metadata:
+      labels:
+        app: sudo-gws
+        kind: google-workspace-mcp
+    spec:
+      # hostNetwork: the pod shares the node's network namespace, so it is
+      # reachable at a DETERMINISTIC node-localhost address (for the OAuth
+      # consent reverse tunnel) and at the node LAN IP (for the fleet's baked
+      # "host IP + port" convention). No docker socket, no privileged needed.
+      hostNetwork: true
+      dnsPolicy: Default
+      containers:
+        - name: google-workspace-mcp
+          image: sudo-gws:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--transport"
+            - "streamable-http"
+            - "--single-user"
+            - "--tools"
+            - "drive"
+            - "docs"
+            - "sheets"
+            # Slides is out of scope: the drive service's "import Office files"
+            # also registers import_to_google_slides (converts .pptx -> Slides),
+            # so block that one tool to keep the surface to Drive/Docs/Sheets.
+            - "--disabled-tools"
+            - "import_to_google_slides"
+          ports:
+            - name: mcp
+              containerPort: 27462
+              protocol: TCP
+          env:
+            # ── Google OAuth client (operator-created; injected via secret) ──
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: sudo-gws-oauth
+                  key: client-id
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sudo-gws-oauth
+                  key: client-secret
+            # ── Single-user identity ────────────────────────────────────────
+            - name: USER_GOOGLE_EMAIL
+              value: "aidanmcohen@gmail.com"
+            # ── OAuth redirect + origin (loopback for the consent tunnel) ───
+            # The consent browser runs on the operator's Mac; a reverse SSH
+            # tunnel maps Mac:8000 -> this pod's 27462, so the registered
+            # redirect URI is the Mac's loopback (Google allows http:// only
+            # for loopback hosts — a non-loopback http:// IP is rejected).
+            - name: GOOGLE_OAUTH_REDIRECT_URI
+              value: "http://localhost:8000/oauth2callback"
+            - name: OAUTHLIB_INSECURE_TRANSPORT
+              value: "1"
+            - name: WORKSPACE_MCP_BASE_URI
+              value: "http://localhost:8000"
+            - name: OAUTH_ALLOWED_ORIGINS
+              value: "http://localhost:8000"
+            # ── Listen port + credential store ──────────────────────────────
+            # WORKSPACE_MCP_HOST=0.0.0.0: legacy streamable-http defaults to
+            # 127.0.0.1 (it has no MCP-level auth provider), which would be
+            # unreachable via the ClusterIP service and the baked host-LAN
+            # address. We bind all interfaces deliberately — the service is
+            # on the internal cluster network + the operator's trusted LAN.
+            - name: WORKSPACE_MCP_HOST
+              value: "0.0.0.0"
+            - name: WORKSPACE_MCP_PORT
+              value: "27462"
+            - name: WORKSPACE_MCP_CREDENTIALS_DIR
+              value: "/data"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 27462
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 27462
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: sudo-gws-data
