@@ -340,6 +340,34 @@ if [[ -z "$KEY" ]]; then
   echo "No API key provided." >&2; exit 1
 fi
 
+# ── OpenRouter API key — shared secret re-sync ──────────────────────────────
+# The openrouter-api-key Secret is SHARED by every agent that runs the
+# OpenRouter provider, but it is minted out-of-band and never re-synced from
+# the fleet .env, so rotating the OpenRouter key in .env leaves every live
+# pod on the expired key (a secretKeyRef only re-reads its value on a pod
+# restart, and only if the Secret was updated first). Re-mint it idempotently
+# on every deploy so a key rotation in the fleet .env is picked up by the next
+# up.sh run (a rollout restart then hands the new value to the pod). The key
+# is never echoed; a missing key is a loud warning, not an abort (OpenRouter is
+# optional — DeepSeek is the required key).
+FLEET_ENV="$(cd "$REPO_DIR/../.." && pwd)/.env"
+if [[ -f "$FLEET_ENV" ]] && [[ -r "$FLEET_ENV" ]]; then
+  _OR_KEY="$(grep '^OPENROUTER_API_KEY=' "$FLEET_ENV" 2>/dev/null | cut -d= -f2- | head -1 | tr -d '[:space:]')"
+  if [[ -n "$_OR_KEY" ]]; then
+    if kubectl create secret generic openrouter-api-key \
+         --from-literal=OPENROUTER_API_KEY="$_OR_KEY" \
+         --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1; then
+      echo "→ openrouter-api-key secret re-synced from fleet .env (idempotent)"
+    else
+      echo "⚠ openrouter-api-key re-sync FAILED — OpenRouter agents keep the old key" >&2
+    fi
+  else
+    echo "⚠ no OPENROUTER_API_KEY in $FLEET_ENV — skipping shared-secret re-sync" >&2
+  fi
+else
+  echo "⚠ no fleet .env at $FLEET_ENV — skipping shared-secret re-sync" >&2
+fi
+
 # ── Sudo password ──
 # The agent container is `privileged` and its shell relies on passwordless
 # sudo, so the deploy injects a SUDO_PASSWORD. Reuse the one already in .env
