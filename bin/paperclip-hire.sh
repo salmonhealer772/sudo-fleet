@@ -30,6 +30,7 @@ set -uo pipefail
 #        [--heartbeat 120] [--role general] [--no-env] [--json]
 
 CRED="/logs/paperclip/paperclip.env"
+FLEET_HOME="${FLEET_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 NAME=""
 KIND=""
 NS=""
@@ -59,6 +60,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$NAME" ]] || die "usage: bin/paperclip-hire.sh --name <agent> [--kind letta|hermes] ..."
+
+# Reactive-only agents (e.g. hetzner-glm-l) must NOT be hired onto a Paperclip
+# heartbeat — they stay dormant until a sibling messages them via the comm
+# layer. Space-separated list in $FLEET_HOME/.env (NO_HEARTBEAT_AGENTS, matched
+# case-insensitively); empty = none. Skip hire entirely (exit 0) so neither the
+# factory up.sh auto-hire nor paperclip-adopt.sh heartbeats them.
+NO_HEARTBEAT_AGENTS="$(grep '^NO_HEARTBEAT_AGENTS=' "$FLEET_HOME/.env" 2>/dev/null | cut -d'=' -f2- | head -1 || true)"
+if [[ -n "$NO_HEARTBEAT_AGENTS" ]]; then
+  _lname="$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')"
+  for _na in $NO_HEARTBEAT_AGENTS; do
+    if [[ "$_na" == "$_lname" ]]; then
+      echo "→ $NAME is reactive-only (NO_HEARTBEAT_AGENTS) — skipping Paperclip hire (no heartbeat)"
+      exit 0
+    fi
+  done
+fi
 
 KUBECONFIG_PATH="${KUBECONFIG_PATH:-/etc/rancher/k3s/k3s.yaml}"
 [[ -f "$KUBECONFIG_PATH" ]] || die "kubeconfig missing at $KUBECONFIG_PATH"

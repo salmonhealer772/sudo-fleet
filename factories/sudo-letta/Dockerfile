@@ -34,6 +34,17 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
     apt-get install -y --no-install-recommends docker-ce-cli && \
     rm -rf /var/lib/apt/lists/*
 
+# hcloud CLI (Hetzner Cloud) — a single static binary baked at build time so the
+# agent needs NO network at runtime to operate the account. PINNED to v1.70.1
+# (exact tag, not /latest, so an upstream release cannot silently change the
+# CLI under us). Arch: this image is arm64 (lima host + node:22-bookworm-slim
+# both resolve arm64), so we pull hcloud-linux-arm64 — NOT the amd64 tarball
+# (the amd64 binary would not execute here).
+RUN curl -fsSL https://github.com/hetznercloud/cli/releases/download/v1.70.1/hcloud-linux-arm64.tar.gz -o /tmp/hcloud.tgz && \
+    tar -C /usr/local/bin --no-same-owner -xzf /tmp/hcloud.tgz hcloud && \
+    rm -f /tmp/hcloud.tgz && \
+    hcloud version
+
 # Passwordless sudo for node user
 RUN echo "node ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/node && \
     chmod 0440 /etc/sudoers.d/node
