@@ -154,6 +154,14 @@ if [[ -z "${LLM_PROVIDER:-}" || -z "${API_KEY:-}" ]]; then
   exit 1
 fi
 
+# HCLOUD_TOKEN (Hetzner Cloud) lives in the FLEET-level .env — NOT this repo's
+# .sudo-letta/.env (which holds LLM creds only). Read it here so the per-deploy
+# Secret + pod env below can carry it. Never echoed. Guarded: an absent token
+# omits BOTH the pod env var and the Secret key, so the pod still starts and the
+# agent fails loudly (its own skill checks for the token) instead of running
+# with an empty one.
+HCLOUD_TOKEN=$(grep '^HCLOUD_TOKEN=' "$FLEET_DIR/.env" 2>/dev/null | cut -d'=' -f2- | head -1 || true)
+
 # NOTE: SUDO_PASSWORD was intentional dead code and has been removed. The `node`
 # account is locked and sudo elevation is via the NOPASSWD sudoers rule
 # (/etc/sudoers.d/node) only — no password is ever set, so the SUDO_PASSWORD env
@@ -196,6 +204,25 @@ for _opt in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
   fi
 done
 unset _opt _val
+
+# HCLOUD_TOKEN — injected via the per-deployment Secret (same pattern as
+# API_KEY), guarded so an absent token omits the env var entirely (the pod then
+# starts without it and the agent fails loudly on its own check).
+if [[ -n "${HCLOUD_TOKEN:-}" ]]; then
+  ENV_YAML+="
+        - name: HCLOUD_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: ${DEPLOY}-api-key
+              key: hcloud-token"
+fi
+
+# HCLOUD_TOKEN Secret data line — base64'd once here; empty when the token is
+# absent so the generated Secret omits the key entirely (never a blank value).
+HCLOUD_DATA_LINE=""
+if [[ -n "${HCLOUD_TOKEN:-}" ]]; then
+  HCLOUD_DATA_LINE="  hcloud-token: $(printf '%s' "${HCLOUD_TOKEN}" | base64 -w0)"$'\n'
+fi
 
 ENV_YAML+="
         - name: USER
@@ -255,7 +282,7 @@ metadata:
 type: Opaque
 data:
   api-key: $(printf '%s' "${API_KEY}" | base64 -w0)
----
+${HCLOUD_DATA_LINE}---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
