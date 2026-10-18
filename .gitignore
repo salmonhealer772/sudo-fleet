@@ -12,3 +12,6 @@ __pycache__/
 state.db
 .hermes_history
 version_cache.json
+
+# durable-boot-proof/ = generated evidence from boot checks, not source
+durable-boot-proof/

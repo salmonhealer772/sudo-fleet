@@ -40,7 +40,7 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
 # CLI under us). Arch: this image is arm64 (lima host + node:22-bookworm-slim
 # both resolve arm64), so we pull hcloud-linux-arm64 — NOT the amd64 tarball
 # (the amd64 binary would not execute here).
-RUN curl -fsSL https://github.com/hetznercloud/cli/releases/download/v1.70.1/hcloud-linux-arm64.tar.gz -o /tmp/hcloud.tgz && \
+RUN curl -fsSL https://github.com/hetznercloud/cli/releases/download/v1.70.1/hcloud-linux-amd64.tar.gz -o /tmp/hcloud.tgz && \
     tar -C /usr/local/bin --no-same-owner -xzf /tmp/hcloud.tgz hcloud && \
     rm -f /tmp/hcloud.tgz && \
     hcloud version
