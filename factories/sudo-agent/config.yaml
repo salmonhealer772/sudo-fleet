@@ -50,3 +50,7 @@ memory:
 mcp_servers:
   google_workspace:
     url: "http://192.0.2.15:27462/mcp"
+  regulations:
+    url: "http://regulations-mcp.dockets.svc:8080/mcp"
+  statutes:
+    url: "http://statutes-mcp.dockets.svc:8080/mcp"

@@ -863,6 +863,8 @@ PYEOF' || true
     "mods/message-agent|npm:@letta-ai/message-agent@0.2.0"
     "mods/keyboard-mac|npm:@letta-ai/keyboard-mac@0.1.0"
     "mods/google-workspace|npm:@letta-ai/google-workspace@0.1.0"
+    "mods/regulations-mcp|npm:@letta-ai/regulations-mcp@0.1.0"
+    "mods/statutes-mcp|npm:@letta-ai/statutes-mcp@0.1.0"
   )
 
   LETTA_JS="/usr/local/lib/node_modules/@letta-ai/letta-code/letta.js"

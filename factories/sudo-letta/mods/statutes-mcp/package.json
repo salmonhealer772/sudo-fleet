@@ -1,0 +1,36 @@
+{
+  "name": "@letta-ai/statutes-mcp",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that adds agent-callable tools to read the U.S. Code through the project's statutes MCP (OLRC USLM; in-cluster, streamable HTTP).",
+  "author": "forge",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "fleet",
+    "statutes",
+    "us-code",
+    "olrc",
+    "mcp"
+  ],
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "tools",
+      "events.tools"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.27.14"
+    }
+  }
+}
