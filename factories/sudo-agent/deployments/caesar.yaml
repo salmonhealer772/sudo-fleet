@@ -10,8 +10,9 @@ metadata:
     agent: caesar
 type: Opaque
 data:
-  deepseek-api-key: bG9jYWwtdmxsbS1uby1hdXRo
-  llm-api-key: bG9jYWwtdmxsbS1uby1hdXRo
+  deepseek-api-key: ${CAESAR_DEEPSEEK_API_KEY_B64}   # from .env, never committed
+  llm-api-key: ${CAESAR_LLM_API_KEY_B64}            # from .env, never committed
+  sudo-password: ${CAESAR_SUDO_PASSWORD_B64}        # from .env, never committed
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -70,13 +71,13 @@ spec:
         # real apply failure would also produce. Backticks here MUST stay
         # backslash-escaped; the manifest self-check after the heredoc is the
         # backstop that catches it if someone forgets.
-        sudo-agent/watch-scripts-sha: "0ecc101de0c8cd46ddeab24283109573b5e8d6ff8dbada8f18f7921e3f14f80f"
+        sudo-agent/watch-scripts-sha: "9a6b30d32bacd5dcafda2e4dd36246b7be939e4a55b6cc2c3c091b2164d4bc4f"
         # Content digest of the sudo-agent IMAGE (see the image-digest note
         # above the manifest). Bumping it is the ONLY way an image-only change
         # rolls the pod: the tag is 'latest' and imagePullPolicy is
         # IfNotPresent, so without this annotation a rebuilt image would
         # silently keep running the old one in every live pod.
-        sudo-agent/image-sha: "sha256:1710bcbbf1d4b50d8954bfdd4b1d9862486e70ac000c501ce613e8a8fa4f44d3"
+        sudo-agent/image-sha: "sha256:fe85d56885a06dd830faca7956727e18a894f9d0bd30b6a2c5b69d9676e9b33c"
     spec:
       shareProcessNamespace: true
       hostNetwork: true
@@ -114,17 +115,15 @@ spec:
             secretKeyRef:
               name: sudo-caesar-api-key
               key: llm-api-key
-        - name: TAVILY_API_KEY
+        - name: SUDO_PASSWORD
           valueFrom:
             secretKeyRef:
               name: sudo-caesar-api-key
-              key: tavily-api-key
-        - name: SUDO_PASSWORD
-          value: "svzJIMh8nEvJCQu6"
+              key: sudo-password
         - name: HERMES_YOLO_MODE
           value: "true"
         - name: MCP_PORT
-          value: "22700"
+          value: "28316"
         # Queue namespace for THIS agent's prompt queue in the SHARED Redis.
         # One Redis serves the whole fleet, so the prefix must be unique per
         # agent or two agents would steal each other's prompts.
@@ -165,17 +164,17 @@ spec:
         # is already handled by restartPolicy: Always (the default).
         startupProbe:
           tcpSocket:
-            port: 22700
+            port: 28316
           periodSeconds: 5
           failureThreshold: 30
         readinessProbe:
           tcpSocket:
-            port: 22700
+            port: 28316
           periodSeconds: 5
           failureThreshold: 3
         livenessProbe:
           tcpSocket:
-            port: 22700
+            port: 28316
           periodSeconds: 20
           failureThreshold: 3
       # ── Observer sidecar container ────────────────────────────────────────
@@ -194,7 +193,7 @@ spec:
           runAsNonRoot: true
         env:
         - name: WATCH_PORT
-          value: "15885"
+          value: "29277"
         - name: AGENT_NAME
           value: "caesar"
         - name: DEPLOY_NAME
@@ -219,19 +218,19 @@ spec:
         startupProbe:
           httpGet:
             path: /healthz
-            port: 15885
+            port: 29277
           periodSeconds: 3
           failureThreshold: 10
         readinessProbe:
           httpGet:
             path: /healthz
-            port: 15885
+            port: 29277
           periodSeconds: 5
           failureThreshold: 3
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 15885
+            port: 29277
           periodSeconds: 15
           failureThreshold: 3
       volumes:
@@ -240,11 +239,11 @@ spec:
           claimName: sudo-caesar-data
       - name: seed
         hostPath:
-          path: /home/who/sudo-fleet/deployments/Caesar
+          path: /opt/sudo-fleet/deployments/Caesar
           type: Directory
       - name: config
         hostPath:
-          path: /home/who/sudo-fleet/factories/sudo-agent/config/caesar.yaml
+          path: /opt/sudo-fleet/factories/sudo-agent/config/caesar.yaml
           type: File
       - name: docker-sock
         hostPath:
@@ -897,11 +896,14 @@ data:
         for entry in os.listdir("/proc"):
             if not entry.isdigit():
                 continue
-            ppid = _read_file("/proc/%s/stat" % entry).split(")")[-1].split()[1]
             try:
+                # Parse INSIDE the guard: a transiently-short /proc/<pid>/stat
+                # during process exit must not escape (an uncaught IndexError
+                # here killed the monitor-loop worker thread).
+                ppid = _read_file("/proc/%s/stat" % entry).split(")")[-1].split()[1]
                 if int(ppid) in tree:
                     tree.add(int(entry))
-            except (IndexError, ValueError):
+            except (IndexError, ValueError, OSError):
                 pass
         return tree
     
@@ -1325,7 +1327,7 @@ data:
     {
       "agent_name": "caesar",
       "deploy_name": "sudo-caesar",
-      "watch_port": 15885,
+      "watch_port": 29277,
       "poll_interval_sec": 2,
       "log_dir": "/opt/data/watch",
       "db_path": "/opt/data/state.db",
@@ -2592,7 +2594,7 @@ spec:
   ports:
   - name: mcp
     port: 8000
-    targetPort: 22700
+    targetPort: 28316
 ---
 # Observer sidecar Service: stable port 8000 -> per-agent WATCH_PORT
 # (hostNetwork pods share the node's network namespace, so the sidecar itself
@@ -2612,4 +2614,4 @@ spec:
   ports:
   - name: watch
     port: 8000
-    targetPort: 15885
+    targetPort: 29277

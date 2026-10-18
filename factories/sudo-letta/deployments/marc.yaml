@@ -10,7 +10,7 @@ metadata:
     agent: marc
 type: Opaque
 data:
-  api-key: bG9jYWwtdmxsbS1uby1hdXRo
+  api-key: ${MARC_API_KEY_B64}   # from .env, never committed
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -56,11 +56,11 @@ spec:
       shareProcessNamespace: true
       hostNetwork: true
       securityContext:
-        supplementalGroups: [112]
+        supplementalGroups: [988]
       hostAliases:
       - ip: "127.0.0.1"
         hostnames:
-        - "fabean"
+        - "sudo-fleet"
       initContainers:
       - name: seed-glimor
         image: sudo-letta:latest
@@ -82,7 +82,7 @@ spec:
           privileged: true
         env:
         - name: LLM_PROVIDER
-          value: "openai-compatible"
+          value: "openai"
         - name: API_KEY
           valueFrom:
             secretKeyRef:
@@ -94,12 +94,7 @@ spec:
               name: sudo-marc-api-key
               key: api-key
         - name: LLM_BASE_URL
-          value: "http://127.0.0.1:8000/v1"
-        - name: TAVILY_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: sudo-marc-api-key
-              key: tavily-api-key
+          value: "https://api.openai.com/v1"
         - name: USER
           value: "node"
         - name: HOME
@@ -107,7 +102,7 @@ spec:
         - name: LETTA_HOME
           value: "/home/node/.letta"
         - name: MCP_PORT
-          value: "26926"
+          value: "24110"
         volumeMounts:
         - name: data
           mountPath: /home/node/.letta
@@ -120,17 +115,17 @@ spec:
         # crash is already handled by restartPolicy: Always (the default).
         startupProbe:
           tcpSocket:
-            port: 26926
+            port: 24110
           periodSeconds: 5
           failureThreshold: 30
         readinessProbe:
           tcpSocket:
-            port: 26926
+            port: 24110
           periodSeconds: 5
           failureThreshold: 3
         livenessProbe:
           tcpSocket:
-            port: 26926
+            port: 24110
           periodSeconds: 20
           failureThreshold: 3
       # ── Observer sidecar container ────────────────────────────────────────
@@ -143,7 +138,7 @@ spec:
         command: ["python3", "/opt/letta-watch/watch_sidecar.py"]
         env:
         - name: WATCH_PORT
-          value: "8886"
+          value: "15830"
         - name: AGENT_NAME
           value: "marc"
         - name: DEPLOY_NAME
@@ -161,19 +156,19 @@ spec:
         startupProbe:
           httpGet:
             path: /healthz
-            port: 8886
+            port: 15830
           periodSeconds: 3
           failureThreshold: 10
         readinessProbe:
           httpGet:
             path: /healthz
-            port: 8886
+            port: 15830
           periodSeconds: 5
           failureThreshold: 3
         livenessProbe:
           httpGet:
             path: /healthz
-            port: 8886
+            port: 15830
           periodSeconds: 15
           failureThreshold: 3
       volumes:
@@ -182,7 +177,7 @@ spec:
           claimName: sudo-marc-data
       - name: seed
         hostPath:
-          path: /home/who/sudo-fleet/deployments/Marc
+          path: /opt/sudo-fleet/deployments/Marc
           type: Directory
       - name: docker-sock
         hostPath:
@@ -206,7 +201,7 @@ data:
     {
       "agent_name": "marc",
       "deploy_name": "sudo-marc",
-      "watch_port": 8886,
+      "watch_port": 15830,
       "poll_interval_sec": 2,
       "log_dir": "/home/node/.letta/watch"
     }
@@ -226,7 +221,7 @@ spec:
   ports:
   - name: mcp
     port: 8000
-    targetPort: 26926
+    targetPort: 24110
 ---
 # Observer sidecar Service: stable port 8000 -> per-agent WATCH_PORT
 # (hostNetwork pods share the node's network namespace, so the sidecar itself
@@ -246,4 +241,4 @@ spec:
   ports:
   - name: watch
     port: 8000
-    targetPort: 8886
+    targetPort: 15830

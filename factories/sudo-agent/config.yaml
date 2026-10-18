@@ -54,3 +54,10 @@ mcp_servers:
     url: "http://regulations-mcp.dockets.svc:8080/mcp"
   statutes:
     url: "http://statutes-mcp.dockets.svc:8080/mcp"
+
+custom_providers:
+  - name: "custom"
+    base_url: "https://api.openai.com/v1"
+    key_env: LLM_API_KEY
+    api_mode: openai
+    models: ["gpt-4o", "gpt-4o-mini"]
