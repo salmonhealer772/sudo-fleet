@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add the fleet-shared google-workspace MCP server to ONE agent's config.yaml.
+"""Add the fleet MCP servers to ONE agent's config.yaml.
 
     python3 mcp_servers_enable.py <config.yaml>
 
@@ -7,9 +7,15 @@ Why this exists
 ---------------
 Hermes' native MCP client discovers remote MCP servers from the top-level
 ``mcp_servers`` block in its config. The fleet-shared Google Workspace service
-(sudo-gws) must be reachable by EVERY agent, so up.sh calls this for every
-deploy: a fresh agent gets the google-workspace MCP surface with no manual
-step, and an already-deployed agent is upgraded on its next roll.
+(sudo-gws) and the project's regulations + statutes MCPs must be reachable by
+EVERY agent, so up.sh calls this for every deploy: a fresh agent gets the full
+MCP surface with no manual step, and an already-deployed agent is upgraded on
+its next roll.
+
+The three servers (each "key|url", idempotent):
+  google_workspace  -> http://192.168.5.15:27462/mcp   (sudo-gws on lima)
+  regulations       -> http://regulations-mcp.dockets.svc:8080/mcp  (dockets ns)
+  statutes          -> http://statutes-mcp.dockets.svc:8080/mcp     (dockets ns)
 
 Why a TEXT edit and not a YAML round-trip
 -----------------------------------------
@@ -17,7 +23,7 @@ Why a TEXT edit and not a YAML round-trip
 per-agent skins). A YAML round-trip would rewrite the whole file, deleting
 comments and reflowing unrelated settings. So: a surgical edit that touches
 only the ``mcp_servers`` block, then a REAL YAML parse of the result to prove
-the file still loads and carries the server entry. The new text is written to
+the file still loads and carries the server entries. The new text is written to
 a temp file and validated BEFORE it replaces the original.
 
 Exit codes: 0 = enabled (or already enabled), 1 = usage/missing file,
@@ -28,15 +34,19 @@ import os
 import re
 import sys
 
-SERVER_KEY = "google_workspace"
-# Baked fleet address of the shared service. 27462 = 8000 + cksum("gws") % 22000
-# (the fleet MCP_PORT convention); 192.168.5.15 is the lima k3s node LAN IP.
-# Keep in sync with factories/sudo-letta/mods/google-workspace/mods/index.mjs
-# and factories/sudo-gws/manifests/service.yaml.
-SERVER_URL = "http://192.168.5.15:27462/mcp"
+# (key, url) for every fleet MCP server an agent should carry. Keep the
+# google_workspace address in sync with
+# factories/sudo-letta/mods/google-workspace/mods/index.mjs and
+# factories/sudo-gws/manifests/service.yaml; the regulations/statutes addresses
+# with the dockets-namespace deployments (and their Letta mods / skills).
+SERVERS = [
+    ("google_workspace", "http://192.168.5.15:27462/mcp"),
+    ("regulations", "http://regulations-mcp.dockets.svc:8080/mcp"),
+    ("statutes", "http://statutes-mcp.dockets.svc:8080/mcp"),
+]
 
 _MCP_RE = re.compile(r"^mcp_servers\s*:.*$")
-_KEY_RE = re.compile(r"^(\s+)%s\s*:.*$" % re.escape(SERVER_KEY))
+_KEY_RE = re.compile(r"^(\s+)([A-Za-z0-9_.-]+)\s*:.*$")
 _URL_RE = re.compile(r"^(\s+)url\s*:.*$")
 
 
@@ -89,7 +99,7 @@ def enable_server(text, key, url):
     key_idx, key_indent = None, "  "
     for i, line in enumerate(body):
         m = _KEY_RE.match(line.rstrip("\n"))
-        if m:
+        if m and m.group(2) == key:
             key_idx, key_indent = i, m.group(1)
             break
 
@@ -125,13 +135,14 @@ def enable_server(text, key, url):
     return "".join(lines[:start + 1]) + "".join(body) + "".join(lines[end:]), changes
 
 
-def verify(text, key, url):
-    """Prove the edited text parses AND carries the server entry."""
+def verify(text):
+    """Prove the edited text parses AND carries every server entry."""
     try:
         import yaml
     except ImportError:
-        return bool(re.search(r"(?m)^\s+%s\s*:.*$" % re.escape(key), text)), \
-            "textual check only (pyyaml unavailable)"
+        # textual fallback: every key appears under a mcp_servers block
+        return all(re.search(r"(?m)^\s+%s\s*:.*$" % re.escape(key), text)
+                   for key, _ in SERVERS), "textual check only (pyyaml unavailable)"
     try:
         data = yaml.safe_load(text)
     except Exception as exc:
@@ -141,12 +152,13 @@ def verify(text, key, url):
     servers = data.get("mcp_servers")
     if not isinstance(servers, dict):
         return False, "no mcp_servers mapping after the edit"
-    entry = servers.get(key)
-    if not isinstance(entry, dict):
-        return False, "mcp_servers.%s is not a mapping (got %r)" % (key, entry)
-    if entry.get("url") != url:
-        return False, "mcp_servers.%s.url is %r, not %r" % (key, entry.get("url"), url)
-    return True, "mcp_servers.%s.url=%s" % (key, url)
+    for key, url in SERVERS:
+        entry = servers.get(key)
+        if not isinstance(entry, dict):
+            return False, "mcp_servers.%s is not a mapping (got %r)" % (key, entry)
+        if entry.get("url") != url:
+            return False, "mcp_servers.%s.url is %r, not %r" % (key, entry.get("url"), url)
+    return True, "all %d mcp_servers present with correct urls" % len(SERVERS)
 
 
 def parses(text):
@@ -170,7 +182,7 @@ def main(argv):
         print("usage: mcp_servers_enable.py <config.yaml>", file=sys.stderr)
         return 1
     if not os.path.isfile(path):
-        print("✗ %s does not exist — cannot enable %s" % (path, SERVER_KEY),
+        print("✗ %s does not exist — cannot enable MCP servers" % path,
               file=sys.stderr)
         return 1
     with open(path, encoding="utf-8") as f:
@@ -187,27 +199,31 @@ def main(argv):
               "The file was NOT modified.", file=sys.stderr)
         return 2
 
-    edited, changes = enable_server(original, SERVER_KEY, SERVER_URL)
-    ok, why = verify(edited, SERVER_KEY, SERVER_URL)
+    edited = original
+    all_changes = []
+    for key, url in SERVERS:
+        edited, changes = enable_server(edited, key, url)
+        all_changes.extend(changes)
+
+    ok, why = verify(edited)
     if not ok:
         print("✗ refusing to write %s: %s" % (path, why), file=sys.stderr)
         return 2
-    if not changes or all(c.startswith("mcp_servers.%s.url already" % SERVER_KEY)
-                          for c in changes):
+    if not all_changes or all(c.endswith("already correct") for c in all_changes):
         print("→ mcp_servers already enabled in %s (%s)" % (path, why))
         return 0
 
     tmp = path + ".mcp-servers.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(edited)
-    ok2, why2 = verify(open(tmp, encoding="utf-8").read(), SERVER_KEY, SERVER_URL)
+    ok2, why2 = verify(open(tmp, encoding="utf-8").read())
     if not ok2:
         os.unlink(tmp)
         print("✗ edited config failed verification (%s) — original untouched"
               % why2, file=sys.stderr)
         return 2
     os.replace(tmp, path)
-    print("→ %s: %s (%s)" % (path, "; ".join(changes), why2))
+    print("→ %s: %s (%s)" % (path, "; ".join(all_changes), why2))
     return 0
 
 
