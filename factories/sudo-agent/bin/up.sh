@@ -11,12 +11,14 @@ NAME=""
 KEY=""
 SUDO_PASS=""
 GLIMOR_DIR=""
+PERSONA_NAME=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from-glimor) GLIMOR_DIR="$2"; shift 2 ;;
+    --persona)     PERSONA_NAME="$2"; shift 2 ;;
     --name|--*)    NAME="${1#--}"; shift ;;
-    *)             echo "Usage: bash bin/up.sh --name [--from-glimor <dir>]" >&2; exit 1 ;;
+    *)             echo "Usage: bash bin/up.sh --name [--from-glimor <dir>] [--persona <slug>]" >&2; exit 1 ;;
   esac
 done
 
@@ -507,7 +509,7 @@ echo "→ sudo-agent image digest: ${IMAGE_SHA:0:12}"
 #     (the old behaviour) instead of aborting the roll.
 #   * Values are re-emitted through jq tojson, i.e. as YAML double-quoted
 #     scalars, so a value like `true` stays the string "true".
-TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","LLM_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","REDIS_URL"]'
+TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","LLM_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","PERSONA_NAME","REDIS_URL"]'
 EXTRA_ENV="$(kubectl get deploy "$DEPLOY" -o json 2>/dev/null \
   | jq -r --argjson known "$TEMPLATE_ENV_NAMES" '
       .spec.template.spec.containers[]
@@ -606,6 +608,31 @@ if [[ -n "${GLIMOR_DIR:-}" ]]; then
   SEED_VOLUME="      - name: seed
         hostPath:
           path: $GLIMOR_ABS
+          type: Directory"
+fi
+
+# ── Meta-data-agent persona wiring (optional) ────────────────────────────────
+# When --persona <slug> is given, this agent is a meta-data-agent: it reads its
+# concern fresh from /opt/personas/<slug>.md (the dashboard's live persona file)
+# every run. The wiring is three pieces:
+#   * PERSONA_NAME env var — mcp_entrypoint.sh keys the persona binding + the
+#     meta-data skill seeding off this; unset = generic sudo-agent.
+#   * the /opt/personas hostPath volume, mounted READ-ONLY at /opt/personas —
+#     the SAME hostPath the frontend writes (PUT /api/personas/<name>), so a
+#     dashboard save is visible to the agent without a redeploy.
+#   * no volume = no mount = a generic agent is untouched.
+PERSONA_ENV=""
+PERSONA_VOLUME_MOUNT=""
+PERSONA_VOLUME=""
+if [[ -n "${PERSONA_NAME:-}" ]]; then
+  PERSONA_ENV="        - name: PERSONA_NAME
+          value: \"$PERSONA_NAME\""
+  PERSONA_VOLUME_MOUNT="        - name: personas
+          mountPath: /opt/personas
+          readOnly: true"
+  PERSONA_VOLUME="      - name: personas
+        hostPath:
+          path: /opt/personas
           type: Directory"
 fi
 cat > "$YAML" <<YAMLEOF
@@ -732,6 +759,7 @@ $SEED_INITCONTAINERS
         - name: REDIS_URL
           value: $REDIS_URL
 $EXTRA_ENV
+$PERSONA_ENV
         volumeMounts:
         - name: data
           mountPath: /opt/data
@@ -751,6 +779,7 @@ $EXTRA_ENV
           readOnly: true
         - name: docker-sock
           mountPath: /var/run/docker.sock
+$PERSONA_VOLUME_MOUNT
         # ── Self-repair probes: restart on crash/hang ───────────────────────
         # The agent's MCP server (gateway run) listens on MCP_PORT (0.0.0.0).
         # startupProbe gives it a generous window to boot; livenessProbe
@@ -841,6 +870,7 @@ $SEED_VOLUME
         hostPath:
           path: /var/run/docker.sock
           type: Socket
+$PERSONA_VOLUME
       - name: watch-config
         configMap:
           name: $DEPLOY-watch-config
