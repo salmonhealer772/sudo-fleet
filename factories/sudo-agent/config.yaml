@@ -61,3 +61,11 @@ custom_providers:
     key_env: LLM_API_KEY
     api_mode: openai
     models: ["gpt-4o", "gpt-4o-mini"]
+
+model_overrides:
+  custom:
+    gpt-4o:
+      supports_reasoning: false
+  openai:
+    gpt-4o:
+      supports_reasoning: false
