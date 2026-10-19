@@ -66,6 +66,20 @@ if [ ! -f /opt/data/.comm-seeded ]; then
   touch /opt/data/.comm-seeded 2>/dev/null || true
 fi
 
+# Meta-data-agent skills: seeded into $HERMES_HOME/skills on FIRST boot ONLY, and
+# ONLY for meta-data-agents (PERSONA_NAME set — the dashboard persona slug this
+# agent carries; generic sudo-agents get none of these). Same first-boot guard
+# rules as the comm layer above: every step is `|| true` so a missing source or
+# unwritable PVC can never block first boot.
+if [ -n "${PERSONA_NAME:-}" ] && [ ! -f /opt/data/.meta-data-seeded ]; then
+  mkdir -p /opt/data/skills 2>/dev/null || true
+  if [ -d /opt/meta-data-skills ]; then
+    cp -a /opt/meta-data-skills/. /opt/data/skills/ 2>/dev/null || true
+  fi
+  chown -R 10000:10000 /opt/data/skills 2>/dev/null || true
+  touch /opt/data/.meta-data-seeded 2>/dev/null || true
+fi
+
 # Fleet-comm awareness block: applied to SOUL.md on EVERY boot (managed block).
 # _apply_fleet_block <target> <snippet>: replace the content between the
 # BEGIN/END markers in place, or append the whole block if absent. Idempotent;
@@ -90,6 +104,37 @@ _apply_fleet_block() {
 _apply_fleet_block /opt/data/SOUL.md /opt/comm/PERSONA-SNIPPET.md
 chown 10000:10000 /opt/data/SOUL.md 2>/dev/null || true
 
+# Meta-data-agent persona binding: applied to SOUL.md on EVERY boot (managed
+# block), but ONLY when PERSONA_NAME is set (a generic sudo-agent has no persona
+# file). The block tells the agent WHERE its concern lives and to read it fresh
+# every run — it does NOT bake the concern content (that comes from
+# /opt/personas/<PERSONA_NAME>.md at run time). Idempotent; never touches
+# anything outside the markers.
+_apply_persona_block() {
+  [ -n "${PERSONA_NAME:-}" ] || return 0
+  _pb_template="/opt/meta-data/SOUL-BINDING.md"
+  [ -f "$_pb_template" ] || return 0
+  _pb_target="/opt/data/SOUL.md"
+  [ -f "$_pb_target" ] || return 0
+  _pb_begin='<!-- META-DATA-AGENT-BEGIN -->'
+  _pb_end='<!-- META-DATA-AGENT-END -->'
+  _pb_tmp="${TMPDIR:-/tmp}/meta-data-soul-binding.$$.md"
+  sed "s/__PERSONA_NAME__/${PERSONA_NAME}/g" "$_pb_template" > "$_pb_tmp"
+  if ! grep -qF "$_pb_begin" "$_pb_target" || ! grep -qF "$_pb_end" "$_pb_target"; then
+    { printf '\n'; printf '%s\n' "$_pb_begin"; cat "$_pb_tmp"; printf '%s\n' "$_pb_end"; } >> "$_pb_target"
+  else
+    awk -v b="$_pb_begin" -v e="$_pb_end" -v s="$_pb_tmp" '
+      $0 == b { print; skip=1; emitted=0; next }
+      $0 == e { print; skip=0; next }
+      skip { if (!emitted) { while ((getline l < s) > 0) print l; close(s); emitted=1 } next }
+      { print }
+    ' "$_pb_target" > "$_pb_target.tmp" && mv "$_pb_target.tmp" "$_pb_target"
+  fi
+  rm -f "$_pb_tmp"
+}
+_apply_persona_block
+chown 10000:10000 /opt/data/SOUL.md 2>/dev/null || true
+
 # First-boot gap: on a FRESH no-glimor pod SOUL.md does not exist yet when this
 # entrypoint runs — the gateway creates its default 514-byte SOUL.md only AFTER
 # we exec it below, so the synchronous apply above no-oped (file absent) and the
@@ -108,6 +153,7 @@ if [ ! -f /opt/data/SOUL.md ]; then
     done
     if [ -f /opt/data/SOUL.md ] && [ -s /opt/data/SOUL.md ]; then
       _apply_fleet_block /opt/data/SOUL.md /opt/comm/PERSONA-SNIPPET.md
+      _apply_persona_block
       chown 10000:10000 /opt/data/SOUL.md 2>/dev/null || true
     fi
   ) &

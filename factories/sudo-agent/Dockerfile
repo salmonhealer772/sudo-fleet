@@ -61,6 +61,16 @@ COPY comm/tools/ /opt/comm-tools/
 COPY comm/skills/ /opt/comm-skills/
 COPY comm/PERSONA-SNIPPET.md /opt/comm/PERSONA-SNIPPET.md
 
+# Meta-data-agent layer: the docket-scan skills (determine-concern, find-*,
+# download-*) + load-persona, and the SOUL binding template. Staged in the
+# image and seeded into the PVC on FIRST boot by mcp_entrypoint.sh ONLY when
+# PERSONA_NAME is set (i.e. this pod is a meta-data-agent). The SOUL binding is
+# applied to SOUL.md as a factory-managed block on EVERY boot; it carries the
+# persona *binding* (which file = the concern), never the concern CONTENT — that
+# is read fresh from /opt/personas/<PERSONA_NAME>.md at run time.
+COPY meta-data/skills/ /opt/meta-data-skills/
+COPY meta-data/SOUL-BINDING.md /opt/meta-data/SOUL-BINDING.md
+
 # Copy the memory review patcher and run it
 COPY patch_memory_review.py /tmp/patch_memory_review.py
 RUN python3 /tmp/patch_memory_review.py && rm /tmp/patch_memory_review.py
