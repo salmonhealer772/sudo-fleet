@@ -77,6 +77,26 @@ if [[ -n "$NO_HEARTBEAT_AGENTS" ]]; then
   done
 fi
 
+# Gated agents: hired WITH a Paperclip record but WITHOUT a blind heartbeat.
+# paperclip-gate (containerize/default/paperclip-gate) polls Paperclip cheaply
+# and promotes backlog->todo so Paperclip dispatches through the agent's MCP
+# door -- the gate IS the work trigger, a blind heartbeat is not needed (and
+# burns tokens while idle). Committed default = the four AO meta-data agents;
+# overridable via HEARTBEAT_OFF_AGENTS in $FLEET_HOME/.env (space-separated,
+# matched case-insensitively).
+HEARTBEAT_OFF_AGENTS_DEFAULT="meta-access meta-fees meta-permit meta-wilderness"
+HEARTBEAT_OFF_AGENTS="$(grep '^HEARTBEAT_OFF_AGENTS=' "$FLEET_HOME/.env" 2>/dev/null | cut -d'=' -f2- | head -1 || true)"
+HEARTBEAT_OFF_AGENTS="${HEARTBEAT_OFF_AGENTS:-$HEARTBEAT_OFF_AGENTS_DEFAULT}"
+if [[ -n "$HEARTBEAT_OFF_AGENTS" ]]; then
+  _lname="$(printf '%s' "$NAME" | tr '[:upper:]' '[:lower:]')"
+  for _na in $HEARTBEAT_OFF_AGENTS; do
+    if [[ "$_na" == "$_lname" ]]; then
+      HEARTBEAT="0"
+      break
+    fi
+  done
+fi
+
 KUBECONFIG_PATH="${KUBECONFIG_PATH:-/etc/rancher/k3s/k3s.yaml}"
 [[ -f "$KUBECONFIG_PATH" ]] || die "kubeconfig missing at $KUBECONFIG_PATH"
 export KUBECONFIG="$KUBECONFIG_PATH"
@@ -159,6 +179,14 @@ EOF
     exit 3
   fi
   echo "HIRED $AGENT_ID" >&2
+fi
+
+# Enforce heartbeat-off for gated agents (idempotent; survives re-hire/reuse).
+# A reused agent was created earlier and its runtimeConfig.heartbeat is not
+# otherwise touched on reuse, so a gated agent re-hired after a manual re-enable
+# would stay enabled without this PATCH.
+if [ "$HB" = "0" ]; then
+  curl -sS -X PATCH -H "$AUTH" -H "$CT"     -d '{"runtimeConfig":{"heartbeat":{"enabled":false}}}'     "$API/api/agents/$AGENT_ID" >/dev/null 2>&1 || true
 fi
 
 KEY_RESP="$(curl -sS -X POST -H "$AUTH" -H "$CT" -d '{"name":"sudo-fleet-inpod"}' \
