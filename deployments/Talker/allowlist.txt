@@ -1,0 +1,5 @@
+lc-local-backend/agents/YWdlbnQtbG9jYWwtM2ZjNTQ0ODItODVkMS00YTQ3LWFmYTItYzc4NGI0MGNiZDJi.json   (record, name=Talker)
+lc-local-backend/memfs/agent-local-3fc54482-85d1-4a47-afa2-c784b40cbd2b/memory/          (brain: persona.md, human.md)
+settings.json                                      (resume pointer -> 3fc54482-85d1-4a47-afa2-c784b40cbd2b)
+# Excluded: memory/.git + memory-worktrees/ (PII-bearing history),
+#           lc-local-backend/secrets/, conversations/ (recreated/never shipped).
