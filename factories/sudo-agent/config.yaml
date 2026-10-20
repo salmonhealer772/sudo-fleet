@@ -71,3 +71,15 @@ model_overrides:
   openai:
     gpt-4o:
       supports_reasoning: false
+
+# ── Hermes API server (platforms.api_server) ──────────────────────────────
+# The gateway's own OpenAI-compatible HTTP listener that Paperclip
+# (hermes_gateway) wakes over POST /v1/runs. OFF by default in the seed;
+# bin/up.sh flips it to `true` via bin/api_server_enable.py and injects the
+# API_SERVER_HOST / API_SERVER_PORT / API_SERVER_KEY env vars (the key lives in
+# the per-agent ${DEPLOY}-api-server-key Secret, never here). The listener
+# host/port default to the API_SERVER_HOST / API_SERVER_PORT env vars; the
+# block below only toggles the platform on/off.
+platforms:
+  api_server:
+    enabled: false

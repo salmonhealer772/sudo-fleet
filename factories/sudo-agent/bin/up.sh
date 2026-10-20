@@ -68,6 +68,17 @@ if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
   WATCH_PORT=$(( MCP_PORT + 1 ))
 fi
 
+# Per-agent Hermes API server port (platforms.api_server). Same hostNetwork
+# collision rules as MCP_PORT/WATCH_PORT: hashed from a DIFFERENT string
+# ("$NAME-api") so it never collides with either. Paperclip reaches it through
+# the $DEPLOY-api Service below. Same 8000..29999 window (clear of NodePort
+# 30000-32767 and the 32768+ ephemeral range).
+API_SERVER_PORT=$(( 8000 + $(printf '%s-api' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
+while [[ "$API_SERVER_PORT" == "$MCP_PORT" || "$API_SERVER_PORT" == "$WATCH_PORT" ]]; do
+  API_SERVER_PORT=$(( API_SERVER_PORT + 1 ))
+  [[ "$API_SERVER_PORT" -gt 29999 ]] && API_SERVER_PORT=8000
+done
+
 # If repo is root-owned and we're not root, bail early
 if [[ ! -w "$REPO_DIR" ]] && [[ "$(id -u)" != "0" ]]; then
   echo "Repo is root-owned. Run with: sudo bash bin/up.sh --$NAME" >&2
@@ -384,6 +395,23 @@ if [[ -z "$SUDO_PASS" ]]; then
   echo "→ Generated sudo password: $SUDO_PASS"
 fi
 
+# ── Hermes API server key (per-agent, persisted) ───────────────────────────
+# Paperclip (hermes_gateway) authenticates to each agent's OWN Hermes API
+# server (platforms.api_server) with `Authorization: Bearer <key>`. One strong
+# key PER agent so a leak is bounded; persisted under a per-agent name in the
+# fleet .env (same persist-once rule as SUDO_PASSWORD) so a re-deploy does NOT
+# rotate the key out from under Paperclip's stored credential. Stored in the
+# per-agent ${DEPLOY}-api-server-key Secret below, never echoed, never committed.
+_API_KEY_VAR="API_SERVER_KEY_$(echo "$NAME" | tr 'a-z-' 'A-Z_')"
+if [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
+  API_SERVER_KEY=$(grep "^${_API_KEY_VAR}=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | tr -d '[:space:]' || true)
+fi
+if [[ -z "$API_SERVER_KEY" ]]; then
+  API_SERVER_KEY=$(openssl rand -hex 32)
+  echo "${_API_KEY_VAR}=$API_SERVER_KEY" >> "$ENV_FILE"
+  echo "→ Generated API server key (${_API_KEY_VAR})"
+fi
+
 # ── Observer sidecar daemon script (shipped via the ConfigMap below) ──
 WATCH_SIDECAR="$SCRIPT_DIR/watch_sidecar.py"
 if [[ ! -f "$WATCH_SIDECAR" ]]; then
@@ -455,6 +483,20 @@ fi
 echo "→ Adding google-workspace MCP server to $PER_AGENT_CONFIG..."
 if ! python3 "$SCRIPT_DIR/mcp_servers_enable.py" "$PER_AGENT_CONFIG"; then
   echo "✗ FAILED to add google-workspace mcp_servers to $PER_AGENT_CONFIG." >&2
+  echo "  Fix the config (or the helper) and re-run." >&2
+  exit 1
+fi
+
+# ── Hermes API server (platforms.api_server) ────────────────────────────
+# Turn ON the agent's own Hermes API server so Paperclip (hermes_gateway) can
+# wake it over POST /v1/runs. Idempotent surgical edit (never a YAML
+# round-trip): flips platforms.api_server.enabled false->true, and adds the
+# block when absent. The listener host/port come from the API_SERVER_HOST /
+# API_SERVER_PORT env vars above; the key from the ${DEPLOY}-api-server-key
+# Secret.
+echo "→ Enabling the Hermes API server (platforms.api_server) in $PER_AGENT_CONFIG..."
+if ! python3 "$SCRIPT_DIR/api_server_enable.py" "$PER_AGENT_CONFIG"; then
+  echo "✗ FAILED to enable platforms.api_server in $PER_AGENT_CONFIG." >&2
   echo "  Fix the config (or the helper) and re-run." >&2
   exit 1
 fi
@@ -697,6 +739,17 @@ data:
   llm-api-key: $(printf '%s' "${KEY}" | base64 -w0)
 ---
 apiVersion: v1
+kind: Secret
+metadata:
+  name: ${DEPLOY}-api-server-key
+  labels:
+    app: sudo-agent
+    agent: $NAME
+type: Opaque
+data:
+  API_SERVER_KEY: $(printf '%s' "${API_SERVER_KEY}" | base64 -w0)
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: $DEPLOY-data
@@ -786,6 +839,20 @@ $SEED_INITCONTAINERS
             secretKeyRef:
               name: ${DEPLOY}-api-key
               key: llm-api-key
+        # Hermes API server (platforms.api_server) — Paperclip wakes the agent
+        # over POST /v1/runs with `Authorization: Bearer <key>`. Key from the
+        # dedicated Secret; bind 0.0.0.0 so a cross-pod ClusterIP Service can
+        # reach it (hostNetwork pods share the node netns, so loopback would be
+        # node-local and unreachable from the paperclip pod on the pod network).
+        - name: API_SERVER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ${DEPLOY}-api-server-key
+              key: API_SERVER_KEY
+        - name: API_SERVER_HOST
+          value: "0.0.0.0"
+        - name: API_SERVER_PORT
+          value: "$API_SERVER_PORT"
         - name: SUDO_PASSWORD
           value: "$SUDO_PASS"
         - name: HERMES_YOLO_MODE
@@ -1029,6 +1096,27 @@ spec:
   - name: watch
     port: 8000
     targetPort: $WATCH_PORT
+---
+# Hermes API server Service (Paperclip -> agent's own API server). Stable port
+# 8000 -> per-agent API_SERVER_PORT (hostNetwork pods share the node netns, so
+# the listener itself uses a unique per-agent port; the Service gives it a
+# stable cluster-DNS name Paperclip (C2) and the contract harness (C5) consume).
+apiVersion: v1
+kind: Service
+metadata:
+  name: $DEPLOY-api
+  labels:
+    app: sudo-agent
+    agent: $NAME
+spec:
+  type: ClusterIP
+  selector:
+    app: sudo-agent
+    agent: $NAME
+  ports:
+  - name: api
+    port: 8000
+    targetPort: $API_SERVER_PORT
 YAMLEOF
 
 if [[ ! -s "$YAML" ]]; then
@@ -1056,7 +1144,7 @@ _manifest_check() {
   n="$(grep -cx "kind: ConfigMap" "$YAML" || true)"
   [[ "${n:-0}" -eq 3 ]] || missing+=("3x kind: ConfigMap (found ${n:-0})")
   n="$(grep -cx "kind: Service" "$YAML" || true)"
-  [[ "${n:-0}" -eq 2 ]] || missing+=("2x kind: Service (found ${n:-0})")
+  [[ "${n:-0}" -eq 3 ]] || missing+=("3x kind: Service (found ${n:-0})")
   # The ConfigMap payloads are produced by `sed` command substitutions: if one
   # of those fails, bash substitutes an empty string and the pod would mount an
   # empty sidecar/plugin. Prove the bodies are really there.
