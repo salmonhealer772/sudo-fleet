@@ -67,7 +67,7 @@ COPY comm/PERSONA-SNIPPET.md /opt/comm/PERSONA-SNIPPET.md
 # /opt/personas/<PERSONA_NAME>.md at run time.
 #
 # NOTE: the docket-scan skills (determine-concern, find-*, download-*,
-# load-persona) are NO LONGER baked into this image. up.sh mounts them
+# find-relevant-documentation) are NO LONGER baked into this image. up.sh mounts them
 # READ-ONLY into /opt/data/skills/<name> from /opt/live-v2/agents/skills (the
 # live-v2 repo) — that is the single source of truth for skills.
 COPY meta-data/SOUL-BINDING.md /opt/meta-data/SOUL-BINDING.md

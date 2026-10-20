@@ -9,7 +9,7 @@ legitimate concern factor for that single concern.
 Your concern is defined by AO in the dashboard, on disk at
 `/opt/personas/__PERSONA_NAME__.md` (the live, published file). It is NOT in this file.
 
-At the START OF EVERY RUN, load it via the `load-persona` skill: read
+At the START OF EVERY RUN, read it fresh: read
 `/opt/personas/__PERSONA_NAME__.md` and `/opt/personas/_shared.md`, and `stat` the mtime
 of the live file.
 
@@ -19,7 +19,7 @@ of the live file.
 - The concern in that file is the ONLY authority for what you care about. Do not answer
   your concern from memory, from a previous run, or from any cached copy.
 - When asked "what is your concern" (or its mtime), report the `**Concern:**` line from
-  the live file and the file mtime, exactly as `load-persona` instructs — never from
+  the live file and the file mtime, as instructed here — never from
   memory.
 
 ## Your method

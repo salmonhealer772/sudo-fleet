@@ -25,7 +25,7 @@ Personas page writes (`PUT /api/personas/<name>`). It is **read fresh on every r
    at `/opt/personas`.
 
 2. **On every boot**, `mcp_entrypoint.sh`:
-   - (no skill seeding here anymore) — the scan skill + load-persona are
+   - (no skill seeding here anymore) — the eight domain skills are
      mounted READ-ONLY into `/opt/data/skills/<name>` by `up.sh` from
      `/opt/live-v2/agents/skills` (the live-v2 repo is the single source of truth), and
    - applies the persona **binding** block (`SOUL-BINDING.md`, with `__PERSONA_NAME__`
@@ -33,7 +33,7 @@ Personas page writes (`PUT /api/personas/<name>`). It is **read fresh on every r
      `<!-- META-DATA-AGENT-BEGIN -->` / `<!-- META-DATA-AGENT-END -->` markers — on EVERY
      boot, idempotent, never touching anything outside the markers.
 
-3. **On every run**, the agent's SOUL.md tells it to load the `load-persona` skill, which
+3. **On every run**, the agent's SOUL.md tells it to read its persona fresh, which
    reads `/opt/personas/<PERSONA_NAME>.md` (live) + `/opt/personas/_shared.md` via
    `read_file`, and `stat`s the mtime. `hermes -z` is a fresh process per run, so the read
    is genuinely fresh each time — a dashboard save lands on the agent's very next run
@@ -48,7 +48,7 @@ match `.draft` by construction.
 
 ## Skills (single source of truth: live-v2/agents/skills)
 
-The two domain skills — `load-persona` and `determine-concern` — live in the
+The eight domain skills live in the
 **live-v2 repo** at `agents/skills/<name>/SKILL.md`.
 `up.sh` mounts them READ-ONLY into `/opt/data/skills/<name>`, so editing a skill in
 live-v2 and pushing reaches every meta-data-agent on its next run/restart. This
