@@ -72,7 +72,7 @@ authority is the failure mode: 36 CFR 251.64(b) delegates the renewal standard
 to "applicable Forest Service directives", and the actual standard sits in
 FSH 2709.14 §53.1m — which no regulations MCP can see. For Layers 2–3 use the
 agency portals directly (fs.usda.gov Directives, blm.gov/policy, nps.gov
-policy); see the project skill `find-regulation.md` for that path.
+policy); the Handbook/Manual (Layers 2–3) path is not covered by this MCP.
 
 ## Important
 
