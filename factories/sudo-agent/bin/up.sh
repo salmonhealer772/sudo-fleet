@@ -696,18 +696,18 @@ if [[ -n "${PERSONA_NAME:-}" ]]; then
 fi
 
 # ── Meta-data-agent skill wiring (repo = single source of truth) ────────────
-# The eight meta-data domain skills live in the live-v2 repo at
-# /opt/live-v2/agents/skills/<name>/SKILL.md (Hermes format). Each is mounted
-# READ-ONLY into /opt/data/skills/<name>, so a repo edit reaches every
-# meta-data-agent on its next restart — no hand-copy, no image rebuild. Gated
-# on PERSONA_NAME (meta-data-agents only); a generic agent is untouched. The
-# two MCP tool-reference skills (regulations-mcp, statutes-mcp) continue to
+# The eight meta-data domain skills plus the seven AO concern lenses live in the
+# live-v2 repo at /opt/live-v2/agents/skills/<name>/SKILL.md (Hermes format).
+# Each is mounted READ-ONLY into /opt/data/skills/<name>, so a repo edit reaches
+# every meta-data-agent on its next restart — no hand-copy, no image rebuild.
+# Gated on PERSONA_NAME (meta-data-agents only); a generic agent is untouched.
+# The two MCP tool-reference skills (regulations-mcp, statutes-mcp) continue to
 # ship via the image's comm/skills seed; everything else here is repo-sourced.
 SKILLS_VOLUME_MOUNTS=""
 SKILLS_VOLUMES=""
 SKILLS_SRC_DIR="/opt/live-v2/agents/skills"
 if [[ -n "${PERSONA_NAME:-}" ]]; then
-  for _skill in find-docket download-docket find-regulation download-regulation find-statute download-statute determine-concern find-relevant-documentation; do
+  for _skill in find-docket download-docket find-regulation download-regulation find-statute download-statute determine-concern find-relevant-documentation ao-permit-tenure-allocation ao-outfitter-fee-cost-recovery ao-negative-space-omission ao-administrative-vulnerability ao-statutory-crossref-preemption ao-member-split-constituency ao-apa-procedural-standing; do
     _sdir="$SKILLS_SRC_DIR/$_skill"
     [[ -d "$_sdir" ]] || continue
     SKILLS_VOLUME_MOUNTS+="        - name: skill-$_skill
