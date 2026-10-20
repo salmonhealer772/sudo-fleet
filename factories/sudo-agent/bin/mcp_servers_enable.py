@@ -12,10 +12,11 @@ EVERY agent, so up.sh calls this for every deploy: a fresh agent gets the full
 MCP surface with no manual step, and an already-deployed agent is upgraded on
 its next roll.
 
-The three servers (each "key|url", idempotent):
+The four servers (each "key|url", idempotent):
   google_workspace  -> http://192.168.5.15:27462/mcp   (sudo-gws on lima)
-  regulations       -> http://regulations-mcp.dockets.svc:8080/mcp  (dockets ns)
-  statutes          -> http://statutes-mcp.dockets.svc:8080/mcp     (dockets ns)
+  regulations       -> http://regulations-mcp.dockets.svc.cluster.local:8080/mcp  (dockets ns)
+  statutes          -> http://statutes-mcp.dockets.svc.cluster.local:8080/mcp     (dockets ns)
+  spicy-regs        -> http://spicy-regs-mcp.dockets.svc.cluster.local:8080/mcp   (dockets ns)
 
 Why a TEXT edit and not a YAML round-trip
 -----------------------------------------
@@ -41,8 +42,9 @@ import sys
 # with the dockets-namespace deployments (and their Letta mods / skills).
 SERVERS = [
     ("google_workspace", "http://192.168.5.15:27462/mcp"),
-    ("regulations", "http://regulations-mcp.dockets.svc:8080/mcp"),
-    ("statutes", "http://statutes-mcp.dockets.svc:8080/mcp"),
+    ("regulations", "http://regulations-mcp.dockets.svc.cluster.local:8080/mcp"),
+    ("statutes", "http://statutes-mcp.dockets.svc.cluster.local:8080/mcp"),
+    ("spicy-regs", "http://spicy-regs-mcp.dockets.svc.cluster.local:8080/mcp"),
 ]
 
 _MCP_RE = re.compile(r"^mcp_servers\s*:.*$")
