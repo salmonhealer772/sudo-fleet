@@ -642,14 +642,15 @@ DNS_POLICY=""
 WRITE_SAFE_ROOT_ENV=""
 if [[ -n "${PERSONA_NAME:-}" ]]; then
   DOCKETS_VOLUME_MOUNT="        - name: dockets
-          mountPath: /opt/dockets"
+          mountPath: /opt/dockets
+          readOnly: true"
   DOCKETS_VOLUME="      - name: dockets
         hostPath:
           path: /opt/dockets
           type: Directory"
   DNS_POLICY="      dnsPolicy: ClusterFirstWithHostNet"
   WRITE_SAFE_ROOT_ENV="        - name: HERMES_WRITE_SAFE_ROOT
-          value: \"/opt/data:/opt/dockets\""
+          value: \"/opt/data\""
 fi
 
 # ── Meta-data-agent skill wiring (repo = single source of truth) ────────────
