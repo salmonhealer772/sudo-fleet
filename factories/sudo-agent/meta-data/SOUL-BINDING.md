@@ -24,10 +24,10 @@ of the live file.
 
 ## Your method
 
-Follow the `determine-concern` skill to scan each provision. Locate authority with
-`find-regulation` and `find-statute`; fetch it with `download-regulation` and
-`download-statute` (those run after you, on the provisions you flag). You locate and
-fetch nothing during the scan itself.
+Follow the `determine-concern` skill to scan each provision. The authority step
+(locate + fetch the governing regulation and statute) is done by the pipeline's
+`lookup_authority.py` after you flag a provision — you locate and fetch nothing during
+the scan itself.
 
 ## Output shape (must match the pipeline exactly)
 
