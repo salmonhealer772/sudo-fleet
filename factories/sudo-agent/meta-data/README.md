@@ -25,8 +25,9 @@ Personas page writes (`PUT /api/personas/<name>`). It is **read fresh on every r
    at `/opt/personas`.
 
 2. **On every boot**, `mcp_entrypoint.sh`:
-   - seeds the six skills below into `/opt/data/skills/` on first boot (guarded by
-     `.meta-data-seeded`), and
+   - (no skill seeding here anymore) — the six domain skills + load-persona are
+     mounted READ-ONLY into `/opt/data/skills/<name>` by `up.sh` from
+     `/opt/live-v2/agents/skills` (the live-v2 repo is the single source of truth), and
    - applies the persona **binding** block (`SOUL-BINDING.md`, with `__PERSONA_NAME__`
      substituted) into `/opt/data/SOUL.md` as a factory-managed block between
      `<!-- META-DATA-AGENT-BEGIN -->` / `<!-- META-DATA-AGENT-END -->` markers — on EVERY
@@ -45,16 +46,15 @@ instructed to read ONLY `/opt/personas/<persona>.md` and NEVER the `.draft`. Thi
 the pipeline's own `find $PERSONAS_DIR -maxdepth 1 -name '*.md' ...` glob, which cannot
 match `.draft` by construction.
 
-## Skills (all six, identical across every meta-data-agent)
+## Skills (single source of truth: live-v2/agents/skills)
 
-| Skill | Role |
-|---|---|
-| `load-persona` | read the concern file + `_shared.md` fresh, report concern + mtime |
-| `determine-concern` | the scan method: one provision -> concern yes/no + brief/negative |
-| `find-regulation` | locate governing CFR/FR/agency authority via regulations MCP |
-| `find-statute` | locate governing U.S. Code statute via statutes MCP |
-| `download-regulation` | fetch regulation text into the provision directory |
-| `download-statute` | fetch statute text into the provision directory |
+The eight domain skills — `load-persona`, `determine-concern`, `find-regulation`,
+`find-statute`, `download-regulation`, `download-statute`, `find-docket`,
+`download-docket` — live in the **live-v2 repo** at `agents/skills/<name>/SKILL.md`.
+`up.sh` mounts them READ-ONLY into `/opt/data/skills/<name>`, so editing a skill in
+live-v2 and pushing reaches every meta-data-agent on its next run/restart. This
+directory (`meta-data/skills/`) no longer carries a baked copy — see
+`SOURCE-OF-TRUTH.md` in the repo root.
 
 The fleet comm skills (`regulations-mcp`, `statutes-mcp`, `list-siblings`,
 `message-agent`, `check-agent`, …) are seeded separately by the comm layer, unchanged.

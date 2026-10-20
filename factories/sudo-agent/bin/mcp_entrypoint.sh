@@ -66,19 +66,10 @@ if [ ! -f /opt/data/.comm-seeded ]; then
   touch /opt/data/.comm-seeded 2>/dev/null || true
 fi
 
-# Meta-data-agent skills: seeded into $HERMES_HOME/skills on FIRST boot ONLY, and
-# ONLY for meta-data-agents (PERSONA_NAME set — the dashboard persona slug this
-# agent carries; generic sudo-agents get none of these). Same first-boot guard
-# rules as the comm layer above: every step is `|| true` so a missing source or
-# unwritable PVC can never block first boot.
-if [ -n "${PERSONA_NAME:-}" ] && [ ! -f /opt/data/.meta-data-seeded ]; then
-  mkdir -p /opt/data/skills 2>/dev/null || true
-  if [ -d /opt/meta-data-skills ]; then
-    cp -a /opt/meta-data-skills/. /opt/data/skills/ 2>/dev/null || true
-  fi
-  chown -R 10000:10000 /opt/data/skills 2>/dev/null || true
-  touch /opt/data/.meta-data-seeded 2>/dev/null || true
-fi
+# Meta-data-agent domain skills are NOT seeded here. up.sh mounts them READ-ONLY
+# into /opt/data/skills/<name> from /opt/live-v2/agents/skills (the live-v2 repo
+# is the single source of truth for skills). Only the comm skills above are
+# seeded from the image.
 
 # Fleet-comm awareness block: applied to SOUL.md on EVERY boot (managed block).
 # _apply_fleet_block <target> <snippet>: replace the content between the
