@@ -635,6 +635,51 @@ if [[ -n "${PERSONA_NAME:-}" ]]; then
           path: /opt/personas
           type: Directory"
 fi
+
+DOCKETS_VOLUME_MOUNT=""
+DOCKETS_VOLUME=""
+DNS_POLICY=""
+WRITE_SAFE_ROOT_ENV=""
+if [[ -n "${PERSONA_NAME:-}" ]]; then
+  DOCKETS_VOLUME_MOUNT="        - name: dockets
+          mountPath: /opt/dockets"
+  DOCKETS_VOLUME="      - name: dockets
+        hostPath:
+          path: /opt/dockets
+          type: Directory"
+  DNS_POLICY="      dnsPolicy: ClusterFirstWithHostNet"
+  WRITE_SAFE_ROOT_ENV="        - name: HERMES_WRITE_SAFE_ROOT
+          value: \"/opt/data:/opt/dockets\""
+fi
+
+# ── Meta-data-agent skill wiring (repo = single source of truth) ────────────
+# The seven domain skills + load-persona live in the live-v2 repo at
+# /opt/live-v2/agents/skills/<name>/SKILL.md (Hermes format). Each is mounted
+# READ-ONLY into /opt/data/skills/<name>, so a repo edit reaches every
+# meta-data-agent on its next restart — no hand-copy, no image rebuild. Gated
+# on PERSONA_NAME (meta-data-agents only); a generic agent is untouched. The
+# two MCP tool-reference skills (regulations-mcp, statutes-mcp) continue to
+# ship via the image's comm/skills seed; everything else here is repo-sourced.
+SKILLS_VOLUME_MOUNTS=""
+SKILLS_VOLUMES=""
+SKILLS_SRC_DIR="/opt/live-v2/agents/skills"
+if [[ -n "${PERSONA_NAME:-}" ]]; then
+  for _skill in find-docket download-docket find-regulation download-regulation \
+                find-statute download-statute determine-concern load-persona; do
+    _sdir="$SKILLS_SRC_DIR/$_skill"
+    [[ -d "$_sdir" ]] || continue
+    SKILLS_VOLUME_MOUNTS+="        - name: skill-$_skill
+          mountPath: /opt/data/skills/$_skill
+          readOnly: true
+"
+    SKILLS_VOLUMES+="      - name: skill-$_skill
+        hostPath:
+          path: $_sdir
+          type: Directory
+"
+  done
+fi
+
 cat > "$YAML" <<YAMLEOF
 # Per-deployment API key Secret — created before the Deployment so
 # kubectl apply succeeds on the first run. The Secret is owned by
@@ -718,6 +763,7 @@ spec:
     spec:
       shareProcessNamespace: true
       hostNetwork: true
+$DNS_POLICY
 $SEED_INITCONTAINERS
       containers:
       - name: sudo-agent
@@ -760,6 +806,7 @@ $SEED_INITCONTAINERS
           value: $REDIS_URL
 $EXTRA_ENV
 $PERSONA_ENV
+$WRITE_SAFE_ROOT_ENV
         volumeMounts:
         - name: data
           mountPath: /opt/data
@@ -780,7 +827,8 @@ $PERSONA_ENV
         - name: docker-sock
           mountPath: /var/run/docker.sock
 $PERSONA_VOLUME_MOUNT
-        # ── Self-repair probes: restart on crash/hang ───────────────────────
+$DOCKETS_VOLUME_MOUNT
+$SKILLS_VOLUME_MOUNTS        # ── Self-repair probes: restart on crash/hang ───────────────────────
         # The agent's MCP server (gateway run) listens on MCP_PORT (0.0.0.0).
         # startupProbe gives it a generous window to boot; livenessProbe
         # restarts a hung-but-alive agent (listener gone/stuck); readinessProbe
@@ -871,7 +919,8 @@ $SEED_VOLUME
           path: /var/run/docker.sock
           type: Socket
 $PERSONA_VOLUME
-      - name: watch-config
+$DOCKETS_VOLUME
+$SKILLS_VOLUMES      - name: watch-config
         configMap:
           name: $DEPLOY-watch-config
           defaultMode: 0755
