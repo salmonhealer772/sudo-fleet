@@ -45,11 +45,19 @@ import time
 PLUGIN_NAME = "sudo-comm-gate"
 DEFAULT_HOME = "/opt/data"
 
-#: the three comm skills, and the CLI filename markers that identify each.
-COMM_SKILLS = {
-    "list-siblings": ("list_siblings.py",),
-    "message-agent": ("message_agent.py",),
-    "check-agent": ("check_agent.py",),
+#: the skills the gate records and enforces. "cli" markers match terminal
+#: commands that run a comm CLI; "mcp" markers match MCP tool-name prefixes
+#: (the authority lookup tools). A skill with no markers is still RECORDED on
+#: load (so the load is visible evidence) but blocks nothing here — its gate is
+#: enforced elsewhere (determine-concern's verdict is gated by the dispatcher).
+#: Skill names are the SKILL.md ``name:`` values.
+GATED_SKILLS = {
+    "list-siblings": {"cli": ("list_siblings.py",)},
+    "message-agent": {"cli": ("message_agent.py",)},
+    "check-agent": {"cli": ("check_agent.py",)},
+    "regulations-mcp": {"mcp": ("mcp__regulations__",)},
+    "statutes-mcp": {"mcp": ("mcp__statutes__",)},
+    "determine-concern": {},
 }
 
 #: bound the ledger so a long-lived agent cannot grow it without limit.
@@ -100,7 +108,7 @@ def _prune(state: dict, current: str) -> dict:
 
 
 def _record_skill_load(session_id: str, skill_name: str) -> None:
-    if not session_id or skill_name not in COMM_SKILLS:
+    if not session_id or skill_name not in GATED_SKILLS:
         return
     state = load_state()
     entry = state.get(session_id)
@@ -119,14 +127,25 @@ def _skill_loaded(session_id: str, skill_name: str) -> bool:
     return skill_name in entry
 
 
-def _comm_skill_in_command(command) -> str | None:
-    """Return the comm skill whose CLI the command invokes, else None."""
-    if not isinstance(command, str) or not command:
-        return None
-    for skill, markers in COMM_SKILLS.items():
-        for marker in markers:
-            if marker in command:
-                return skill
+def _gated_skill_for_tool_call(tool_name, args) -> str | None:
+    """Return the skill whose tool this call invokes, else None.
+
+    Matches MCP tools by their tool-name prefix (``mcp__regulations__*``,
+    ``mcp__statutes__*``) and comm tools by the CLI filename in a terminal
+    command. Returns None when the call touches no gated tool.
+    """
+    if isinstance(tool_name, str) and tool_name:
+        for skill, markers in GATED_SKILLS.items():
+            for prefix in markers.get("mcp", ()):
+                if tool_name.startswith(prefix):
+                    return skill
+    if isinstance(args, dict):
+        command = args.get("command")
+        if isinstance(command, str) and command:
+            for skill, markers in GATED_SKILLS.items():
+                for marker in markers.get("cli", ()):
+                    if marker in command:
+                        return skill
     return None
 
 
@@ -142,17 +161,14 @@ def _on_skill_lifecycle(**kw) -> None:
 
 
 def _on_pre_tool_call(**kw):
-    """Block a comm-CLI terminal command until its skill was loaded."""
+    """Block a gated tool (comm CLI or authority MCP tool) until its skill was loaded."""
     try:
-        args = kw.get("args")
-        if not isinstance(args, dict):
-            return None
-        skill = _comm_skill_in_command(args.get("command"))
+        skill = _gated_skill_for_tool_call(kw.get("tool_name"), kw.get("args"))
         if skill is None:
             return None
         session_id = kw.get("session_id") or ""
         if not session_id:
-            return None  # no session context: let the CLI's own gate decide
+            return None  # no session context: the CLI half (comm tools) decides
         if _skill_loaded(session_id, skill):
             return None
         return {
