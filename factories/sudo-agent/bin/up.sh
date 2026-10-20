@@ -654,7 +654,7 @@ if [[ -n "${PERSONA_NAME:-}" ]]; then
 fi
 
 # ── Meta-data-agent skill wiring (repo = single source of truth) ────────────
-# The scan skill + load-persona live in the live-v2 repo at
+# The eight meta-data domain skills live in the live-v2 repo at
 # /opt/live-v2/agents/skills/<name>/SKILL.md (Hermes format). Each is mounted
 # READ-ONLY into /opt/data/skills/<name>, so a repo edit reaches every
 # meta-data-agent on its next restart — no hand-copy, no image rebuild. Gated
@@ -665,7 +665,7 @@ SKILLS_VOLUME_MOUNTS=""
 SKILLS_VOLUMES=""
 SKILLS_SRC_DIR="/opt/live-v2/agents/skills"
 if [[ -n "${PERSONA_NAME:-}" ]]; then
-  for _skill in determine-concern load-persona; do
+  for _skill in find-docket download-docket find-regulation download-regulation find-statute download-statute determine-concern find-relevant-documentation; do
     _sdir="$SKILLS_SRC_DIR/$_skill"
     [[ -d "$_sdir" ]] || continue
     SKILLS_VOLUME_MOUNTS+="        - name: skill-$_skill
