@@ -43,6 +43,12 @@ CONFIG_DIR="$REPO_DIR/config"
 DEPLOY="sudo-$NAME"
 YAML="$YAML_DIR/$NAME.yaml"
 PER_AGENT_CONFIG="$CONFIG_DIR/$NAME.yaml"
+# Repo-owned SOUL identity for this agent (OPTIONAL). When this file exists,
+# up.sh seeds it into the PVC through an initContainer (see the seed block below)
+# so an engineer's identity is reproducible from the repo instead of existing
+# only on one PVC. When it does not exist, no initContainer and no volume are
+# emitted — the manifest for every other agent stays exactly as it was.
+SOUL_SRC="$CONFIG_DIR/$NAME.SOUL.md"
 
 # Per-agent MCP server port. Every sudo-agent pod runs hostNetwork:true, so all
 # pods share the node's network namespace and a single fixed port would collide.
@@ -634,15 +640,19 @@ _HD_BODY="$(awk -v s="$_HD_START" -v e="$_HD_END" 'NR > s && NR < e' "$0")"
 # 1) every backtick must be backslash-escaped: drop the escaped pairs, and
 #    anything still holding a backtick is a command the shell would RUN.
 _HD_BACKTICKS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\`//g' | grep -c '`' || true)"
-# 2) the only command substitutions allowed are the three sed indent helpers
-#    that embed the ConfigMap payloads, PLUS the two `$(printf '%s' "$KEY" |
-#    base64 -w0)` Secret encoders — so 7 in total. An ESCAPED \$( is inert (it
-#    renders as literal text and never runs), so it is removed before counting —
-#    that is what lets these comments document the hazard without tripping the
-#    guard.
+# 2) the only command substitutions allowed are the FIVE sed indent helpers
+#    that embed the ConfigMap payloads (watch sidecar, watch plugin.yaml,
+#    watch plugin __init__.py, comm-gate plugin.yaml, comm-gate plugin
+#    __init__.py), PLUS the three `$(printf '%s' "$KEY" | base64 -w0)` Secret
+#    encoders (deepseek, llm, api-server) — so 8 in total. This count went stale
+#    once already: the comm-gate indent helper was added and left the guard
+#    aborting EVERY deploy. If you add or remove a helper, update this number in
+#    the same commit. An ESCAPED \$\( is inert (it renders as literal text and
+#    never runs), so it is removed before counting — that is what lets these
+#    comments document the hazard without tripping the guard.
 _HD_SUBS="$(printf '%s\n' "$_HD_BODY" | sed 's/\\\$[(]//g' \
              | grep -o '\$(' | wc -l | tr -d ' ')"
-_HD_KNOWN_SUBS=7
+_HD_KNOWN_SUBS=8
 if [[ "$_HD_BACKTICKS" -ne 0 || "$_HD_SUBS" -ne "$_HD_KNOWN_SUBS" ]]; then
   echo "✗ FATAL: the manifest heredoc in $0 contains a command the shell would" >&2
   echo "  EXECUTE on every deploy (unescaped backticks: $_HD_BACKTICKS; command" >&2
@@ -652,12 +662,33 @@ if [[ "$_HD_BACKTICKS" -ne 0 || "$_HD_SUBS" -ne "$_HD_KNOWN_SUBS" ]]; then
   exit 1
 fi
 echo "→ Writing $YAML..."
-# ── Optional glimor seed (initContainer seeds the PVC BEFORE the agent runs) ──
+# ── Seed the PVC before the agent runs (glimor OR repo SOUL) ────────────────
+# Exactly ONE initContainer may ever write /opt/data/SOUL.md, so the two seed
+# sources are mutually exclusive by construction (if / elif below):
+#
+#   * --from-glimor WINS. A glimor already carries hermes/SOUL.md and owns the
+#     WHOLE /opt/data tree, so it is the single seed allowed to write SOUL.md;
+#     when a glimor is given the repo SOUL seed is not emitted at all (no two
+#     initContainers racing on the same file, no "which ran first" ambiguity).
+#   * Otherwise, if config/<name>.SOUL.md exists, seed-soul installs that
+#     tracked identity — so an engineer's identity is reproducible from the
+#     repo instead of existing only on one PVC.
+#   * Otherwise (the common case, every agent without a SOUL file) NOTHING is
+#     emitted: no initContainer, no volume, manifest unchanged.
+#
 # When --from-glimor <dir> is given, an initContainer copies <dir>/hermes/ into
 # /opt/data BEFORE the Hermes process starts, so a fork wakes as the seeded
 # agent (never a blank Hermes). Idempotent: a .glimor-seeded marker skips
 # re-seeding on restarts (preserving the fork's runtime changes). A missing or
 # invalid glimor fails the initContainer (and the deploy) loudly.
+#
+# The SOUL seed's guard is NON-DESTRUCTIVE and idempotent: it writes only when
+# /opt/data/SOUL.md is ABSENT, or when its md5 is the stock Hermes template's
+# ($SOUL_STOCK_MD5 — a pod that booted blank/default and needs fixing). ANY
+# other hash is a live, possibly hand-edited identity: it is KEPT and the
+# initContainer exits 0. Restarts therefore re-run the guard, decide "keep",
+# and change nothing — and can never fail the pod for deciding to skip.
+SOUL_STOCK_MD5="1aec3b727511f093344188de159a77ca"
 SEED_INITCONTAINERS=""
 SEED_VOLUME=""
 if [[ -n "${GLIMOR_DIR:-}" ]]; then
@@ -683,6 +714,39 @@ if [[ -n "${GLIMOR_DIR:-}" ]]; then
         hostPath:
           path: $GLIMOR_ABS
           type: Directory"
+elif [[ -f "$SOUL_SRC" ]]; then
+  SOUL_ABS="$(cd "$CONFIG_DIR" && pwd)/$NAME.SOUL.md"
+  # Quoted heredoc: the initContainer text below is literal (no expansion here),
+  # and @SOUL_STOCK_MD5@ is substituted once so the guard and the comment above
+  # can never drift apart. The text is then injected into the manifest through
+  # $SEED_INITCONTAINERS — a plain $VAR reference, which the heredoc expansion
+  # guard allows. The inner script deliberately contains NO command substitution
+  # and NO backtick (the hash test is md5sum piped into grep -q), so the guard's
+  # expected _HD_KNOWN_SUBS count of 8 is untouched: nothing is added to the
+  # heredoc BODY, and a value substituted INTO a heredoc is never re-expanded.
+  SEED_INITCONTAINERS="$(cat <<'SEEDSOUL'
+      initContainers:
+      - name: seed-soul
+        image: sudo-agent:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          runAsUser: 0
+        command: ["sh", "-c", "set -eu; dst=/opt/data/SOUL.md; src=/seed-soul/SOUL.md; test -f $src; if [ -f $dst ]; then md5sum $dst; if ! md5sum $dst | grep -q '^@SOUL_STOCK_MD5@ '; then echo keeping-existing-soul; exit 0; fi; echo replacing-stock-soul; fi; cp $src $dst.seed-tmp; chown 10000:10000 $dst.seed-tmp; chmod 0644 $dst.seed-tmp; mv $dst.seed-tmp $dst; md5sum $dst; echo seeded-soul"]
+        volumeMounts:
+        - name: data
+          mountPath: /opt/data
+        - name: soul-seed
+          mountPath: /seed-soul/SOUL.md
+          readOnly: true
+SEEDSOUL
+)"
+  SEED_INITCONTAINERS="${SEED_INITCONTAINERS//@SOUL_STOCK_MD5@/$SOUL_STOCK_MD5}"
+  # Same style as the per-agent config volume: the repo file itself, mounted
+  # read-only into the initContainer. Never written to.
+  SEED_VOLUME="      - name: soul-seed
+        hostPath:
+          path: $SOUL_ABS
+          type: File"
 fi
 
 # ── Meta-data-agent persona wiring (optional) ────────────────────────────────
@@ -872,7 +936,7 @@ $SEED_INITCONTAINERS
               name: ${DEPLOY}-api-key
               key: llm-api-key
         # Hermes API server (platforms.api_server) — Paperclip wakes the agent
-        # over POST /v1/runs with `Authorization: Bearer <key>`. Key from the
+        # over POST /v1/runs with \`Authorization: Bearer <key>\`. Key from the
         # dedicated Secret; bind 0.0.0.0 so a cross-pod ClusterIP Service can
         # reach it (hostNetwork pods share the node netns, so loopback would be
         # node-local and unreachable from the paperclip pod on the pod network).
