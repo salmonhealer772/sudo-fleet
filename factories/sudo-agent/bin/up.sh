@@ -58,6 +58,15 @@ PER_AGENT_CONFIG="$CONFIG_DIR/$NAME.yaml"
 # So the window is 8000..29999 (22000 values), which is clear of both.
 # The Service below exposes a stable port 8000 and forwards (targetPort) here.
 MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
+# Per-agent API-SERVER port. Hermes' api_server platform (OpenAI-compatible HTTP)
+# defaults to a FIXED 127.0.0.1:8642. Every agent pod is hostNetwork:true, so all
+# pods share the node's network namespace and the second agent to boot dies with
+# "Port 8642 already in use" — the gateway exits and the agent crashloops. Derive
+# a stable, unique port from the agent name, hashed from a DIFFERENT salt than
+# MCP_PORT/WATCH_PORT so the three never collide with each other, and inside the
+# same 8000..29999 window (clear of the NodePort + ephemeral ranges).
+API_SERVER_PORT=$(( 8000 + $(printf '%s' "$NAME-apiserver" | cksum | cut -d' ' -f1) % 22000 ))
+
 
 # Per-agent WATCH (observer sidecar) port — same hostNetwork collision rules
 # as MCP_PORT, but hashed from a DIFFERENT string ("$NAME-watch") so it never
@@ -94,6 +103,29 @@ if [[ ! -f "$PER_AGENT_CONFIG" ]]; then
   cp "$REPO_DIR/config.yaml" "$PER_AGENT_CONFIG"
   CONFIG_SEEDED=1
 fi
+
+# Force this agent's api_server port into the per-agent config, every deploy.
+# Set-with-replace (not append) so a stale fixed 8642 from an older seed cannot
+# survive. Without this every hostNetwork agent fights over 8642 and crashloops.
+python3 - "$PER_AGENT_CONFIG" "$API_SERVER_PORT" <<'PYAPI'
+import re, sys, pathlib
+path, port = sys.argv[1], sys.argv[2]
+p = pathlib.Path(path)
+t = p.read_text()
+if re.search(r"^platforms:\s*$", t, re.M):
+    if re.search(r"^(\s+)api_server:\s*$", t, re.M):
+        # replace the port directly under api_server
+        t = re.sub(r"(^\s+api_server:\s*\n(?:\s+.*\n)*?\s+port:\s*)\S+",
+                   lambda m: m.group(1) + port, t, count=1, flags=re.M)
+        if f"port: {port}" not in t:
+            t = re.sub(r"(^\s+api_server:\s*$)", rf"\1\n    port: {port}", t, count=1, flags=re.M)
+    else:
+        t = re.sub(r"^platforms:\s*$", f"platforms:\n  api_server:\n    port: {port}", t, count=1, flags=re.M)
+else:
+    t = t.rstrip("\n") + f"\nplatforms:\n  api_server:\n    port: {port}\n"
+p.write_text(t)
+print(f"-> api_server port {port} written to {path}")
+PYAPI
 
 # ── LLM provider / model convergence into the per-agent config ──────────────
 # WHY: the tracked config.yaml defaults to DeepSeek with its custom_providers
