@@ -74,8 +74,9 @@ if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
 fi
 
 # Per-agent Hermes API server port (platforms.api_server) is NOT derived here.
-# It comes from bin/api_server_ports.py — a dedicated, collision-proof 8700..8799
-# block (separate from the MCP/watch 8000..29999 window by construction) assigned
+# It comes from bin/api_server_ports.py — a dedicated, collision-proof 61000..65535
+# block (above the MCP/watch 8000..29999, NodePort 30000..32767 and ephemeral
+# 32768..60999 ranges by construction) assigned
 # deterministically from the agent name. The value is set just after the
 # per-agent config is seeded below (where the old broken regex writer used to
 # run), so the config file and the $DEPLOY-api Service / API_SERVER_PORT env
@@ -97,7 +98,7 @@ if [[ ! -f "$PER_AGENT_CONFIG" ]]; then
   CONFIG_SEEDED=1
 fi
 
-# Assign this agent's api_server port from the dedicated 8700..8799 block and
+# Assign this agent's api_server port from the dedicated 61000..65535 block and
 # write it into the per-agent config. bin/api_server_ports.py is the single
 # source of truth: a deterministic per-agent port (stable hash of the name),
 # a real YAML-verified surgical edit (never a duplicate key, no regex), and

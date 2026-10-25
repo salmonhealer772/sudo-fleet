@@ -14,19 +14,23 @@ pod shares the node's network namespace and a second agent to boot on 8642 dies
 with "Port 8642 already in use" -> the gateway exits -> CrashLoopBackOff. On
 2026-10-25 that took 37 Hermes pods down at once.
 
-The fix is a dedicated, collision-proof, per-agent port in **8700-8799
-exclusively**. That block is deliberately separate from the MCP / watch hashed
-window (8000..29999) so an api_server port can never collide with an MCP or
-watch port *by construction*, and one ``grep`` shows every api_server port in
-the fleet.
+The fix is a dedicated, collision-proof, per-agent port in **61000-65535
+exclusively**. That block sits ABOVE every range the node already uses — the
+MCP / watch hashed window (8000..29999), the Kubernetes NodePort range
+(30000..32767), the Linux ephemeral range (32768..60999, from
+/proc/sys/net/ipv4/ip_local_port_range) and the offline-fallback Redis
+window (40000..59999) — so an api_server port can never collide with any of
+them *by construction*, and one ``grep`` shows every api_server port in the
+fleet.
 
 Assignment
 ----------
 ``stable_port(name)`` is a deterministic, machine-independent hash of the agent
-name into 8700..8799 (SHA-256, so it does not depend on cksum/CRC table luck or
-word size). 100 slots for the current ~66 configs means two names can hash to
-the same slot, so a collision is resolved by linear-probing the 8700..8799 ring
-in SORTED name order. That resolution is fully deterministic (same set of names
+name into 61000..65535 (SHA-256, so it does not depend on cksum/CRC table luck
+or word size). 4536 slots comfortably hold many hundreds of agents with room to
+spare (the whole live fleet is ~94 agents); two names can hash to the same
+slot, so a collision is resolved by linear-probing the 61000..65535 ring in
+SORTED name order. That resolution is fully deterministic (same set of names
 -> same ports) and the result is WRITTEN into each config, so:
 
   * idempotent — running the sweep twice changes nothing;
@@ -60,8 +64,18 @@ import re
 import sys
 from collections import Counter
 
-PORT_BASE = 8700
-PORT_COUNT = 100          # 8700..8799 inclusive
+# Chosen block: 61000..65535 (4536 slots) — the largest contiguous range that is
+# collision-proof against everything the node actually uses (evidence, 2026-10-25
+# lima host):
+#   * MCP / watch ports:  8000 + cksum % 22000            -> 8000..29999
+#   * k3s NodePort range: 30000..32767 (default; dashboard 30000, paperclip 31310)
+#   * Linux ephemeral:    32768..60999 (/proc/sys/net/ipv4/ip_local_port_range)
+#   * offline Redis:      40000 + (MCP_PORT*7) % 20000    -> 40000..59999
+#   * ss -tlnp above 60999: only tailscaled on IPv6 :64645 — no 127.0.0.1 bind
+# 61000..65535 sits above all of these; 4536 slots hold many hundreds of agents
+# with room to spare.
+PORT_BASE = 61000
+PORT_COUNT = 4536        # 61000..65535 inclusive
 PORT_MAX = PORT_BASE + PORT_COUNT - 1
 DEFAULT_PORT = 8642       # Hermes' built-in api_server default (the collision)
 
@@ -69,7 +83,7 @@ _PORT_KEY_RE = re.compile(r"^\s+port\s*:")
 
 
 def stable_port(name):
-    """Deterministic, machine-independent port in 8700..8799 for a name."""
+    """Deterministic, machine-independent port in 61000..65535 for a name."""
     digest = hashlib.sha256(("api-server:%s" % name).encode("utf-8")).hexdigest()
     return PORT_BASE + (int(digest, 16) % PORT_COUNT)
 
@@ -330,7 +344,7 @@ def _plan(config_dir):
 
 
 def _assignments(reassign, taken):
-    """Deterministic collision-free ports: probe the 8700..8799 ring in sorted
+    """Deterministic collision-free ports: probe the 61000..65535 ring in sorted
     name order, skipping already-taken ports."""
     result = {}
     taken = set(taken)
