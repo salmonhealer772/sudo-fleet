@@ -64,16 +64,6 @@ SOUL_SRC="$CONFIG_DIR/$NAME.SOUL.md"
 # So the window is 8000..29999 (22000 values), which is clear of both.
 # The Service below exposes a stable port 8000 and forwards (targetPort) here.
 MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
-# Per-agent API-SERVER port. Hermes' api_server platform (OpenAI-compatible HTTP)
-# defaults to a FIXED 127.0.0.1:8642. Every agent pod is hostNetwork:true, so all
-# pods share the node's network namespace and the second agent to boot dies with
-# "Port 8642 already in use" — the gateway exits and the agent crashloops. Derive
-# a stable, unique port from the agent name, hashed from a DIFFERENT salt than
-# MCP_PORT/WATCH_PORT so the three never collide with each other, and inside the
-# same 8000..29999 window (clear of the NodePort + ephemeral ranges).
-API_SERVER_PORT=$(( 8000 + $(printf '%s' "$NAME-apiserver" | cksum | cut -d' ' -f1) % 22000 ))
-
-
 # Per-agent WATCH (observer sidecar) port — same hostNetwork collision rules
 # as MCP_PORT, but hashed from a DIFFERENT string ("$NAME-watch") so it never
 # collides with the MCP port. Guard bumps by 1 in the (astronomically rare) case
@@ -83,16 +73,13 @@ if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
   WATCH_PORT=$(( MCP_PORT + 1 ))
 fi
 
-# Per-agent Hermes API server port (platforms.api_server). Same hostNetwork
-# collision rules as MCP_PORT/WATCH_PORT: hashed from a DIFFERENT string
-# ("$NAME-api") so it never collides with either. Paperclip reaches it through
-# the $DEPLOY-api Service below. Same 8000..29999 window (clear of NodePort
-# 30000-32767 and the 32768+ ephemeral range).
-API_SERVER_PORT=$(( 8000 + $(printf '%s-api' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
-while [[ "$API_SERVER_PORT" == "$MCP_PORT" || "$API_SERVER_PORT" == "$WATCH_PORT" ]]; do
-  API_SERVER_PORT=$(( API_SERVER_PORT + 1 ))
-  [[ "$API_SERVER_PORT" -gt 29999 ]] && API_SERVER_PORT=8000
-done
+# Per-agent Hermes API server port (platforms.api_server) is NOT derived here.
+# It comes from bin/api_server_ports.py — a dedicated, collision-proof 8700..8799
+# block (separate from the MCP/watch 8000..29999 window by construction) assigned
+# deterministically from the agent name. The value is set just after the
+# per-agent config is seeded below (where the old broken regex writer used to
+# run), so the config file and the $DEPLOY-api Service / API_SERVER_PORT env
+# always agree.
 
 # If repo is root-owned and we're not root, bail early
 if [[ ! -w "$REPO_DIR" ]] && [[ "$(id -u)" != "0" ]]; then
@@ -110,28 +97,19 @@ if [[ ! -f "$PER_AGENT_CONFIG" ]]; then
   CONFIG_SEEDED=1
 fi
 
-# Force this agent's api_server port into the per-agent config, every deploy.
-# Set-with-replace (not append) so a stale fixed 8642 from an older seed cannot
-# survive. Without this every hostNetwork agent fights over 8642 and crashloops.
-python3 - "$PER_AGENT_CONFIG" "$API_SERVER_PORT" <<'PYAPI'
-import re, sys, pathlib
-path, port = sys.argv[1], sys.argv[2]
-p = pathlib.Path(path)
-t = p.read_text()
-if re.search(r"^platforms:\s*$", t, re.M):
-    if re.search(r"^(\s+)api_server:\s*$", t, re.M):
-        # replace the port directly under api_server
-        t = re.sub(r"(^\s+api_server:\s*\n(?:\s+.*\n)*?\s+port:\s*)\S+",
-                   lambda m: m.group(1) + port, t, count=1, flags=re.M)
-        if f"port: {port}" not in t:
-            t = re.sub(r"(^\s+api_server:\s*$)", rf"\1\n    port: {port}", t, count=1, flags=re.M)
-    else:
-        t = re.sub(r"^platforms:\s*$", f"platforms:\n  api_server:\n    port: {port}", t, count=1, flags=re.M)
-else:
-    t = t.rstrip("\n") + f"\nplatforms:\n  api_server:\n    port: {port}\n"
-p.write_text(t)
-print(f"-> api_server port {port} written to {path}")
-PYAPI
+# Assign this agent's api_server port from the dedicated 8700..8799 block and
+# write it into the per-agent config. bin/api_server_ports.py is the single
+# source of truth: a deterministic per-agent port (stable hash of the name),
+# a real YAML-verified surgical edit (never a duplicate key, no regex), and
+# idempotent. It sets $API_SERVER_PORT from the value it wrote, so the config
+# file and the $DEPLOY-api Service / API_SERVER_PORT env always agree. Without
+# this every hostNetwork agent fights over the built-in 127.0.0.1:8642.
+if ! API_SERVER_PORT="$(python3 "$SCRIPT_DIR/api_server_ports.py" assign "$CONFIG_DIR" "$NAME")"; then
+  echo "✗ FAILED to assign a unique api_server port to $PER_AGENT_CONFIG" >&2
+  echo "  The agent would crashloop against 127.0.0.1:8642 like 37 pods already do — deploy aborted." >&2
+  exit 1
+fi
+echo "→ api_server port $API_SERVER_PORT assigned to $PER_AGENT_CONFIG"
 
 # ── LLM provider / model convergence into the per-agent config ──────────────
 # WHY: the tracked config.yaml defaults to DeepSeek with its custom_providers
@@ -536,6 +514,19 @@ echo "→ Enabling the Hermes API server (platforms.api_server) in $PER_AGENT_CO
 if ! python3 "$SCRIPT_DIR/api_server_enable.py" "$PER_AGENT_CONFIG"; then
   echo "✗ FAILED to enable platforms.api_server in $PER_AGENT_CONFIG." >&2
   echo "  Fix the config (or the helper) and re-run." >&2
+  exit 1
+fi
+
+# ── api_server port regression guard ─────────────────────────────────────────────
+# Fails loudly if ANY config in the fleet resolves to the built-in 8642 default
+# or to a duplicate api_server port (cross-file). Wired here so the next agent
+# added is caught by tooling at deploy time, not by a crashloop three days
+# later. Read-only (never mutates) and runs against the whole config dir, so a
+# bad config added by hand also blocks the deploy that would ship it.
+if ! python3 "$SCRIPT_DIR/api_server_ports.py" guard "$CONFIG_DIR"; then
+  echo "✗ FAILED api_server port guard: a config resolves to 8642 or a duplicate port." >&2
+  echo "  Fix with: python3 $SCRIPT_DIR/api_server_ports.py sweep $CONFIG_DIR" >&2
+  echo "  then re-run the guard and this deploy. Deploy aborted." >&2
   exit 1
 fi
 
