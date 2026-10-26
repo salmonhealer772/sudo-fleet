@@ -1,0 +1,38 @@
+{
+  "name": "@letta-ai/dictation",
+  "version": "0.1.0",
+  "description": "Letta Code mod package that adds /listen and /done: dictate speech into an agent chat from a microphone on another machine over SSH, with no time limit, and land the transcript in the composer unsent.",
+  "author": "sudo-fleet-glm-h1",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "letta-package",
+    "letta-mod",
+    "letta-code",
+    "fleet",
+    "dictation",
+    "speech",
+    "microphone",
+    "whisper",
+    "ssh"
+  ],
+  "files": [
+    "README.md",
+    "MOD.md",
+    "mods"
+  ],
+  "letta": {
+    "manifestVersion": 1,
+    "mods": [
+      "./mods/index.mjs"
+    ],
+    "capabilities": [
+      "commands",
+      "events.turns",
+      "ui.panels"
+    ],
+    "engines": {
+      "lettaCodeCli": ">=0.33.0"
+    }
+  }
+}
