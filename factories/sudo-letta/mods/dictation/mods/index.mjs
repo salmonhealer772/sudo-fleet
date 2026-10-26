@@ -254,16 +254,17 @@ function isAlive(child) {
  * pipeline must not survive as an orphaned ssh with the microphone still hot
  * just because we signalled the shell it was started from. */
 function signalTree(child, signal) {
-  if (!isAlive(child)) return;
-  const pid = child.pid;
+  // NOTE: no isAlive(child) guard. The direct child (the `sh -c` wrapper) often
+  // exits before the recorder it started, and a dead wrapper must not stop us
+  // from signalling the rest of its group — that is exactly how an orphaned
+  // recorder with a hot mic is left behind.
+  if (!child || typeof child.pid !== "number") return;
   try {
-    if (typeof pid === "number") {
-      process.kill(-pid, signal);
-      return;
-    }
+    process.kill(-child.pid, signal);
   } catch {
-    /* ESRCH, or no group: fall through to the direct child */
+    /* ESRCH: the group is already gone */
   }
+  if (!isAlive(child)) return;
   try {
     child.kill(signal);
   } catch {
@@ -272,10 +273,9 @@ function signalTree(child, signal) {
 }
 
 function terminate(s, child) {
-  if (!isAlive(child)) return;
+  if (!child || typeof child.pid !== "number") return;
   signalTree(child, "SIGTERM");
   const timer = setTimeout(() => {
-    if (!isAlive(child)) return;
     signalTree(child, "SIGKILL");
   }, timings.killGraceMs);
   s.timers.add(timer);
@@ -472,13 +472,8 @@ function runStopCommand(s, budgetMs) {
     };
 
     const timer = setTimeout(() => {
-      if (isAlive(child)) {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          /* ignore */
-        }
-      }
+      // The stop command runs detached too, so take its whole group down.
+      signalTree(child, "SIGKILL");
       finish({
         ok: false,
         describe: `timed out after ${Math.round(budgetMs / 1000)}s`,
@@ -868,6 +863,9 @@ export default function activate(letta) {
           // 3. Never leave a hot mic: make sure the child is gone.
           terminate(current, current.child);
           if (isAlive(current.child)) await waitEvent(current, timings.killGraceMs);
+          // Final escalation, unconditionally: the SIGKILL timer above may have
+          // been raced by the wait, and a live recorder means a hot microphone.
+          signalTree(current.child, "SIGKILL");
 
           clearTimers(current);
           closePanel(current);
@@ -922,8 +920,11 @@ export default function activate(letta) {
       }
     }
     if (session) {
-      terminate(session, session.child);
-      terminate(session, session.stopChild);
+      // Teardown: no grace, and BEFORE clearTimers — clearing the timer set
+      // would otherwise cancel the pending SIGKILL escalation and leave a
+      // detached recorder (and a hot mic) behind.
+      signalTree(session.child, "SIGKILL");
+      signalTree(session.stopChild, "SIGKILL");
       clearTimers(session);
       closePanel(session);
       session = null;

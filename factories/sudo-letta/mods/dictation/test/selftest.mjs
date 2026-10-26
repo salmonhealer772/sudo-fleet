@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -104,8 +104,20 @@ function clearDictationEnv() {
   }
 }
 
+const recorderDirs = [];
+process.on("exit", () => {
+  for (const dir of recorderDirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* best effort */
+    }
+  }
+});
+
 function recorderScript(body) {
   const dir = mkdtempSync(join(tmpdir(), "dictation-selftest-"));
+  recorderDirs.push(dir);
   const path = join(dir, "recorder.sh");
   writeFileSync(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
   return path;
