@@ -72,7 +72,7 @@ session from being dropped silently mid-dictation.
 
 | Variable | Meaning |
 | --- | --- |
-| `DICTATION_COMPOSER` | `auto` (default) / `inject` / `output` / `off`. `auto` inserts into the composer when a TUI is attached, otherwise shows the transcript only. `output` never inserts. `off` inserts nothing and prints nothing. |
+| `DICTATION_COMPOSER` | `auto` (default) / `inject` / `output` / `off`. `auto` and `inject` insert into the composer when a TUI is attached (and say so when they cannot). `output` never inserts and says why. `off` never inserts and does not mention it — the transcript simply appears in the `/done` output. |
 
 ---
 

@@ -642,7 +642,7 @@ function describeTranscript(s, delivered, notes) {
     lines.push("Nothing was captured. The recorder produced no speech.");
   } else if (delivered.ok) {
     lines.push("✓ inserted into your composer — edit it, then press Enter to send.");
-  } else {
+  } else if (!delivered.silent) {
     lines.push(`Composer insertion unavailable (${delivered.reason}).`);
     lines.push("Transcript (copy or retype it):");
   }
@@ -873,9 +873,12 @@ export default function activate(letta) {
           // 4. Place the transcript in the composer (unsent) and show it.
           const transcript = transcriptOf(current);
           const mode = current.config.composer;
-          let delivered = { ok: false, reason: "composer delivery is disabled" };
-          if (transcript && mode !== "off" && mode !== "output") {
-            delivered = deliverToComposer(transcript);
+          let delivered = { ok: false, reason: "composer insertion is off", silent: true };
+          if (transcript && mode !== "off") {
+            delivered =
+              mode === "output"
+                ? { ok: false, reason: "DICTATION_COMPOSER=output", silent: false }
+                : deliverToComposer(transcript);
           }
 
           current.delivered = true;

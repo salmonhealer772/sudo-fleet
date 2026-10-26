@@ -390,6 +390,34 @@ await check("/done with nothing recording is refused", async () => {
   assert.match(result.output, /Nothing is recording/);
 });
 
+await check("DICTATION_COMPOSER=output says why; off stays silent", async () => {
+  const runOnce = async (mode) => {
+    clearDictationEnv();
+    const recorder = recorderScript(`
+${emit({ type: "final", text: "mode check words" })}
+cat > /dev/null
+${emit({ type: "done" })}
+`);
+    process.env.DICTATION_CMD = recorder;
+    process.env.DICTATION_COMPOSER = mode;
+    const { letta, commands } = fakeLetta();
+    activate(letta);
+    await commands.get("listen").run({});
+    await sleep(200);
+    return (await commands.get("done").run({})).output;
+  };
+
+  const outputMode = await runOnce("output");
+  assert.match(outputMode, /Composer insertion unavailable/);
+  assert.match(outputMode, /DICTATION_COMPOSER=output/);
+  assert.match(outputMode, /mode check words/, "the transcript is always handed over");
+
+  const offMode = await runOnce("off");
+  assert.doesNotMatch(offMode, /Composer insertion unavailable/);
+  assert.match(offMode, /mode check words/);
+  clearDictationEnv();
+});
+
 await check("disposer kills a live recorder, closes the panel, and unregisters cleanly", async () => {
   clearDictationEnv();
   const recorder = recorderScript(`${emit({ type: "final", text: "x" })}\nsleep 30\n`);
