@@ -205,6 +205,54 @@ for _opt in EXA_API_KEY TAVILY_API_KEY PARALLEL_API_KEY PERPLEXITY_API_KEY; do
 done
 unset _opt _val
 
+# Optional dictation (comm mod `dictation`): where THIS deployment's microphone
+# lives. The mod ships on every deploy but contains no recorder — it is a thin
+# client of a command or an ssh target named in DICTATION_* — so without these
+# vars every agent answers /listen with the mod's own "not configured" hint.
+# They are read from the SAME .env as every other optional key (one source of
+# truth, no agent-scoped second path) and emitted into ENV_YAML, so a redeploy /
+# pod recreation re-applies them instead of losing a hand-made `kubectl set env`.
+#
+# Every var is OPTIONAL and independent: an agent with no mic configured must
+# still deploy normally, so a var is emitted ONLY when it is set and non-blank.
+# An empty DICTATION_CMD must be indistinguishable from an unset one — emitting
+# `value: ""` would look "set" to `printenv` and to the next reader while the
+# mod still sees nothing (it trims), which is exactly the misleading state this
+# block exists to avoid.
+#
+# Values are SINGLE-quoted YAML scalars, not the double-quoted form the API keys
+# above use: a recorder command is shell and routinely carries single quotes,
+# double quotes and backslashes (printf '%s\n' '{"type":"partial","text":"hi"}').
+# Inside a double-quoted scalar that value ends the scalar early or has its
+# backslashes eaten as YAML escapes, which corrupts the command at best and makes
+# `kubectl apply` reject the whole Deployment at worst. Single-quoted style has
+# no escapes at all — only `'` doubles, handled below — so the value reaches the
+# pod byte-for-byte. DICTATION_SSH_KEY names a key file INSIDE the pod (a host
+# path means nothing there). The values do land in the generated
+# deployments/<name>.yaml (gitignored) — keep tokens out of the commands anyway.
+# Procedure: skills/dictation-setup/SKILL.md.
+_DICTATION_NAMES=""
+for _opt in DICTATION_CMD DICTATION_STOP_CMD \
+            DICTATION_HOST DICTATION_REMOTE_CMD DICTATION_REMOTE_STOP_CMD \
+            DICTATION_SSH_KEY DICTATION_SSH_PORT DICTATION_COMPOSER; do
+  _val=$(grep "^${_opt}=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | head -1 || true)
+  # unset / empty / whitespace-only -> omit the env var entirely (never a blank value)
+  [[ -n "${_val//[[:space:]]/}" ]] || continue
+  _esc=${_val//\'/\'\'}
+  ENV_YAML+="
+        - name: ${_opt}
+          value: '${_esc}'"
+  _DICTATION_NAMES+=" ${_opt}"
+done
+unset _opt _val _esc
+# Say which vars were wired (NAMES only — a command may embed a token or a key
+# path). Silent when none are set: dictation is optional, an unconfigured deploy
+# is a normal deploy and must not read as a warning.
+if [[ -n "$_DICTATION_NAMES" ]]; then
+  echo "→ dictation configured:${_DICTATION_NAMES} (values not echoed)"
+fi
+unset _DICTATION_NAMES
+
 # HCLOUD_TOKEN — injected via the per-deployment Secret (same pattern as
 # API_KEY), guarded so an absent token omits the env var entirely (the pod then
 # starts without it and the agent fails loudly on its own check).
