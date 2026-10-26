@@ -849,13 +849,15 @@ PYEOF' || true
     "npm:@letta-ai/image-understanding@0.1.0"
   )
 
-  # Comm-layer mods (list-siblings / message-agent / check-agent). NOT on the
-  # public npm registry: they ship as local packages in this repo's mods/ dir,
-  # are copied into the pod at deploy time, and installed via `letta install
-  # <path>`. letta records a local install's source as `npm:<name>` (from
-  # package.json "name") and its version from package.json "version", so
-  # `mods list` renders exactly `npm:<name>@<version>` — the SAME exact-version
-  # check the npm mods use. Each entry is "<local-package-dir>|<verify-string>".
+  # Comm-layer + local mods (list-siblings / check-agent / message-agent /
+  # keyboard-mac / google-workspace / regulations-mcp / statutes-mcp /
+  # dictation). NOT on the public npm registry: they ship as local packages in
+  # this repo's mods/ dir, are copied into the pod at deploy time, and installed
+  # via `letta install <path>`. letta records a local install's source as
+  # `npm:<name>` (from package.json "name") and its version from package.json
+  # "version", so `mods list` renders exactly `npm:<name>@<version>` — the SAME
+  # exact-version check the npm mods use. Each entry is
+  # "<local-package-dir>|<verify-string>".
   # Canonical source + packaging spec: sudo-fleet/docs/comm-mods-PACKAGING.md.
   COMM_MODS=(
     "mods/list-siblings|npm:@letta-ai/list-siblings@0.2.0"
@@ -865,6 +867,7 @@ PYEOF' || true
     "mods/google-workspace|npm:@letta-ai/google-workspace@0.1.0"
     "mods/regulations-mcp|npm:@letta-ai/regulations-mcp@0.1.0"
     "mods/statutes-mcp|npm:@letta-ai/statutes-mcp@0.1.0"
+    "mods/dictation|npm:@letta-ai/dictation@0.1.0"
   )
 
   LETTA_JS="/usr/local/lib/node_modules/@letta-ai/letta-code/letta.js"
