@@ -172,7 +172,12 @@ _write_env() {
   printf '%s\n' "$line" | $SUDO tee -a "$FLEET_ENV" >/dev/null
 }
 
-_TRIAL_KEY="__SHA256_94db259ce1084eb1__"
+# A known-abused shared trial key must be refused. Only its SHA-256 is stored:
+# the literal itself is not in this repository (it was published once and is
+# treated as burned). To refuse a different key, hash it with
+#   printf '%s' "<key>" | sha256sum
+# and paste the first 16 hex characters below.
+_TRIAL_KEY_SHA256="${SUDO_FLEET_TRIAL_KEY_SHA256:-__SHA256_94db259ce1084eb1__}"
 
 # --- (1) ONE key used by BOTH agents ------------------------------------------
 if [[ -n "${LLM_API_KEY:-}" ]]; then
@@ -187,7 +192,8 @@ else
 fi
 
 # --- Trial key detection — refuse to proceed with a known trial key ------
-if [[ -n "${_KEY}" && "${_KEY}" == "${_TRIAL_KEY}" ]]; then
+_KEY_SHA="__SHA256_$(printf '%s' "${_KEY:-}" | sha256sum | cut -c1-16)__"
+if [[ -n "${_KEY}" && "${_KEY_SHA}" == "${_TRIAL_KEY_SHA256}" ]]; then
   echo "" >&2
   echo "┌─────────────────────────────────────────────────────────────┐" >&2
   echo "│  ⛔ TRIAL KEY DETECTED — THIS KEY MUST BE REPLACED         │" >&2

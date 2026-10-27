@@ -15,3 +15,14 @@ version_cache.json
 
 # durable-boot-proof/ = generated evidence from boot checks, not source
 durable-boot-proof/
+
+# ── instance identity is NOT repository material ──────────────────────────────
+# Saved agent identities (personas, memory, per-agent settings) belong to the
+# instance that created them. Commit one only deliberately; the default is to
+# keep them out. See docs/REPOSITORY-VS-INSTANCE.md.
+deployments/*
+!deployments/README.md
+# Per-agent Hermes SOUL files are written per instance.
+factories/sudo-agent/config/*.SOUL.md
+factories/sudo-letta/.env
+factories/sudo-agent/.env

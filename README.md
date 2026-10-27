@@ -56,19 +56,33 @@ bash factories/sudo-agent/bin/up.sh --worker       # a Hermes engineer: sudo-wor
 
 Names above are placeholders. Pick your own; nothing in the repo reserves them.
 
-## Deploy status — read this before you run `bin/k8s-up.sh`
+## Command 2 — what it deploys
 
-`bin/k8s-up.sh` is written to stand up a fixed pair of agents (`Marc` and
-`Caesar`) seeded from committed identity packages under
-`deployments/{Marc,Caesar}/`.
+`bin/k8s-up.sh` stands up a working starter pair: a Letta planner and a Hermes
+engineer, with their PVCs and Services.
 
-**Those directories no longer exist.** Commit `98caf2b` removed them. On a fresh
-clone `bin/k8s-up.sh` therefore fails at the first glimor seed, by design — a
-missing identity package fails loudly rather than starting a blank agent.
+```
+PLANNER_NAME=planner      (default) -> deployment sudo-planner
+ENGINEER_NAME=engineer    (default) -> deployment sudo-engineer
+```
 
-Deploying agents through the factory `up.sh` commands works and is the path to
-use today. Repairing `k8s-up.sh` is tracked in
-[`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) as D1.
+Override either name per install:
+
+```bash
+PLANNER_NAME=boss ENGINEER_NAME=worker bash bin/k8s-up.sh
+```
+
+**Identity is optional and never invented.** If a saved identity package exists
+at `deployments/<Name>/`, it is passed to the factory as `--from-glimor` and the
+agent resumes that identity. If it does not exist, the factory deploys a clean
+agent and you grow its identity from there. This repository ships no identity
+packages, so a fresh clone gets two working agents with empty memory — not a
+blank or a crash.
+
+To start from a saved identity, put it at `deployments/<Name>/` (or point
+`GLIMORS_DIR` at a directory of your own). A glimor you do point at that is
+missing or corrupt still fails loudly rather than silently yielding a blank
+agent.
 
 ## Documentation
 
@@ -79,6 +93,7 @@ use today. Repairing `k8s-up.sh` is tracked in
 | [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Deploy, inspect, debug, and recover a fleet. |
 | [`docs/COMM-LAYER.md`](docs/COMM-LAYER.md) | The cross-agent communication contract in full. |
 | [`docs/DOC-FACTS.md`](docs/DOC-FACTS.md) | Every checkable claim in the docs, and where it was checked. |
+| [`docs/COMPONENTS.md`](docs/COMPONENTS.md) | Every directory in this repo: what it is, whether it is fleet infrastructure or optional tooling. |
 | [`docs/SPEC.md`](docs/SPEC.md) | The original design contract, including what remains unbuilt. |
 | [`docs/NEXT.md`](docs/NEXT.md) | The agreed next direction: multiple fleets in one cluster. |
 | [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) | Open defects and their evidence. |

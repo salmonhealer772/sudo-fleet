@@ -3,15 +3,18 @@ set -euo pipefail
 
 # sudo-fleet/bin/k8s-up.sh — Command 2 of 2.
 # Brings up the cluster (k3s must already be installed by setup.sh) and stands
-# up the router pair: Marc (Letta planner) + Caesar (Hermes engineer), including
-# their PVCs and their identity, seeded as FULL GLIMORS from psnvc (-> Marc) and
-# forge (-> Caesar).
+# up a working starter pair: PLANNER_NAME (a Letta planner) and ENGINEER_NAME
+# (a Hermes engineer), including their PVCs.
 #
-# Glimor seed: Marc and Caesar are seeded from the COMMITTED glimors in
-# $FLEET_HOME/deployments/{Marc,Caesar}/ by each factory's up.sh (via an
-# initContainer that copies the glimor into the PVC BEFORE the agent process
-# starts). There is no live-pod copy and no post-Ready `kubectl cp` — a missing
-# or invalid glimor fails the deploy loudly, never a blank Tutor / bare Hermes.
+# OPTIONAL identity seed: if a glimor exists at $GLIMORS_DIR/<cap-name>/ it is
+# passed to the factory as --from-glimor, so an install WITH a saved identity
+# resumes it and an install WITHOUT one starts a clean agent. This repository
+# ships no glimors: a fresh clone deploys two empty-brained agents and you grow
+# their identity from there. A glimor you point at that is missing or corrupt
+# still fails loudly (the initContainer never yields a blank agent).
+#
+# Names are configurable so this script is not tied to one fleet's identities:
+#   PLANNER_NAME=boss ENGINEER_NAME=worker bash bin/k8s-up.sh
 #
 # Usage: bash k8s-up.sh
 
@@ -19,7 +22,23 @@ FLEET_HOME="${FLEET_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 FLEET_ENV="$FLEET_HOME/.env"
 AGENT_REPO="$FLEET_HOME/factories/sudo-agent"
 LETTA_REPO="$FLEET_HOME/factories/sudo-letta"
-GLIMORS_DIR="$FLEET_HOME/deployments"
+GLIMORS_DIR="${GLIMORS_DIR:-$FLEET_HOME/deployments}"
+
+# The starter pair. Generic by default; override per install. Capitalised forms
+# are what the factories take (they prepend "sudo-" themselves), lower-case is
+# what kubectl label selectors and PVC names use.
+PLANNER_NAME="${PLANNER_NAME:-planner}"
+ENGINEER_NAME="${ENGINEER_NAME:-engineer}"
+PLANNER_DEPLOY="sudo-${PLANNER_NAME,,}"
+ENGINEER_DEPLOY="sudo-${ENGINEER_NAME,,}"
+
+# _seed_for <cap-name> — echo "--from-glimor <dir>" only when that glimor
+# actually exists, so the default path needs no committed identity package.
+_seed_for() {
+  local cap="$1"
+  local dir="$GLIMORS_DIR/$cap"
+  if [[ -d "$dir" ]]; then printf ' --from-glimor %s' "$dir"; fi
+}
 
 KUBECONFIG_PATH="/etc/rancher/k3s/k3s.yaml"
 
@@ -57,7 +76,7 @@ if ! is_root; then
   # read from stdin (-S) when there is no cached credential; never hang.
   if ! sudo -n -v 2>/dev/null; then
     if [[ -t 0 ]]; then
-      sudo -v || die "sudo authentication failed — this script needs sudo to stand up Marc + Caesar"
+      sudo -v || die "sudo authentication failed — this script needs sudo to stand up the starter pair"
     else
       # No TTY + no cached credential: consume ONE line of stdin as the sudo
       # password (so a piped / agent / CI run can still authenticate), then feed
@@ -66,7 +85,7 @@ if ! is_root; then
       IFS= read -r _SUDO_PW || true
       if [[ -n "${_SUDO_PW:-}" ]]; then
         printf '%s\n' "$_SUDO_PW" | sudo -S -v 2>/dev/null \
-          || die "sudo authentication failed (wrong password) — this script needs sudo to stand up Marc + Caesar"
+          || die "sudo authentication failed (wrong password) — this script needs sudo to stand up the starter pair"
       else
         die "sudo needs a password but none arrived on stdin (no TTY, no cached credential). Run in a terminal, pre-authenticate with 'sudo -v', or pipe the password as the first line of stdin."
       fi
@@ -112,7 +131,7 @@ done
 unset _wk
 
 # ── Web-search key gate (WARN ONCE, clearly — never break the install) ──────
-# A missing web-search key is NOT fatal: Marc + Caesar still deploy and run,
+# A missing web-search key is NOT fatal: the starter pair still deploy and run,
 # only `web_search` is unavailable (the agents run blind). The factory up.sh
 # has the same warn-not-die gate, so `_retry 3` never churns on it. We warn
 # ONCE, here, with the exact one-line fix to add the key later.
@@ -128,7 +147,7 @@ if [[ "$_have_ws" -ne 1 ]]; then
   echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" >&2
   echo "" >&2
   echo "  No web-search key in $FLEET_ENV. This is NOT fatal: the install" >&2
-  echo "  CONTINUES and Marc + Caesar deploy + run normally. But web_search" >&2
+  echo "  CONTINUES and the starter pair deploy + run normally. But web_search" >&2
   echo "  is DISABLED — the agents have NO internet access (they run BLIND)." >&2
   echo "" >&2
   echo "  FIX IT LATER — NO REINSTALL, ONE LINE:" >&2
@@ -188,35 +207,36 @@ _upsert_agent_env LLM_PROVIDER "$LLM_PROVIDER"
 _upsert_agent_env LLM_BASE_URL "${LLM_BASE_URL:-}"
 ok "env sourced + factory .env files re-seeded"
 
-# --- 3. Deploy Marc (Letta planner) — seeded from the committed glimor --------
-step "3/4 Deploy Marc (Letta planner) — factory up.sh (seeded from $GLIMORS_DIR/Marc)"
-_retry 3 "deploy Marc" $SUDO bash "$LETTA_REPO/bin/up.sh" --marc \
-  --from-glimor "$GLIMORS_DIR/Marc" \
-  || die "sudo-letta up.sh --marc --from-glimor failed"
+# --- 3. Deploy the planner (Letta) -------------------------------------------
+# --from-glimor is appended only if a saved identity exists for this name.
+PLANNER_SEED="$(_seed_for "${PLANNER_NAME^}")"
+step "3/4 Deploy $PLANNER_DEPLOY (Letta planner)${PLANNER_SEED:+ — seeded from a glimor}"
+# shellcheck disable=SC2086  # PLANNER_SEED is a deliberate flag pair, empty-safe
+_retry 3 "deploy $PLANNER_NAME" $SUDO bash "$LETTA_REPO/bin/up.sh" "--${PLANNER_NAME}" $PLANNER_SEED \
+  || die "sudo-letta up.sh --${PLANNER_NAME} failed"
 
-# --- 4. Deploy Caesar (Hermes engineer) — seeded from the committed glimor ----
-step "4/4 Deploy Caesar (Hermes engineer) — factory up.sh (seeded from $GLIMORS_DIR/Caesar)"
-_retry 3 "deploy Caesar" $SUDO bash "$AGENT_REPO/bin/up.sh" --caesar \
-  --from-glimor "$GLIMORS_DIR/Caesar" \
-  || die "sudo-agent up.sh --caesar --from-glimor failed"
+# --- 4. Deploy the engineer (Hermes) -----------------------------------------
+ENGINEER_SEED="$(_seed_for "${ENGINEER_NAME^}")"
+step "4/4 Deploy $ENGINEER_DEPLOY (Hermes engineer)${ENGINEER_SEED:+ — seeded from a glimor}"
+# shellcheck disable=SC2086
+_retry 3 "deploy $ENGINEER_NAME" $SUDO bash "$AGENT_REPO/bin/up.sh" "--${ENGINEER_NAME}" $ENGINEER_SEED \
+  || die "sudo-agent up.sh --${ENGINEER_NAME} failed"
 
-# Seeding happens INSIDE each factory's up.sh via an initContainer that copies
-# the committed glimor into the PVC BEFORE the agent process starts. Wait for
-# the pods to become Ready — a missing/corrupt glimor keeps the pod in
-# Init:Error forever (the required fail-loudly, never a blank agent).
-_retry 5 "wait sudo-marc Ready" kubectl wait --for=condition=Ready pod -l agent=marc  --timeout=180s >/dev/null 2>&1 \
-  || die "sudo-marc pod not Ready (initContainer may have failed to seed)"
-_retry 5 "wait sudo-caesar Ready" kubectl wait --for=condition=Ready pod -l agent=caesar --timeout=180s >/dev/null 2>&1 \
-  || die "sudo-caesar pod not Ready (initContainer may have failed to seed)"
+# Wait for the pods to become Ready. With no seed these come up on their own;
+# with a seed, a corrupt glimor keeps the pod in Init:Error and this catches it.
+_retry 5 "wait $PLANNER_DEPLOY Ready" kubectl wait --for=condition=Ready pod -l "agent=${PLANNER_NAME,,}" --timeout=180s >/dev/null 2>&1 \
+  || die "$PLANNER_DEPLOY pod not Ready (check: kubectl describe pod -l agent=${PLANNER_NAME,,})"
+_retry 5 "wait $ENGINEER_DEPLOY Ready" kubectl wait --for=condition=Ready pod -l "agent=${ENGINEER_NAME,,}" --timeout=180s >/dev/null 2>&1 \
+  || die "$ENGINEER_DEPLOY pod not Ready (check: kubectl describe pod -l agent=${ENGINEER_NAME,,})"
 
 # --- Verify ---------------------------------------------------------------------
 echo ""
 echo "→ Verifying PVCs + services..."
-for pvc in sudo-marc-data sudo-caesar-data; do
+for pvc in "${PLANNER_DEPLOY}-data" "${ENGINEER_DEPLOY}-data"; do
   _retry 5 "verify PVC $pvc" kubectl get pvc "$pvc" >/dev/null 2>&1 \
     || die "PVC $pvc missing"
 done
-for svc in sudo-marc-mcp sudo-marc-watch sudo-caesar-mcp sudo-caesar-watch; do
+for svc in "${PLANNER_DEPLOY}-mcp" "${PLANNER_DEPLOY}-watch" "${ENGINEER_DEPLOY}-mcp" "${ENGINEER_DEPLOY}-watch"; do
   _retry 5 "verify Service $svc" kubectl get svc "$svc" >/dev/null 2>&1 \
     || die "Service $svc missing"
 done
@@ -239,10 +259,10 @@ else
   warn "bin/paperclip-up.sh missing — Paperclip control plane NOT installed"
 fi
 
-ok "router pair running: sudo-marc (planner) + sudo-caesar (engineer)"
-kubectl get pods -l 'agent in (marc,caesar)' -o wide
+ok "pair running: $PLANNER_DEPLOY (planner) + $ENGINEER_DEPLOY (engineer)"
+kubectl get pods -l "agent in (${PLANNER_NAME,,},${ENGINEER_NAME,,})" -o wide
 echo ""
 echo "✓ Fleet up."
-echo "  Talk (Letta planner): kubectl exec -it deploy/sudo-marc -- bash -c 'letta'"
-echo "  Talk (Hermes eng):    kubectl exec -it deploy/sudo-caesar -- hermes"
+echo "  Talk (Letta planner): kubectl exec -it deploy/$PLANNER_DEPLOY -- bash -c 'letta'"
+echo "  Talk (Hermes eng):    kubectl exec -it deploy/$ENGINEER_DEPLOY -- hermes"
 echo "  Stop (preserve state): bash bin/k8s-down.sh"

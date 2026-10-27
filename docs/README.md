@@ -35,8 +35,8 @@ governs every other document here.
 | Document | What it is |
 |---|---|
 | [`DOC-FACTS.md`](DOC-FACTS.md) | Every checkable claim in these documents, with where it was verified and its status. Read this when you doubt a sentence. |
+| [`COMPONENTS.md`](COMPONENTS.md) | What every directory in the repository is, and whether it is core fleet infrastructure or optional tooling. |
 | [`KNOWN-ISSUES.md`](KNOWN-ISSUES.md) | Open defects with evidence. Includes the 2026-10-27 documentation-pass findings D1–D6. |
-| [`MARC_CAESAR_STATUS.md`](MARC_CAESAR_STATUS.md) | Historical: the router-pair onboarding story. Note that the identity packages it describes have since been removed; see `KNOWN-ISSUES.md` D1. |
 | [`verifications/`](verifications/) | Dated verification records for specific changes. |
 
 ## Not documentation
