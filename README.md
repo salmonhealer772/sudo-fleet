@@ -1,225 +1,108 @@
 # sudo-fleet
 
-A disposable room you stand up anywhere: saved agents are pulled in, talk to each other, and survive the room's destruction. The full spec lives in [`docs/SPEC.md`](docs/SPEC.md).
+A factory that installs an agent fleet on one Linux machine. Clone it, run one
+bootstrap script, deploy agents with one command each, and they can reach each
+other, watch each other, and survive a reboot.
 
-**Next direction (2026-10-01):** [multiple independent project fleets in one
-cluster](docs/NEXT.md), with namespace-scoped agents/state and fleet pause/resume.
-An optional shared-services namespace is under consideration. This is the next
-planned capability, not something the current setup commands already implement.
+This repository is **the product**. It is not one particular running fleet.
+Read [`docs/REPOSITORY-VS-INSTANCE.md`](docs/REPOSITORY-VS-INSTANCE.md) before
+changing anything here: the distinction between the repository and any single
+instance of it governs every decision in this repo.
 
-Everything lives inside ONE folder — `sudo-fleet/`. The two factory trees (`factories/sudo-agent`, `factories/sudo-letta`), your `.env` secrets, and the committed `deployments/{Marc,Caesar}/` glimors are all nested inside it. No siblings, nothing outside it.
+- **Repository** — the factory scripts, the two agent factories, the comm
+  contract, the queue contract, the port scheme, and the docs. Generic. Something
+  other people clone and other software embeds.
+- **Instance** — one deployment of that factory: whatever cluster, hostnames,
+  agent names and keys a user happens to have. Not part of this repo.
 
-## Your fleet is up (two commands)
+Instance details appearing in this repository are labelled examples. They are
+never requirements.
 
-On a bare Linux box (systemd + curl/wget/git/tailscale — no docker/k3s yet):
+## What you get
 
-**Command 1 — bootstrap** (prompts for keys, installs docker + k3s, builds both
-factory images from the vendored `factories/`). Run it from ANY directory:
+| Piece | What it is |
+|---|---|
+| `setup.sh` | Bootstrap: asks for one LLM key, writes `.env`, installs docker and k3s, builds both factory images, installs a boot-time recovery unit. |
+| `bin/k8s-up.sh` | Deploys the cluster workload from the factory YAMLs. |
+| `bin/k8s-down.sh` | Stops, purges, or tears down. |
+| `factories/sudo-agent/` | The Hermes engineer factory. Stateless one-shot CLI agents. |
+| `factories/sudo-letta/` | The Letta planner factory. Stateful agents with git-backed memory. |
+| `factories/*/comm/`, `factories/sudo-letta/mods/` | The cross-agent comm layer: `list-siblings`, `message-agent`, `check-agent`. |
+| `factories/sudo-letta/mods/` | Optional planner mods, including dictation (`/listen`, `/done`) and Google Workspace. |
 
-```bash
-git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet && bash setup.sh
-```
+Each factory's `bin/up.sh` deploys one agent, prepends `sudo-` to the name you
+give it, writes a YAML to `factories/<factory>/deployments/`, and seeds identity
+and skills.
 
-`setup.sh` asks for exactly three things up front — one LLM API key (used by
-BOTH agents), the LLM API URL (defaults to `deepseek` if left blank), and an
-optional Tavily web-search key — then derives and writes the rest to
-`sudo-fleet/.env`:
+## Requirements
 
-```
-LLM_API_KEY=...                 # ANY LLM API key — one key for BOTH agents (Hermes + Letta)
-LLM_BASE_URL=...                # LLM API URL (default https://api.deepseek.com/v1 if blank)
-TAVILY_API_KEY=...              # optional — letta search mods
-```
+A Linux box with systemd, `curl` or `wget`, `git`, and root or sudo. Docker and
+k3s are installed by `setup.sh`. An SSH-less, single-node cluster is the
+supported shape; the factory assumes k3s on the same host as the docker socket.
 
-It derives (never prompts for) the rest:
-
-```
-DEEPSEEK_API_KEY=$LLM_API_KEY        # sudo-agent / Hermes
-API_KEY=$LLM_API_KEY                 # sudo-letta / Letta
-LLM_PROVIDER=<derived from LLM_BASE_URL>   # deepseek|anthropic|openai|...
-LLM_BASE_URL=$LLM_BASE_URL           # defaulted to https://api.deepseek.com/v1 if blank
-TAVILY_API_KEY=$TAVILY_API_KEY       # may be empty
-```
-
-> `sudo-fleet/.env` is gitignored — the secrets stay out of the repo.
-> The two factories are IN the repo at `factories/sudo-agent/` and
-> `factories/sudo-letta/` (their own live `.env`/`deployments/` stay untracked).
-> `sudo-fleet/deployments/{Marc,Caesar}/` (the committed glimors) ARE tracked.
-
-## Web search (Tavily) is OPTIONAL
-
-The install **never** fails because of a missing web-search key. With no key the
-agents still deploy and run normally — `web_search` is simply unavailable, and
-both `setup.sh` and `bin/k8s-up.sh` print a loud warning that says so (the
-agents run "blind": no internet access).
-
-Add it later, **without a reinstall** — one line (this is also printed by the
-warning itself):
+## Quick start
 
 ```bash
-echo 'TAVILY_API_KEY=tvly-YOUR_KEY_HERE' >> sudo-fleet/.env \
-  && (cd sudo-fleet/bin && bash k8s-up.sh)
+git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet
+bash setup.sh
 ```
 
-Get a key at <https://tavily.com> (free tier). Any ONE provider key works:
-`EXA_API_KEY`, `TAVILY_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`.
-`k8s-up.sh` is idempotent — re-running it re-seeds the factory `.env` files
-(`factories/sudo-letta/.sudo-letta/.env`) and re-applies the deployments, so the
-new key reaches Marc with no clean install. You can also set it per-agent from
-inside a pod: `/secret set TAVILY_API_KEY <key>` (an agent-scoped secret takes
-precedence over the fleet-wide env fallback).
-
-## Paperclip is built in (auto-hire)
-
-sudo-fleet ships with **Paperclip**, the agent control plane, and every agent it
-stands up is **hired automatically** — Marc, Caesar, ONalwase, and any new agent
-you build. `bin/k8s-up.sh` deploys the control plane after the router pair and
-hires everything; each `up.sh --<agent>` hires the agent it just built; and
-`bin/k8s-auto-up.sh` reconciles on every boot. Hired means: an agent record on
-the `letta_local` MCP-door adapter pointed at the LIVE pod, `runtimeConfig`
-heartbeat enabled, and `PAPERCLIP_*` credentials injected into the agent's own
-Deployment so it can close the issue it was woken for. See
-[`docs/PAPERCLIP.md`](docs/PAPERCLIP.md).
-
-## Custom / Featherless provider
-
-To use a custom OpenAI-compatible endpoint (e.g. Featherless), set the
-following in `sudo-fleet/.env` alongside the existing `LLM_API_KEY`:
-
-```
-LLM_BASE_URL=https://api.featherless.ai/v1
-LLM_PROVIDER=openai
-LLM_MODEL=deepseek-ai/DeepSeek-V4-Pro
-```
-
-- `LLM_BASE_URL` — the full base URL of your OpenAI-compatible endpoint.
-  Defaults to `https://api.deepseek.com/v1` if left blank.
-- `LLM_PROVIDER` — derived from `LLM_BASE_URL` by default; override
-  explicitly when the auto-detection is wrong (e.g. `openai` for
-  Featherless).
-- `LLM_MODEL` — **must be set explicitly** for non-DeepSeek providers.
-  Pick a model with a large context window (>=64K tokens). Hermes
-  rejects models under 64K context; a model like `deepseek-ai/DeepSeek-V4-Pro`
-  satisfies this requirement.
-
-The `.env` vars `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_PROVIDER` are the
-single source of truth consumed by both agent factories. Do not put real
-API keys in the repo — use a placeholder such as `<LLM_API_KEY>`.
-
-**Command 2 — bring up the cluster + stand up Marc + Caesar:**
+Then deploy agents with the factory that fits the role:
 
 ```bash
-cd bin && bash k8s-up.sh
+bash factories/sudo-letta/bin/up.sh --planner      # a Letta planner: sudo-planner
+bash factories/sudo-agent/bin/up.sh --worker       # a Hermes engineer: sudo-worker
 ```
 
-This deploys `sudo-marc` (Letta planner) and `sudo-caesar` (Hermes engineer),
-seeding their identity from the committed glimors via an initContainer — Marc
-wakes up AS Marc (the renamed psnvc), Caesar AS Caesar (the renamed forge) —
-and they diverge independently from there.
+Names above are placeholders. Pick your own; nothing in the repo reserves them.
 
-## One-folder layout
+## Deploy status — read this before you run `bin/k8s-up.sh`
 
-```
-sudo-fleet/
-├── setup.sh              # Command 1 — prompt keys, docker+k3s, build images from factories/
-├── README.md
-├── docs/                 # spec + status + plans (SPEC, KNOWN-ISSUES, NEXT, …)
-├── .gitignore
-├── down.sh               # thin pointer -> bin/k8s-down.sh
-├── .env                  # your keys (gitignored, written by setup.sh)
-├── factories/            # the two default agent factories (in-repo)
-│   ├── sudo-agent/       # Hermes engineer factory
-│   └── sudo-letta/       # Letta planner factory
-├── deployments/          # committed glimors (the router pair's identity)
-│   ├── Marc/             # Letta planner (renamed from psnvc)
-│   └── Caesar/           # Hermes engineer (renamed from forge)
-└── bin/
-    ├── k8s-up.sh         # Command 2 — deploy Marc + Caesar, seed from committed glimors
-    └── k8s-down.sh       # stop / purge / teardown
-```
+`bin/k8s-up.sh` is written to stand up a fixed pair of agents (`Marc` and
+`Caesar`) seeded from committed identity packages under
+`deployments/{Marc,Caesar}/`.
 
-## Glimor seed (committed identity)
+**Those directories no longer exist.** Commit `98caf2b` removed them. On a fresh
+clone `bin/k8s-up.sh` therefore fails at the first glimor seed, by design — a
+missing identity package fails loudly rather than starting a blank agent.
 
-A **glimor** is a committed snapshot of one agent's full resumable state, stored
-under `sudo-fleet/deployments/`:
+Deploying agents through the factory `up.sh` commands works and is the path to
+use today. Repairing `k8s-up.sh` is tracked in
+[`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) as D1.
 
-- `deployments/Marc/`   — the Letta planner (renamed from psnvc): its identity
-  files (`name`, `kind`, `meta.yaml`, `allowlist.txt`, `settings.json`),
-  scrubbed for the public repo. Its regenerable state (the `memfs` brain, agent
-  records, sessions) is NOT committed — a fresh box seeds the identity and lets
-  the agent rebuild its working state.
-- `deployments/Caesar/` — the Hermes engineer (renamed from forge): `SOUL.md` +
-  `config.yaml` + `name`/`kind`/`meta.yaml`/`allowlist.txt`, scrubbed. Live
-  state (`state.db`, `.hermes_history`, `.local/`) is NOT committed.
+## Documentation
 
-They are **committed** (not gitignored), so a fresh box gets them with the repo.
-`k8s-up.sh` passes each to the factory `up.sh --from-glimor <dir>`; the factory
-deploys an **initContainer** that copies the glimor into the PVC *before* the
-agent process starts. A missing or invalid glimor fails the deploy loudly — a
-blank Tutor / bare Hermes can never come up.
+| Document | Read it for |
+|---|---|
+| [`docs/REPOSITORY-VS-INSTANCE.md`](docs/REPOSITORY-VS-INSTANCE.md) | The distinction this repo is built around. Start here. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The system as built: factories, per-agent shape, ports, queue, comm layer, lifecycle. |
+| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Deploy, inspect, debug, and recover a fleet. |
+| [`docs/COMM-LAYER.md`](docs/COMM-LAYER.md) | The cross-agent communication contract in full. |
+| [`docs/DOC-FACTS.md`](docs/DOC-FACTS.md) | Every checkable claim in the docs, and where it was checked. |
+| [`docs/SPEC.md`](docs/SPEC.md) | The original design contract, including what remains unbuilt. |
+| [`docs/NEXT.md`](docs/NEXT.md) | The agreed next direction: multiple fleets in one cluster. |
+| [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) | Open defects and their evidence. |
+| [`docs/CHANGE-PROTOCOL.md`](docs/CHANGE-PROTOCOL.md) | The four checks to run after a complex change. |
+| [`SOURCE-OF-TRUTH.md`](SOURCE-OF-TRUTH.md) | Which repository owns which content. |
 
-## Native comm layer (every agent is born able to talk)
+## Security posture, stated plainly
 
-Both factories ship three comm abilities as a spawn-time default — `list-siblings`
-(the live roster), `message-agent` (message any sibling by name), `check-agent`
-(read a sibling's trail) — each as a tool + skill + a shared persona-awareness
-block. Two mechanisms make them stick:
+The agent container runs privileged, with the docker socket mounted, because the
+comm layer reaches the host through it. That is an escape path from the agent
+container to the host kernel. Treat any host that runs this as a host the agents
+can reach, not as a sandbox boundary you can rely on.
 
-- **Load-skill-first gate** — a tool refuses to run until its matching skill is
-  loaded in the current conversation (Hermes: `comm_gate.py` exit 69 + the
-  `sudo-comm-gate` plugin; Letta: each comm mod's `gate.mjs`). Fail-closed in a
-  session, fail-open for a human/script.
-- **Factory-managed FLEET-COMM-AWARENESS block** — the shared awareness text
-  (`factories/sudo-agent/comm/PERSONA-SNIPPET.md`) is applied to `SOUL.md`
-  (Hermes) / `system/persona.md` (Letta) on EVERY boot, between fixed BEGIN/END
-  markers, so an agent can't permanently lose or stale its fleet awareness.
+Some values reach a Deployment as literal env values rather than
+`secretKeyRef`. `docs/ARCHITECTURE.md` states which. This repository is public:
+never commit a key, a password, a token, or a real agent's private identity.
 
-The full contract is in `docs/SPEC.md` ("Native cross-agent communication"); the
-known gaps are in `docs/KNOWN-ISSUES.md`.
+## Development notes
 
-## Tear down
-
-```bash
-cd bin && bash k8s-down.sh                 # stop agents, PRESERVE PVCs (state)
-cd bin && bash k8s-down.sh --purge          # also delete PVCs
-cd bin && bash k8s-down.sh --teardown-k3s   # uninstall k3s too
-```
-
-(The repo-root `down.sh` is a thin pointer to `bin/k8s-down.sh`.)
-
-## Durable cluster (comes back on its own)
-
-The two commands above are the *only* commands you ever run. After that the
-cluster is durable:
-
-- **k3s starts on boot** — `setup.sh` ensures `k3s.service` + `docker.service`
-  are enabled (and, on WSL2, writes `/etc/wsl.conf` `[boot] systemd=true` so
-  systemd actually boots).
-- **Images survive a restart** — the agent images are imported into the k3s
-  containerd store, which lives on disk, so no pod ever needs to pull a
-  local-only image.
-- **Everything up.sh created is recreated on boot** — `setup.sh` installs a
-  oneshot systemd unit (`sudo-fleet-boot.service`) that runs
-  `bin/k8s-auto-up.sh` on every boot: it waits for k3s to be Ready,
-  re-imports any missing images, and re-runs the idempotent bring-up.
-- **Pods restart themselves on crash/hang** — every agent and watch container
-  ships a `startupProbe` + `readinessProbe` + `livenessProbe`, so a crashed or
-  hung pod is restarted by kubelet without any operator action.
-
-The result: reboot the box (or your WSL2 distro) and the fleet is simply back,
-with memory intact and zero commands run.
-
-> WSL2 note: Linux cannot force Windows to start WSL2 itself. The one manual
-> step — run once, from an admin PowerShell — is:
-> `schtasks /create /tn "WSL2-sudo-fleet" /tr "wsl.exe -d <distro>" /sc onlogon /rl highest`
-> (`setup.sh` prints this too.)
-
-## What setup.sh touches on your box (outside sudo-fleet/)
-
-`setup.sh` (Command 1) is a bootstrap and by design writes system-wide. FLEET_HOME is now the `sudo-fleet/` folder itself, so the repos, `.env`, and `deployments/` glimors all live INSIDE it — nothing fleet-related is written outside `sudo-fleet/`. What it does touch outside `sudo-fleet/` is limited to the system-level tooling:
-
-- **Docker** (get.docker.com): `/usr/bin/` docker binaries, `/etc/systemd/system/docker.service` + `containerd.service`, `/var/lib/docker` (images), `/var/lib/containerd`, adds the invoking user to the `docker` group, `/etc/docker/`.
-- **k3s** (get.k3s.io): `/usr/local/bin/k3s` (+ `kubectl`/`crictl`/`ctr` symlinks), `/etc/systemd/system/k3s.service`, `/var/lib/rancher/k3s/` (all cluster data), `/etc/rancher/k3s/k3s.yaml` (kubeconfig), `/var/lib/kubelet`.
-- **Durable boot** (new): `/etc/systemd/system/sudo-fleet-boot.service` (a oneshot unit that re-runs the bring-up on every boot) and, on WSL2, `/etc/wsl.conf` `[boot] systemd=true`.
-- **`/etc/hosts`** may be touched by docker/k3s (rare); docker also installs its own iptables rules.
-- **Hidden/other**: `~/.docker` (docker CLI config). `~/.kube` is NOT created by us — the fleet scripts use `/etc/rancher/k3s/k3s.yaml`.
+- Changing anything the pod spec carries requires a pod recreation through
+  `up.sh`. `kubectl rollout restart` does not pick up env or volume changes.
+- Changing `bin/mcp_server.py`, `mcp_entrypoint.sh`, `hermes_prompt.py`,
+  `Dockerfile` or `patch_memory_review.py` requires an image rebuild. `up.sh`
+  refuses to deploy a stale image unless `SUDO_AGENT_ALLOW_STALE_IMAGE=1` is set.
+- Do not write "verified" in a commit message before the verification output
+  exists. If a test runs after the commit, say so in a follow-up commit.
+- Keep the architecture. Improve the documentation of it instead.

@@ -1,19 +1,50 @@
-# Source of truth — sudo-fleet is the FACTORY, live-v2 is the PRODUCT
+# Source of truth — which repository owns what
 
-sudo-fleet (this repo) is the single source of truth for **how** agents are
-deployed and configured: `factories/sudo-agent/` (`up.sh`, `config.yaml`
-template, `mcp_servers_enable.py`, `Dockerfile`, `bin/`, `comm/`),
-`factories/sudo-letta/`, `setup.sh`, `down.sh`.
+This file answers one question: when you want to change something about a fleet
+built from this repo, which repository does the change belong in?
 
-The product content — domain skills, personas, the talker, workload specs, and
-the pipeline — lives in **live-v2** (github.com/docket-atlas/live-v2), NOT here.
-`up.sh` mounts the domain skills read-only into the running agents from
-`/opt/live-v2/agents/skills`, so a skill edit + push in live-v2 reaches every
-meta-data-agent with no copy and no image rebuild.
+It is **not** the same question as "which agent is running where". For that
+distinction — the repository versus any single instance of it — read
+[`docs/REPOSITORY-VS-INSTANCE.md`](docs/REPOSITORY-VS-INSTANCE.md) first.
+
+## The split
+
+**sudo-fleet (this repo) owns how agents are deployed and configured:**
+
+- `factories/sudo-agent/` — the Hermes engineer factory: `up.sh`, the config
+  template, `mcp_servers_enable.py`, `Dockerfile`, `bin/`, `comm/`.
+- `factories/sudo-letta/` — the Letta planner factory: `up.sh`, `mods/`,
+  `skills/`, the watch sidecar wiring.
+- `setup.sh`, `down.sh`, everything under `bin/`.
+- The comm contract, the queue contract, and the port scheme.
+
+**A separate product repository owns the workload content** — domain skills,
+personas, the work itself, and the pipeline that drives it. That content is
+mounted read-only into running agents from a path on the host, so an edit plus a
+push there reaches every affected agent with no copy and no image rebuild.
+
+The name and location of that second repository belong to whoever is running
+the fleet. It is configured per instance, not fixed here.
 
 ## Do not
 
-- Do not edit product content (skills/personas/talker) in this repo.
-- Do not vendor a copy of sudo-fleet inside live-v2.
+- Do not edit workload content (domain skills, personas, the work itself) inside
+  this repo.
+- Do not vendor a copy of sudo-fleet inside the workload repository.
+- Do not record a path from one particular machine as though it were part of the
+  contract. It is a default in one instance.
 
-See `live-v2/SOURCE-OF-TRUTH.md` for the full table.
+## A tension this repo currently carries
+
+`deployments/` contains committed agent identity packages — memory, personas,
+and settings — for two agents. That is workload content living in the factory
+repository.
+
+It is visible in one place and contradicts the split above in another. It has
+not been removed: those packages are the only record of identities that were
+built here, and deleting them is a decision for the maintainer, not a
+documentation cleanup.
+
+Any new identity package committed under `deployments/` should be treated the
+same way: justified explicitly, scrubbed of secrets and personal data, and
+understood as an exception to the split rather than an example of it.

@@ -2,6 +2,17 @@
 
 The whole agent fleet is **one entity** in one repo. This is the forward build: a portable stack that boots on any Linux box with a single `setup.sh`, and saves/pulls agents as complete identity packages.
 
+> **Status note (2026-10-27).** This document is the *original design contract*,
+> written before the factories were built. It is kept because the decisions in it
+> are still the decisions. It is **not** an as-built description: several items
+> below were never built, some were built differently, and one figure (the port
+> scheme in section 4) is now stale. For what the system actually does, read
+> [`ARCHITECTURE.md`](ARCHITECTURE.md). For what is known to be broken, read
+> [`KNOWN-ISSUES.md`](KNOWN-ISSUES.md).
+>
+> Like everything in this repository, this spec describes **the repository**, not
+> any one running fleet. See [`REPOSITORY-VS-INSTANCE.md`](REPOSITORY-VS-INSTANCE.md).
+
 ## Next extension: namespace-scoped project fleets
 
 [NEXT.md](NEXT.md) records the 2026-10-01 direction: one cluster hosting multiple
@@ -23,11 +34,11 @@ than grant every project access to every agent in the cluster.
 
 3. **LiteLLM** — a kube container that is the fleet's shared model router/gateway (one gateway, not per-agent model wiring).
 
-4. **The kube layer** — deployments/PVCs, the deterministic-port scheme (`8642 + cksum(name)%5000`), and the `-mcp` + `-watch` sidecar services as first-class factory defaults.
+4. **The kube layer** — deployments/PVCs, a deterministic-port scheme derived from the agent name, and the `-mcp` + `-watch` sidecar services as first-class factory defaults. The formula originally planned here (`8642 + cksum(name)%5000`) is **stale**: because every pod runs with `hostNetwork: true`, ports are node-global and the window must stay clear of the Kubernetes NodePort range and the ephemeral range. The shipped formulas are in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 5. **A host VM directory** — one canonical on-disk home the stack owns (saves, configs, cluster state). Self-contained; no Mac `/mnt/mac`, no fabean-specific paths.
 
-6. **The spawner/router** — **psnvc + forge together as a team.** No separate agent; me and forge ARE the router.
+6. **The spawner/router** — a planner and an engineer that together act as the router. No separate agent process exists. The pair named in the original draft was one instance's pair; the repository ships the two factories, not those identities.
 
 7. **Fleet monitoring + messaging tools/skills** — built-in skills/tools every agent gets so they can **monitor each other** (tap the `-watch` streams) and **message each other** (call the `-mcp` surfaces) directly — agents observe and reach their siblings, not just be observed/reached.
 
@@ -88,6 +99,8 @@ These turn the passive sidecar plumbing into an *active* agent capability:
 - **Traffic layer** = every agent gets monitoring + messaging skills/tools (watch siblings, message siblings), and **multiple simultaneous prompts to one agent are queued/sequenced, not dropped** (the prompt multiplexer).
 
 ## What exists already (~90% — slow the roll, don't rebuild)
+
+> Historical. This was a pre-build estimate captured before the factories were written. Treat it as the reason the design was built incrementally, not as a current inventory.
 
 - `factories/sudo-letta` + `factories/sudo-agent` factories with `up.sh`/`down.sh` (deploy, PVC, deterministic ports).
 - Per-agent MCP service (`sudo-<name>-mcp:8000`, real streamable-http MCP with `initialize`/`tools/call`) — fleet-wide.
@@ -217,7 +230,7 @@ Extend this `sudo-fleet` spec into the definitive native cross-agent-communicati
 
 ## Session log
 
-Dated close-out records of what was built live in `logs/` (one file per session, `YYYY-MM-DD-<slug>.md`). Latest: `logs/2026-10-01-session-closeout.md`.
+Dated close-out records of what was built live were kept as per-session notes (`YYYY-MM-DD-<slug>.md`). Those notes are not all tracked in this repository; where a referenced note is absent, the commit history for the relevant path is the record.
 
 ## Open / not settled
 
@@ -226,3 +239,20 @@ Dated close-out records of what was built live in `logs/` (one file per session,
 - **Prompt multiplexer semantics** — is "handle multiple prompts at the same time" strictly **hold + feed one-at-a-time** (mailbox/queue), or also **genuine parallel workers** for concurrent execution? Confirm before building; default assumption = queue/sequence (catch-all, drop-none, no races).
 - "90% exists" is a **hypothesis** — confirm which existing pieces actually port vs. need rework before promising one-command `setup.sh`.
 - **The exact plug-in gate** (under "An OPEN fleet") is under-specified: is it strictly "MCP server + identity-package conformance," or is there a harder gate (required sidecar, env-var contract, router registration)? And when an agent is **not** compatible, is the path "wrap it until it speaks the contract" or "rejected / stays outside the fleet"? Pin these before building the plug-in path.
+
+---
+
+### Open items that have since been confirmed, changed, or recorded
+
+This list is the design-time backlog. Where an item has since been decided or
+has become a tracked defect, the authority is
+[`KNOWN-ISSUES.md`](KNOWN-ISSUES.md) and [`NEXT.md`](NEXT.md), not this section.
+Two items remain worth stating plainly here because they are frequently
+misread as already solved:
+
+- The communication mesh is **cluster-wide, not team-scoped**: one agent's roster
+  contains every agent exposing the service pair in the discovery namespace.
+  Namespace/team scoping is the NEXT.md direction, not a shipped feature.
+- The deployment path described in "Bootstrap state" (a router pair seeded from
+  committed identity packages) **cannot complete on a fresh clone** today,
+  because those identity packages were removed. See `KNOWN-ISSUES.md` D1.

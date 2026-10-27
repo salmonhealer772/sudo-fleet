@@ -114,9 +114,11 @@ Unresolved: yes (fabean unreachable).
 
 ### PC-5. NodePort 31310 exposed with no edge auth gate — LOW — unresolved
 
-Finding: `svc/paperclip-node` (NodePort 3100:31310) exposes the app on
-`192.0.2.15:31310` with no TLS and no proxy auth in front. `/api/health` is
-open; the API endpoints are guarded only by the app's own auth.
+Finding: `svc/paperclip-node` (NodePort 3100:31310) exposes the app on the
+node's LAN address at that port, with no TLS and no proxy auth in front.
+`/api/health` is open; the API endpoints are guarded only by the app's own auth.
+(The concrete address was removed from this public document on 2026-10-27; it is
+an instance fact, recorded in the original finding outside the repository.)
 
 Evidence: `curl /api/health` → 200; `curl /api/companies` (no auth) → 403;
 `curl /api/companies` (Bearer bogus) → 401.
@@ -131,3 +133,153 @@ Evidence: `/api/health` →
 `"databaseBackup":{"enabled":true,"status":"warning",...}`.
 
 Unresolved: yes.
+
+## Documentation pass — 2026-10-27
+
+Findings recorded while auditing the docs against the code. Each entry follows
+the existing shape: severity / finding / evidence / unresolved. None of these
+were fixed by that pass — it was documentation-only, and several of them are
+architecture questions, not typos.
+
+### D1. `bin/k8s-up.sh` cannot complete: the identity packages it seeds from were deleted — HIGH — unresolved
+
+Finding: Command 2 deploys `Marc` (a Letta planner) and `Caesar` (a Hermes
+engineer) by passing `--from-glimor "$FLEET_HOME/deployments/Marc"` and
+`--from-glimor "$FLEET_HOME/deployments/Caesar"` to each factory's `up.sh`, then
+waits for pods labelled `agent=marc` and `agent=caesar`.
+
+Both directories are gone. `deployments/` now holds only `ONalwase/` and
+`Talker/`. They were removed by commit `98caf2b` ("chore: remove marc and
+caesar deployments (replaced by the AO talker agent)").
+
+Because the glimor seed is deliberately fail-loud, the deploy aborts at the
+first `up.sh` call. `bin/k8s-auto-up.sh` re-runs `k8s-up.sh` on every boot, so
+the failure repeats on every boot of any instance that installed the unit.
+
+Evidence: `ls deployments/` → `ONalwase Talker`. `grep -n GLIMORS_DIR
+bin/k8s-up.sh` → `GLIMORS_DIR="$FLEET_HOME/deployments"`, used as
+`.../Marc` and `.../Caesar`. `git log --diff-filter=D -- deployments/` shows the
+deletion in `98caf2b`.
+
+Related: `bin/k8s-down.sh --purge` documents itself as deleting
+"sudo-marc-data, sudo-caesar-data" — it carries the same fixed-pair assumption,
+so a purge on an instance that never deployed that pair deletes nothing and
+reports success.
+
+Unresolved: yes. It is a product decision, not a doc fix — either restore
+neutral seed identities, or make `k8s-up.sh` deploy nothing by default and
+document the factory `up.sh` as the only path. NOT fixed here.
+
+### D2. A boot unit installed by an older revision points at a path that does not exist — MEDIUM — unresolved
+
+Finding: `setup.sh` writes `/etc/systemd/system/sudo-fleet-boot.service` whose
+`ExecStart` runs `$FLEET_HOME/bin/k8s-auto-up.sh`, which is correct.
+
+A unit installed on one instance by an earlier revision instead runs
+`$FLEET_HOME/kube-scripts/k8s-auto-up.sh`. No `kube-scripts/` directory exists
+in the fleet root. The unit reports itself enabled while never having run
+successfully — boot recovery is silently absent.
+
+Evidence: unit file `ExecStart` line on an affected host; `journalctl -u
+sudo-fleet-boot.service` → no entries at all; `ls $FLEET_HOME/kube-scripts` →
+no such directory.
+
+Unresolved: yes, and it is instance drift rather than a repo defect: the repo's
+`setup.sh` is correct. Re-running `setup.sh` regenerates the unit, but nothing
+detects that an installed unit is stale. A future `setup.sh` could compare the
+installed `ExecStart` against the one it would write and re-emit on mismatch.
+NOT done here.
+
+### D3. An agent cannot read the repository checkout from inside its pod — MEDIUM — by design, now documented
+
+Finding: `/opt/0-0/...`-style host paths that hold the fleet checkout are not
+visible inside a deployed agent pod. The agent's only persistent view is its own
+PVC.
+
+This is correct behaviour for a generic user of the repo — a host's directory
+layout is an instance fact — but it silently breaks any workflow that assumes an
+engineer can verify against the live checkout. Anything an agent must read has to
+be handed to it: a bind mount, a `kubectl cp`, or a copy it fetches itself.
+
+Evidence: `kubectl exec` into each deployed engineer, `ls <checkout>/factories`
+→ no such file or directory, on all of them.
+
+Unresolved: no for the contract; the documentation now states it. Any workflow
+that dispatches repo work to an agent must hand over the files.
+
+### D4. Some values reach a Deployment as literal env values, not `secretKeyRef` — HIGH — unresolved
+
+Finding: LLM keys are injected through `secretKeyRef`. Two others are not: the
+agent's `SUDO_PASSWORD` and the control-plane key plus its agent and company
+identifiers are written as plain `env[].value` into the generated Deployment for
+every Hermes engineer.
+
+Consequences: anyone who can read a Deployment object in any namespace can read
+those values in clear text, and they persist in the object's
+`last-applied-configuration` annotation as well. The process is readable by
+anything with `get deploy` permission, which is a far wider audience than
+`get secret`.
+
+Evidence: the generated Deployment for a deployed engineer; the `up.sh` block
+that writes the `SUDO_PASSWORD` and `PAPERCLIP_*` entries emits `value:` rather
+than `valueFrom`. No values are reproduced here — this repository is public.
+
+Unresolved: yes. Moving them to a Secret is a code change, explicitly out of
+scope for the documentation pass.
+
+### D5. The repo is described as a pure factory while also carrying live identities — MEDIUM — unresolved
+
+Finding: `SOURCE-OF-TRUTH.md` states that product content — personas, domain
+skills, the work — belongs in a separate workload repository, and that this repo
+owns only the deployment machinery.
+
+At the same time, `deployments/` commits two complete agent identity packages,
+including `persona.md`, `human.md`, and `settings.json`. A reader sees both
+claims at once.
+
+Evidence: `git ls-files deployments/` lists the identity files; `SOURCE-OF-TRUTH.md`
+states the split.
+
+Unresolved: yes, deliberately. The tension is now documented in
+`SOURCE-OF-TRUTH.md` rather than quietly resolved by deleting the identities.
+
+### D6. The sibling roster is cluster-wide, with no team or namespace scoping — MEDIUM — unresolved
+
+Finding: the comm layer's `list-siblings` reads every `sudo-*-mcp` service pair
+in the discovery namespace and returns them as peers. There is no label
+selector, no namespace parameter, and no group concept.
+
+On a busy instance this means one agent's roster contains every other agent in
+the cluster, related or not, and a planner has no way to express "my team" in
+the current contract. `docs/NEXT.md` already identifies namespace scoping as the
+next direction; this entry records that the *current* contract does not have it,
+so no document should imply it does.
+
+Evidence: the roster tool shells out to a cluster-wide service listing and
+filters only on a name substring; the mod's parser keeps every `sudo-`-prefixed
+`-mcp`/`-watch` pair.
+
+Unresolved: yes — it is the NEXT.md direction, not a defect to patch here.
+
+### D7. The watch tap binds every interface with no authentication — MEDIUM — unresolved
+
+Finding: each agent's `watch` sidecar serves its HTTP tap on `0.0.0.0` at the
+agent's derived watch port. There is no token, no basic auth, and no network
+policy in front of it. Because every agent pod runs with `hostNetwork: true`, the
+tap is a node port, not a cluster-internal address.
+
+The tap exposes `/status`, `/ps`, `/events` and `/stream` — process lists, every
+prompt, every reply, all reasoning, and every tool call and result. `docs/SPEC.md`
+and the factory README describe the tap as "in-cluster only"; under hostNetwork
+that is not what the code does. On a single-NIC host it is reachable from the
+host's network unless a firewall in front of the node blocks it.
+
+Evidence: `srv = ThreadingHTTPServer(("0.0.0.0", int(CONFIG["watch_port"])),
+TapHandler)` in the watch sidecar source, with no auth header check in the
+handler. Confirmed independently by an engineer during the 2026-10-27
+documentation pass, and in source review.
+
+Unresolved: yes. Options are a bind to the loopback of the node, a shared token on
+the tap, or a NetworkPolicy — all of them code or manifest changes, out of scope
+for a documentation pass. Documented so that nobody relies on the "in-cluster
+only" wording.
