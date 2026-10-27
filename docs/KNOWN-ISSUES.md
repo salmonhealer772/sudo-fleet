@@ -283,3 +283,26 @@ Unresolved: yes. Options are a bind to the loopback of the node, a shared token 
 the tap, or a NetworkPolicy — all of them code or manifest changes, out of scope
 for a documentation pass. Documented so that nobody relies on the "in-cluster
 only" wording.
+
+### D8. `setup.sh` carries a credential-shaped literal in the public repository — HIGH — unresolved
+
+Finding: `setup.sh` defines `_TRIAL_KEY` — a real, key-shaped string — and a guard that refuses
+to continue when the operator's supplied key equals it. The guard's intent is sound: stop someone
+from bootstrapping on a shared trial key.
+
+The mechanism leaks the key it is trying to forbid. The value is committed, so it is in every
+clone, every fork, every mirror, and the full history of a **public** repository. A literal that
+exists to be rejected is still a literal that is now public.
+
+Evidence: the `_TRIAL_KEY` assignment and the comparison against it in `setup.sh`, present on
+`origin/main` and introduced by commit `43c3974` ("replace inline API keys with Kubernetes
+Secrets + trial key detection"). The value is deliberately not reproduced here.
+
+Unresolved: yes. This needs a decision the maintainer has to make, because it is not reversible by
+editing the file: rotating the key does not un-publish it, and scrubbing it from history rewrites
+shared history on a repository others may have cloned. The cheapest correct fix is to remove the
+literal, compare against a hash of the forbidden value instead, and treat the published key as
+burned. Recorded here so the exposure is not lost with the working session.
+
+Found by an engineer during the 2026-10-27 documentation pass, and confirmed by the lead against
+`origin/main`.
