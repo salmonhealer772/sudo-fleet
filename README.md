@@ -1,123 +1,203 @@
+<div align="center">
+
 # sudo-fleet
 
-A factory that installs an agent fleet on one Linux machine. Clone it, run one
-bootstrap script, deploy agents with one command each, and they can reach each
-other, watch each other, and survive a reboot.
+**A fleet of AI agents on one Linux box — planners that think, engineers that build, and a mesh that lets them talk.**
 
-This repository is **the product**. It is not one particular running fleet.
-Read [`docs/REPOSITORY-VS-INSTANCE.md`](docs/REPOSITORY-VS-INSTANCE.md) before
-changing anything here: the distinction between the repository and any single
-instance of it governs every decision in this repo.
+```mermaid
+flowchart LR
+    A["① setup.sh<br/><i>bootstrap the box</i>"] --> B["② k8s-up.sh<br/><i>deploy the agents</i>"]
+    B --> C["③ talk.sh<br/><i>start working</i>"]
+```
 
-- **Repository** — the factory scripts, the two agent factories, the comm
-  contract, the queue contract, the port scheme, and the docs. Generic. Something
-  other people clone and other software embeds.
-- **Instance** — one deployment of that factory: whatever cluster, hostnames,
-  agent names and keys a user happens to have. Not part of this repo.
+</div>
 
-Instance details appearing in this repository are labelled examples. They are
-never requirements.
-
-## What you get
-
-| Piece | What it is |
-|---|---|
-| `setup.sh` | Bootstrap: asks for one LLM key, writes `.env`, installs docker and k3s, builds both factory images, installs a boot-time recovery unit. |
-| `bin/k8s-up.sh` | Deploys the cluster workload from the factory YAMLs. |
-| `bin/k8s-down.sh` | Stops, purges, or tears down. |
-| `factories/sudo-agent/` | The Hermes engineer factory. Stateless one-shot CLI agents. |
-| `factories/sudo-letta/` | The Letta planner factory. Stateful agents with git-backed memory. |
-| `factories/*/comm/`, `factories/sudo-letta/mods/` | The cross-agent comm layer: `list-siblings`, `message-agent`, `check-agent`. |
-| `factories/sudo-letta/mods/` | Optional planner mods, including dictation (`/listen`, `/done`) and Google Workspace. |
-
-Each factory's `bin/up.sh` deploys one agent, prepends `sudo-` to the name you
-give it, writes a YAML to `factories/<factory>/deployments/`, and seeds identity
-and skills.
-
-## Requirements
-
-A Linux box with systemd, `curl` or `wget`, `git`, and root or sudo. Docker and
-k3s are installed by `setup.sh`. An SSH-less, single-node cluster is the
-supported shape; the factory assumes k3s on the same host as the docker socket.
+---
 
 ## Quick start
 
-```bash
-git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet
-bash setup.sh
-```
+Three commands. That is the whole install.
 
-Then deploy agents with the factory that fits the role:
+### ① Clone and bootstrap
 
-```bash
-bash factories/sudo-letta/bin/up.sh --planner      # a Letta planner: sudo-planner
-bash factories/sudo-agent/bin/up.sh --worker       # a Hermes engineer: sudo-worker
-```
-
-Names above are placeholders. Pick your own; nothing in the repo reserves them.
-
-## Command 2 — what it deploys
-
-`bin/k8s-up.sh` stands up a working starter pair: a Letta planner and a Hermes
-engineer, with their PVCs and Services.
-
-```
-PLANNER_NAME=planner      (default) -> deployment sudo-planner
-ENGINEER_NAME=engineer    (default) -> deployment sudo-engineer
-```
-
-Override either name per install:
+Installs Docker and k3s, builds the agent images, and writes your config.
 
 ```bash
-PLANNER_NAME=boss ENGINEER_NAME=worker bash bin/k8s-up.sh
+git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet && bash setup.sh
 ```
 
-**Identity is optional and never invented.** If a saved identity package exists
-at `deployments/<Name>/`, it is passed to the factory as `--from-glimor` and the
-agent resumes that identity. If it does not exist, the factory deploys a clean
-agent and you grow its identity from there. This repository ships no identity
-packages, so a fresh clone gets two working agents with empty memory — not a
-blank or a crash.
+<sub>Asks for one LLM API key and an optional web-search key. Takes a few minutes — it is compiling images.</sub>
 
-To start from a saved identity, put it at `deployments/<Name>/` (or point
-`GLIMORS_DIR` at a directory of your own). A glimor you do point at that is
-missing or corrupt still fails loudly rather than silently yielding a blank
-agent.
+### ② Put the fleet up
+
+Deploys a Letta planner and a Hermes engineer, with their storage and network wired.
+
+```bash
+cd bin && bash k8s-up.sh
+```
+
+<sub>Override the names if you like: <code>PLANNER_NAME=boss ENGINEER_NAME=worker bash k8s-up.sh</code></sub>
+
+### ③ Talk to your agent
+
+Opens a live Letta Code session in your terminal. This is where you work.
+
+```bash
+sudo bash bin/talk.sh --planner
+```
+
+<sub>Run from the repo root. Any agent name works: <code>--engineer</code>, or whatever you deployed.</sub>
+
+That is it. You are in front of a working agent with persistent memory, tools, and a teammate it can delegate to.
+
+---
+
+## What you just built
+
+```mermaid
+flowchart TB
+    subgraph box["Your Linux machine"]
+        direction TB
+
+        subgraph k3s["k3s cluster"]
+            direction TB
+
+            subgraph planner["sudo-planner · Letta"]
+                P1["agent container<br/><i>stateful · git-backed memory</i>"]
+                P2["watch sidecar<br/><i>records every thought</i>"]
+            end
+
+            subgraph engineer["sudo-engineer · Hermes"]
+                E1["agent container<br/><i>stateless · one-shot tasks</i>"]
+                E2["watch sidecar<br/><i>records every thought</i>"]
+            end
+
+            subgraph shared["shared"]
+                R["prompt queue<br/><i>one prompt at a time</i>"]
+                M["comm layer<br/><i>list · message · check</i>"]
+            end
+
+            planner <-->|"delegate work"| engineer
+            planner --- R
+            engineer --- R
+            planner --- M
+            engineer --- M
+        end
+
+        PVC[("persistent volumes<br/><i>memory survives restarts</i>")]
+        planner --- PVC
+        engineer --- PVC
+    end
+
+    You(["you"]) -->|"talk.sh"| planner
+```
+
+<details>
+<summary><b>The two kinds of agent</b></summary>
+
+<br/>
+
+| | **Planner** (Letta) | **Engineer** (Hermes) |
+|---|---|---|
+| Memory | Persistent, git-backed, survives everything | Fresh each task; state lives on its volume |
+| Best at | Deciding, planning, delegating, remembering | Executing one job well and reporting back |
+| You talk to it | Yes — this is your interface | Yes, but usually the planner does |
+| Needs | A conversation | A task |
+
+Planners delegate to engineers. Engineers do the work and report. Both can message any sibling in the fleet.
+
+</details>
+
+---
+
+## How the repo is laid out
+
+```mermaid
+flowchart TB
+    root["sudo-fleet/"]
+
+    root --> setup["setup.sh<br/><i>① bootstrap the box</i>"]
+    root --> bin["bin/"]
+    root --> factories["factories/"]
+    root --> docs["docs/"]
+
+    bin --> up["k8s-up.sh<br/><i>② deploy the fleet</i>"]
+    bin --> talk["talk.sh<br/><i>③ talk to an agent</i>"]
+    bin --> down["k8s-down.sh<br/><i>stop · purge · teardown</i>"]
+
+    factories --> agent["sudo-agent/<br/><b>engineer factory</b>"]
+    factories --> letta["sudo-letta/<br/><b>planner factory</b>"]
+
+    agent --> acomm["comm/<br/><i>the three tools<br/>every agent gets</i>"]
+    letta --> lmods["mods/<br/><i>optional extras:<br/>dictation, google,<br/>regulations</i>"]
+
+    docs --> d1["ARCHITECTURE.md<br/><i>how it works</i>"]
+    docs --> d2["OPERATIONS.md<br/><i>run & debug it</i>"]
+    docs --> d3["COMPONENTS.md<br/><i>every folder, explained</i>"]
+
+    style root fill:#1f2937,stroke:#111,color:#fff
+    style setup fill:#2563eb,color:#fff,stroke:#1e40af
+    style up fill:#2563eb,color:#fff,stroke:#1e40af
+    style talk fill:#2563eb,color:#fff,stroke:#1e40af
+```
+
+<details>
+<summary><b>Every folder, one line each</b></summary>
+
+<br/>
+
+| Path | What it is |
+|---|---|
+| `setup.sh` | Command ① — installs Docker + k3s, builds images, writes `.env` |
+| `bin/k8s-up.sh` | Command ② — deploys the planner and engineer |
+| `bin/talk.sh` | Command ③ — opens a session with any agent |
+| `bin/k8s-down.sh` | Stops agents; can also purge volumes or remove k3s |
+| `bin/k8s-auto-up.sh` | Re-applies everything after a reboot |
+| `bin/verify-change.sh` | Read-only health check: runtime, config, auth, exposure |
+| `factories/sudo-agent/` | The Hermes engineer factory — image, deploy script, MCP door, queue, comm tools |
+| `factories/sudo-letta/` | The Letta planner factory — image, deploy script, mods, seeded skills |
+| `factories/sudo-agent/comm/` | The comm layer shared by both kinds: tools, skills, contracts, tests |
+| `factories/mac/` | Optional Mac helpers (keyboard, RGB, HID capture) — not needed on a server |
+| `docs/` | The documentation set — see the index below |
+| `deployments/` | Saved agent identities. Empty by default; see [`docs/COMPONENTS.md`](docs/COMPONENTS.md) |
+
+</details>
+
+---
 
 ## Documentation
 
-| Document | Read it for |
+Start with the first two. The rest is reference.
+
+| | |
 |---|---|
-| [`docs/REPOSITORY-VS-INSTANCE.md`](docs/REPOSITORY-VS-INSTANCE.md) | The distinction this repo is built around. Start here. |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The system as built: factories, per-agent shape, ports, queue, comm layer, lifecycle. |
-| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | Deploy, inspect, debug, and recover a fleet. |
-| [`docs/COMM-LAYER.md`](docs/COMM-LAYER.md) | The cross-agent communication contract in full. |
-| [`docs/DOC-FACTS.md`](docs/DOC-FACTS.md) | Every checkable claim in the docs, and where it was checked. |
-| [`docs/COMPONENTS.md`](docs/COMPONENTS.md) | Every directory in this repo: what it is, whether it is fleet infrastructure or optional tooling. |
-| [`docs/SPEC.md`](docs/SPEC.md) | The original design contract, including what remains unbuilt. |
-| [`docs/NEXT.md`](docs/NEXT.md) | The agreed next direction: multiple fleets in one cluster. |
-| [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) | Open defects and their evidence. |
-| [`docs/CHANGE-PROTOCOL.md`](docs/CHANGE-PROTOCOL.md) | The four checks to run after a complex change. |
-| [`SOURCE-OF-TRUTH.md`](SOURCE-OF-TRUTH.md) | Which repository owns which content. |
+| **[Architecture](docs/ARCHITECTURE.md)** | How the pieces fit: factories, ports, queue, comm, identity |
+| **[Operations](docs/OPERATIONS.md)** | Deploy, inspect, debug, recover — with a failure table |
+| [Repository vs. instance](docs/REPOSITORY-VS-INSTANCE.md) | What belongs in this repo and what never does |
+| [Comm layer](docs/COMM-LAYER.md) | How agents find and message each other |
+| [Components](docs/COMPONENTS.md) | Every directory, and what it is for |
+| [Known issues](docs/KNOWN-ISSUES.md) | Open defects, with evidence |
+| [Spec](docs/SPEC.md) | The original design contract |
 
-## Security posture, stated plainly
+<details>
+<summary><b>Security posture</b></summary>
 
-The agent container runs privileged, with the docker socket mounted, because the
-comm layer reaches the host through it. That is an escape path from the agent
-container to the host kernel. Treat any host that runs this as a host the agents
-can reach, not as a sandbox boundary you can rely on.
+<br/>
 
-Some values reach a Deployment as literal env values rather than
-`secretKeyRef`. `docs/ARCHITECTURE.md` states which. This repository is public:
-never commit a key, a password, a token, or a real agent's private identity.
+Agent containers run privileged with the Docker socket mounted, because the comm layer reaches the cluster through it. That is a path from the agent container to the host kernel — treat a host running this as a host the agents can reach, not as a sandbox.
 
-## Development notes
+Some values reach a Deployment as literal environment variables rather than Secret references. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) says which. This repository is public: never commit a key, a password, a token, or a real agent's identity.
 
-- Changing anything the pod spec carries requires a pod recreation through
-  `up.sh`. `kubectl rollout restart` does not pick up env or volume changes.
-- Changing `bin/mcp_server.py`, `mcp_entrypoint.sh`, `hermes_prompt.py`,
-  `Dockerfile` or `patch_memory_review.py` requires an image rebuild. `up.sh`
-  refuses to deploy a stale image unless `SUDO_AGENT_ALLOW_STALE_IMAGE=1` is set.
-- Do not write "verified" in a commit message before the verification output
-  exists. If a test runs after the commit, say so in a follow-up commit.
-- Keep the architecture. Improve the documentation of it instead.
+</details>
+
+---
+
+<div align="center">
+<sub>
+
+**Working on this repository?** Start with [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).<br/>
+Changing the pod spec needs `k8s-up.sh` again — a rollout restart will not pick up env or volume changes.<br/>
+Then [`docs/CHANGE-PROTOCOL.md`](docs/CHANGE-PROTOCOL.md) for what to verify before calling it done.
+
+</sub>
+</div>
