@@ -216,6 +216,28 @@ No deployment was created, patched, scaled, restarted or deleted. No pod was exe
 
 ---
 
+## 7. Addendum — a verified hazard that attacks the isolation rule: `setup.sh` retags `sudo-agent:latest`
+
+Found while checking that my consistency numbers still held at HEAD. `setup.sh` builds the image under the **live** tag, unconditionally:
+
+```
+# factories/sudo-agent/setup.sh:61-62
+echo "→ Building sudo-agent image..."
+_retry 3 "docker build sudo-agent" docker build -t sudo-agent:latest -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" \
+```
+
+The inspect guard at `setup.sh:52` covers only the **base** (`hermes-agent:latest`); there is no guard on the sudo-agent build. So **any** run of `setup.sh` on this host — including a "just to check it builds" run — re-points the tag 60 running deployments reference. On this box that is precisely the accident P1-D exists to prevent, and it is one `bash setup.sh` away.
+
+Two practical consequences for the lead:
+1. **Nobody should validate the factory by running `setup.sh`.** P1-D's throwaway-tag build is the safe proof and it is now recorded here.
+2. It is already tracked as an open item: commit `b066084` — *"docs: file D9 — setup.sh retags sudo-agent:latest on every run (unresolved)"*. I did **not** run `setup.sh`, and the line above is read, not executed. I hold no file in this area.
+
+Related, from the same exchange and not verified by me beyond the file state: the 66 live per-agent configs under `factories/sudo-agent/config/<name>.yaml` are gitignored instance material still carrying `100000`/`50000`, hostPath-mounted into each pod as `/opt/data/config.yaml` by `up.sh:1068-1071`. Those are an instance-level sweep for Phase 2, not a Phase 1 file change. Flagging so no one mistakes the factory's `40000`/`20000` for the running agents' values.
+
+At HEAD `6fc1b95`, `factories/sudo-agent/setup.sh` carries `227: memory_char_limit: 40000` / `228: user_char_limit: 20000` and no `100000`/`50000` anywhere — so the factory's three copies (`config-template.yaml`, `config.yaml`, `setup.sh`) agree, as §5 states.
+
+---
+
 **PHASE 1 BUILD PASSED — YES**
 
 Nine of nine checks measured. Check 5's `/opt/watch-sidecar` expectation and check 6's `pip show` command both needed correction (F3, F4); neither hid a defect. The one real defect found — h1's unresolvable `FROM` — was fixed by its owner and the final build proves it. The live fleet is byte-identical before and after.
