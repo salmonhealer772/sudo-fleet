@@ -286,3 +286,98 @@ No deployment created/patched/imported; no pod exec'd.
 
 **F1 closed by a real build:** the committed Dockerfile (`a4e2483`) resolves and builds
 from step 1 on its own — no hand-made tag, no pre-tag step.
+
+---
+
+## 9. Addendum, 2026-10-28 (UTC) — P1-C's one standing condition, measured: the two plugin config keys still arm both plugins on v0.22.5
+
+h3 (P1-C) returned GREEN: all nine hooks and every payload field our plugins read are unchanged in v0.22.5, `register(ctx)` / `ctx.register_hook` unchanged, plugin loading from `<HERMES_HOME>/plugins/<key>/` unchanged. Its only residual condition is config-side — `plugins.enabled` must still list `sudo-watch-stream` and `sudo-comm-gate`, `plugins.stream_reasoning_deltas` must stay `true`, and `plugins.isolation` must not be `host`. This section measures that condition in the v0.22.5 runtime rather than reading it.
+
+### 9.1 Where the keys actually live — not in the image
+
+The image bakes **no** `config.yaml`; the Dockerfile copies only `bin/…`, `comm/…`, `meta-data/…` (`Dockerfile:56-82`). At deploy time `bin/up.sh` mounts the per-agent config at `/opt/data/config.yaml` (`up.sh:969`) and the two plugin directories at `/opt/data/plugins/<key>` (`up.sh:975`, `up.sh:980`). `HERMES_HOME` is `/opt/data`, which is exactly the `<HERMES_HOME>/plugins/<key>/` scan path P1-C verified.
+
+The tracked factory `config.yaml` — the seed a new agent gets via `up.sh:97` — deliberately carries **no** `plugins:` block. The keys are added on **every deploy**:
+
+| writer | key it writes | called at |
+|---|---|---|
+| `bin/watch_plugin_enable.py` | `plugins.enabled` += `sudo-watch-stream`, `plugins.stream_reasoning_deltas: true` | `up.sh:468` |
+| `bin/comm_gate_enable.py` | `plugins.enabled` += `sudo-comm-gate` | `up.sh:488` |
+
+So "the key is intact" is a property of the deploy helpers and `up.sh`, not of the built image. Both helpers were run against the real factory seed and against the legacy watch-only shape; both emit the same block:
+
+```yaml
+plugins:
+  enabled:
+    - sudo-comm-gate
+    - sudo-watch-stream
+  stream_reasoning_deltas: true
+```
+
+### 9.2 Measured on v0.22.5 — and the control that proves the measurement discriminates
+
+Four throwaway `HERMES_HOME` trees, each with the two real plugin dirs at `plugins/sudo-watch-stream` and `plugins/sudo-comm-gate`, probed with Hermes' own plugin manager inside the built image:
+
+| probe | a — seed + both helpers | b — raw seed (control) | c — legacy watch-only + helpers |
+|---|---|---|---|
+| `plugins.enabled` as parsed | `['sudo-comm-gate', 'sudo-watch-stream']` | absent | `['sudo-comm-gate', 'sudo-watch-stream']` |
+| `plugins.stream_reasoning_deltas` | `true` | absent → default `False` | `true` |
+| resolved `plugins.isolation` | `in_process` (unset) | `in_process` | `in_process` |
+| `sudo-watch-stream` | loaded, `enabled=True`, `error=None` | `enabled=False` — "not enabled in config" | loaded, `enabled=True` |
+| `sudo-comm-gate` | loaded, `enabled=True`, `error=None` | `enabled=False` — same | loaded, `enabled=True` |
+| `stream_reasoning_deltas_enabled()` | `True` | `False` | `True` |
+| `has_stream_observer_hooks()` | `True` | `False` | `True` |
+| callbacks: on_stream_start / _delta / _end | 1 / 1 / 1 | 0 / 0 / 0 | 1 / 1 / 1 |
+| pre_api_request / post_api_request | 1 / 1 | 0 / 0 | 1 / 1 |
+| pre_tool_call / post_tool_call | 2 / 1 | 0 / 0 | 2 / 1 |
+| on_skill_lifecycle | 1 | 0 | 1 |
+
+Homes `a` and `b` were run twice — inside the built image (`sudo-agent:p1-build-h4c`, `b0c1a2dab2ce`) and against the pinned base `nousresearch/hermes-agent:v0.22.5` — with identical results; `c` and `d` were measured against the pinned base (same runtime code, same image the factory FROMs).
+
+Row 2 of the control is the failure the planner warned about, now measured rather than asserted: with the block absent, **both** plugins are discovered but not enabled, `stream_reasoning_deltas_enabled()` is `False`, and **every** one of the nine callbacks is 0 — the tape and the gate are both dark while the image, the hooks and the pod all look healthy.
+
+Raw outputs are kept at `phase1-out/h4/plugprobe/probe-{a,b,c,d}.out` (probe: `probe.py`).
+
+### 9.3 Key names at the v0.22.5 fire sites
+
+- `plugins.stream_reasoning_deltas` — read by `agent/plugin_stream_hooks.py:156-167` via `cfg_get(config, "plugins", "stream_reasoning_deltas", default=False)`, consumed once per stream at `agent/stream_delivery.py:351-362`. Default is `False`; an absent key silently drops reasoning deltas.
+- `plugins.enabled` — consumed by the loader gate: `hermes_cli/plugins.py:1372` `enabled = _get_enabled_plugins()`, where `None` means "opt-in default, nothing enabled". An absent key silently loads neither plugin.
+- `plugins.isolation` — `hermes_cli/plugin_isolation.py:94-105` returns `in_process` when unset. Measured resolved value in all four probe homes: `in_process`. The factory never writes it: **0 of 66** per-agent configs contain `isolation`, so the "do not set host" instruction holds by construction.
+
+One honest limit on the isolation item: a fourth home (`d`) with `plugins.isolation: host` was also measured and still showed both plugins loaded with all nine callbacks — but that probe runs **no** plugin-host process and no gateway, so it exercises none of the paths host mode actually changes (ctx facades, `HOST_DEGRADED_HOOKS`, category providers). It does not license setting `host`, and nothing here sets it.
+
+### 9.4 Fleet audit — the 66 per-agent configs (read-only, instance material)
+
+`factories/sudo-agent/config/*.yaml`, parsed with PyYAML. No file was edited.
+
+| measure | count |
+|---|---|
+| configs | 66 |
+| list **both** plugins | 62 |
+| `sudo-watch-stream` only | 2 (`clean-full-test.yaml`, `clean-stream-test.yaml`) |
+| **no** `plugins:` block | 2 (`clean-watch-test.yaml`, `closer-h.yaml`) |
+| a `plugins:` block whose `stream_reasoning_deltas` is not `true` | 0 |
+| configs setting `plugins.isolation` | 0 |
+| unparseable | 0 |
+
+The four short configs are not live gaps: `up.sh` runs both helpers on every deploy, so each converges on its next roll — but they are the rows Phase 2 should confirm per agent rather than assume. None of it is a build defect.
+
+### 9.5 The deploy path already refuses the silent failure
+
+`up.sh` proves the hooks inside the new pod and fails the deploy if any is missing: seven watch hooks at `up.sh:1435-1475`, `on_skill_lifecycle` at `up.sh:1481-1505`. Phase 2 will therefore fail loudly on a dropped key rather than shipping a dark tape.
+
+### 9.6 Reproduce
+
+```
+# both helpers against the real seed, then read the block back
+python3 factories/sudo-agent/bin/watch_plugin_enable.py <cfg> sudo-watch-stream
+python3 factories/sudo-agent/bin/comm_gate_enable.py    <cfg> sudo-comm-gate
+# then, inside the image with HERMES_HOME pointing at the same home:
+/opt/hermes/.venv/bin/python <probe>.py
+```
+
+Probe, the four homes and all raw outputs: `/tmp/oct27/hermes-upgrade-research/phase1-out/h4/plugprobe/`.
+
+### 9.7 Effect on the Phase 1 verdict
+
+None — no code or config file changed for this addendum, and the nine checks in §2 stand. The build made for the check (`sudo-agent:p1-build-h4c` = `b0c1a2dab2ce`, 20/20 steps) was deleted after measuring. `sudo-agent:latest` is still `sha256:16d149ddf0f2…`, Created `2026-10-18T23:12:48-07:00`; 60 deployments still reference it. Nothing was deployed, restarted or exec'd.
