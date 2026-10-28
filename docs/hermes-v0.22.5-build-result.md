@@ -177,10 +177,10 @@ Confirmed the four engineers' work agrees. I changed no file of another engineer
 | `grep -rn patch_memory_review` across the delivered tree | Only the explanatory comment survives: `bin/up.sh:556` ("e.g. the old patch_memory_review.py change"). Dockerfile: no hits. `up.sh:1402` loop now `for f in "$REPO_DIR/Dockerfile"` only; `up.sh:1408` reworded, no filename. **Agrees with h1's intent.** |
 | Patch file deleted from the repo | `ls factories/sudo-agent/patch_memory_review.py` → No such file. Gone, and committed. |
 | `up.sh` still parses | `bash -n up.sh` with real bash → **`BASH_SYNTAX_OK`**. (Busybox `ash -n` reports a false syntax error at line 598 — it lacks the `<<<` here-string. Not a defect; don't be fooled by it.) |
-| Memory block reads 40000 / 20000 | `config-template.yaml:50-51` → `memory_char_limit: 40000`, `user_char_limit: 20000`. **Matches F23/F24.** Other keys untouched. |
-| Memory numbers consistent across the factory | `config.yaml:50-51` → 40000/20000; `factories/sudo-agent/setup.sh:227-228` → 40000/20000. All three agree. |
+| Memory block reads 40000 / 20000 | `factories/sudo-agent/config.yaml:49-53` → `memory_char_limit: 40000`, `user_char_limit: 20000`. **Matches F23/F24.** Other keys untouched. |
+| Memory numbers consistent across the factory | `factories/sudo-agent/config.yaml:50-51` → 40000/20000; `factories/sudo-agent/setup.sh:227-228` (first-run heredoc) → 40000/20000. Both tracked sources agree. |
 | Dockerfile references no missing file | All 7 `COPY` sources verified present in the factory: `bin/hermes_prompt.py`, `bin/mcp_server.py`, `bin/mcp_entrypoint.sh`, `comm/tools/`, `comm/skills/`, `comm/PERSONA-SNIPPET.md`, `meta-data/SOUL-BINDING.md`. **No reference to the deleted patch.** |
-| h3's flag: `plugins.isolation` must not appear in h2's config | `grep isolation config-template.yaml` → **absent, correct.** Plugins stay in-process as h3 requires. |
+| h3's flag: `plugins.isolation` must not appear in h2's config | `grep isolation factories/sudo-agent/config.yaml` → **absent, correct.** Plugins stay in-process as h3 requires. |
 
 One cross-ownership note, disclosed rather than hidden: `factories/sudo-agent/setup.sh:227-228` carries the memory limits and sits outside h2's assigned files. It already reads 40000/20000, so there is **no mismatch** — h1 disclosed sweeping it into commit `983834f`. Flagging so the lead knows the number lives in three places and any future change must touch all three.
 
@@ -234,7 +234,7 @@ Two practical consequences for the lead:
 
 Related, from the same exchange and not verified by me beyond the file state: the 66 live per-agent configs under `factories/sudo-agent/config/<name>.yaml` are gitignored instance material still carrying `100000`/`50000`, hostPath-mounted into each pod as `/opt/data/config.yaml` by `up.sh:1068-1071`. Those are an instance-level sweep for Phase 2, not a Phase 1 file change. Flagging so no one mistakes the factory's `40000`/`20000` for the running agents' values.
 
-At HEAD `6fc1b95`, `factories/sudo-agent/setup.sh` carries `227: memory_char_limit: 40000` / `228: user_char_limit: 20000` and no `100000`/`50000` anywhere — so the factory's three copies (`config-template.yaml`, `config.yaml`, `setup.sh`) agree, as §5 states.
+At HEAD `6fc1b95`, `factories/sudo-agent/setup.sh` carries `227: memory_char_limit: 40000` / `228: user_char_limit: 20000` and no `100000`/`50000` anywhere — so the factory's two tracked sources (`config.yaml:50-51` and the `setup.sh:227-228` heredoc) agree, as §5 states.
 
 ---
 
