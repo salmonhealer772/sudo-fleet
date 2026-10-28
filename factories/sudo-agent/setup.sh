@@ -38,8 +38,10 @@ _retry() {
   return 1
 }
 
-# Build the two images if they are absent. Order matters: sudo-agent is
-# `FROM hermes-agent:latest`, so the base is built first. The sudo-agent
+# Build the two images if they are absent. Order matters: sudo-agent used to be
+# `FROM hermes-agent:latest`, so the base was built first. Its FROM is now the
+# pinned `nousresearch/hermes-agent:v0.22.5`, which docker pulls itself, but the
+# local base below is still built and imported by up.sh. The sudo-agent
 # Dockerfile then (a) symlinks the base's off-PATH uv onto /usr/local/bin so
 # its `uv pip install` steps resolve, and (b) bakes the comm tools into
 # /opt/comm-tools/ at the IMAGE level (never shadowed by the /opt/data PVC —
@@ -222,8 +224,8 @@ terminal:
   backend: "local"
   sudo_password_env: "SUDO_PASSWORD"
 memory:
-  memory_char_limit: 100000
-  user_char_limit: 50000
+  memory_char_limit: 40000
+  user_char_limit: 20000
   memory_enabled: true
   user_profile_enabled: true
   write_approval: false

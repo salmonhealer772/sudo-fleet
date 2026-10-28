@@ -65,13 +65,18 @@ Plain `v0.22.5`, no arch suffix, both architectures present.
 
 The guard itself is unchanged: the fatal check is still the MCP source-digest comparison against the built image, and the Dockerfile-mtime note is still advisory-only. Nothing about what `_assert_image_fresh` blocks or rolls changed.
 
-### 1.4 Three consequential edits beyond the literal brief (disclosed, not silent)
+### 1.4 Four consequential edits beyond the literal brief (disclosed, not silent)
 
 Leaving these would have put false statements in the files I own:
 
 1. Dockerfile header lines 1–3 said the image "patches background review to programmatically save every user message to memory". Rewritten to say the pin is deliberate and the patch is gone.
 2. Dockerfile `LABEL ... description="... save-everything memory"` → `"... native memory"`. Metadata only; nothing reads it.
 3. up.sh lines 1399–1400 said "the Dockerfile / memory patcher are not readable from the image, so fall back to a timestamp note for those two" — after 1402 the loop covers one file. Reworded to "the Dockerfile … for it". Same edit class as 1408: it named a file that no longer exists.
+4. `factories/sudo-agent/setup.sh` line 42 asserted "sudo-agent is `FROM
+   hermes-agent:latest`, so the base is built first" — the §5 correction made that
+   false. Comment only, rewording it to say the FROM is the pinned registry image and
+   that the local base is still built/imported by up.sh. The build/import logic itself
+   is untouched — that is F2, still open.
 
 ---
 
