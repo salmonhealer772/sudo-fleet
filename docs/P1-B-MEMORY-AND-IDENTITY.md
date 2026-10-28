@@ -328,12 +328,28 @@ of a re-filed inbox, and a full store stops hiding corrections the operator alre
 
 ## Addendum (h2, at `761100a`) — the `factories/sudo-agent/setup.sh` item is closed, the live fleet is not
 
-That section used to end with "I did not make it" about `factories/sudo-agent/setup.sh:225-226`; it no
-longer does — the heading above is now a closed record — and the change itself is history: the two
+That section used to end with "I did not make it" about `factories/sudo-agent/setup.sh:225-226` — the
+**pre-fix** line numbers, taken from the tree at `983834f^`, where the pair sits at `225`/`226`. The same
+commit that landed the two integers also added two comment lines above them, so at HEAD the pair is at
+`:227-228`; every `225-226` in this document is history, never current state. The section no longer ends
+that way — the heading above is now a closed record — because the change itself is history: the two
 integers were swept into **`983834f`** ("docs(factory): setup.sh comment no longer claims the base is
 `FROM hermes-agent:latest`", author `sudo-fleet-glm-h1`) while h1 was qualifying the pinned base image
 in the same file, and **`761100a`** discloses the sweep in `docs/h1-P1-A-REPORT.md:266-267`. Ordering:
 `4834260 -> 7321d9a -> a4e2483 -> 983834f -> 761100a`.
+
+The shift is checkable at both ends, which is the point of quoting a line number at all:
+
+```
+$ git show 983834f^:factories/sudo-agent/setup.sh | grep -n "char_limit"   # 225/226, 100000/50000
+$ grep -n "char_limit" factories/sudo-agent/setup.sh                       # 227/228,  40000/20000
+```
+
+And the name is checkable too: this repo tracks **two** `setup.sh` files plus
+`factories/sudo-letta/bin/up.sh`. The seed lives only in `factories/sudo-agent/setup.sh`; a bare
+`grep char_limit setup.sh` at the repo root returns nothing, because the tracked repo-root `setup.sh`
+(506 lines, the one that advertises "re-runnable, idempotent" and shell-outs to the factory script) has
+no memory block at all.
 
 I verified the *current* tree instead of the earlier report. `factories/sudo-agent/setup.sh` is md5
 `4fe4cd4a8a3214733169ffe2fc40a72b` and the tracked tree no longer holds a live occurrence of the pair:
