@@ -233,3 +233,71 @@ of a re-filed inbox, and a full store stops hiding corrections the operator alre
 
 *Report revision note: the hash-verification commit that carries this footer is a separate commit on
 `main` after `13784dc`; `13784dc` is the one that changes the config.*
+
+---
+
+## Addendum (h2, at `761100a`) — the `setup.sh` item is closed, the live fleet is not
+
+The section above ends with "I did not make it" about `setup.sh:225-226`. That is now history: the two
+integers were swept into **`983834f`** ("docs(factory): setup.sh comment no longer claims the base is
+`FROM hermes-agent:latest`", author `sudo-fleet-glm-h1`) while h1 was qualifying the pinned base image
+in the same file, and **`761100a`** discloses the sweep in `docs/h1-P1-A-REPORT.md:266-267`. Ordering:
+`4834260 -> 7321d9a -> a4e2483 -> 983834f -> 761100a`.
+
+I verified the *current* tree instead of the earlier report. `factories/sudo-agent/setup.sh` is md5
+`4fe4cd4a8a3214733169ffe2fc40a72b` and the tracked tree no longer holds a live occurrence of the pair:
+
+```
+$ git grep -n 'memory_char_limit: 100000' -- .     # run BEFORE this addendum was appended
+docs/P1-B-MEMORY-AND-IDENTITY.md:168   (the section above, quoting the old patch)
+docs/P1-B-MEMORY-AND-IDENTITY.md:184   (the diff in the section above)
+docs/h1-P1-A-REPORT.md:266             (h1 disclosing the sweep)
+```
+
+(This addendum quotes the pair too, so re-running that grep now also matches the block below. The
+point of the grep was that no *code* file — `setup.sh`, `config.yaml`, `bin/` — matches.)
+
+### The proof, and how to run it without touching the box
+
+Running `setup.sh` naively in a scratch copy is **not safe**: `setup.sh:64` runs
+`docker build -t sudo-agent:latest` unconditionally — the `hermes-agent:latest` inspect guard above it
+covers only the BASE image — so a plain scratch run retags the live image, and with a reachable cluster
+the script then runs `bin/redis-up.sh` against the shared queue Redis. Stub both tools on `PATH` and run
+the real script:
+
+```
+$ mkdir -p /tmp/pseed/stub && cp /opt/0-0/sudo-fleet/factories/sudo-agent/setup.sh /tmp/pseed/
+$ # stub/docker: `info` and `image` exit 0, `build` echoes "skipped" and exits 0;  stub/kubectl: exit 1
+$ cd /tmp/pseed && PATH=/tmp/pseed/stub:$PATH DEEPSEEK_API_KEY=sk-not-a-trial-key bash setup.sh
+RUN_RC=0
+$ grep -n -A7 '^memory:' config.yaml
+8:memory:
+9-  memory_char_limit: 40000
+10-  user_char_limit: 20000
+11-  memory_enabled: true
+12-  user_profile_enabled: true
+13-  write_approval: false
+14-  nudge_interval: 1
+```
+
+The same harness against the pre-fix file emitted `100000` / `50000` at the same lines, so the check
+discriminates rather than always passing.
+
+### Still open: 66 instance configs, none of them moved
+
+The tracked half of P1-B is done; the running fleet is untouched. `bin/up.sh:1068-1071` hostPath-mounts
+`config/<name>.yaml` into each pod as `/opt/data/config.yaml`, and every one of those files still carries
+the old pair. Measured at `761100a`:
+
+```
+$ cd factories/sudo-agent/config && ls *.yaml | wc -l                                       66
+$ grep -l 'memory_char_limit: 100000' *.yaml | wc -l                                        66
+$ grep -l 'memory_char_limit: 40000'  *.yaml | wc -l                                         0
+$ kubectl exec sudo-sudo-fleet-glm-h1-64496fccbf-n594t -c sudo-agent -- \
+      grep memory_char_limit /opt/data/config.yaml          ->  memory_char_limit: 100000
+  (same on sudo-sudo-fleet-glm-h2 and -h3)
+```
+
+`config/` is gitignored instance material and rewriting 66 running agents' configs is a fleet change,
+so it is a dispatch, not a repo edit. Until it happens every running Hermes agent still boots on the
+old budget, and the entry-size instruction has no effect on them.
