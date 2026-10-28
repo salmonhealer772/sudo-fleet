@@ -32,13 +32,13 @@
  *
  * adapterConfig:
  *   mcpUrl      MCP endpoint of the live agent (default: derived from agentName,
- *               else the live ONalwase door)
+ *               else the configured fallback door)
  *   mcpTool     MCP tool to call (default "letta_prompt")
  *   mode        "direct" (wait for the reply — default) | "inbox" (enqueue only)
  *   newChat     start a fresh conversation (default false = resume the agent's chat)
  *   namespace   k8s namespace of the live deployment (default "sudo-fleet")
  *   timeoutSec  hard cap on the whole MCP conversation (default 600)
- *   agentName   derives the door hostname (ONalwase -> sudo-onalwase-mcp)
+ *   agentName   derives the door hostname (<agent> -> sudo-<agent>-mcp)
  *
  * Legacy keys (agentId / lettaPath / home / backend / extraArgs) are accepted
  * but IGNORED: the live pod is the authority for its own agent id, home and

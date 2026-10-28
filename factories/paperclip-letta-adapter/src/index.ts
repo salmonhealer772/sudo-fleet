@@ -32,13 +32,13 @@
  *
  * adapterConfig:
  *   mcpUrl      MCP endpoint of the live agent (default: derived from agentName,
- *               else the live ONalwase door)
+ *               else the configured fallback door)
  *   mcpTool     MCP tool to call (default "letta_prompt")
  *   mode        "direct" (wait for the reply — default) | "inbox" (enqueue only)
  *   newChat     start a fresh conversation (default false = resume the agent's chat)
  *   namespace   k8s namespace of the live deployment (default "sudo-fleet")
  *   timeoutSec  hard cap on the whole MCP conversation (default 600)
- *   agentName   derives the door hostname (ONalwase -> sudo-onalwase-mcp)
+ *   agentName   derives the door hostname (<agent> -> sudo-<agent>-mcp)
  *
  * Legacy keys (agentId / lettaPath / home / backend / extraArgs) are accepted
  * but IGNORED: the live pod is the authority for its own agent id, home and
@@ -70,8 +70,11 @@ const DEFAULT_TIMEOUT_SEC = 600;
 /** Bounded retries for a single door (a malformed reply only; never a timeout). */
 const MAX_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 1500;
-/** Last-resort door: the live ONalwase deployment (namespace sudo-fleet). */
-const FALLBACK_MCP_URL = "http://sudo-onalwase-mcp.sudo-fleet.svc.cluster.local:8000/mcp";
+/** Last-resort door: the fallback deployment (namespace sudo-fleet). Override with
+ *  PCP_FALLBACK_MCP_URL; the default names no particular fleet member. */
+const FALLBACK_MCP_URL =
+  process.env.PCP_FALLBACK_MCP_URL ||
+  "http://sudo-planner-mcp.sudo-fleet.svc.cluster.local:8000/mcp";
 
 export interface LettaLocalAgentConfig {
   mcpUrl?: string;
@@ -527,7 +530,7 @@ export function createServerAdapter(): any {
     runtimeToolDelivery: "invocation_context",
 
     agentConfigurationDoc: {
-      mcpUrl: { type: "string", required: false, description: "MCP endpoint of the LIVE agent (default: derived from agentName, else the sudo-onalwase door)" },
+      mcpUrl: { type: "string", required: false, description: "MCP endpoint of the LIVE agent (default: derived from agentName, else the fallback door)" },
       mcpTool: { type: "string", required: false, description: `MCP tool to call (default ${DEFAULT_TOOL})` },
       mode: { type: "string", required: false, description: '"direct" (wait for reply, default) or "inbox" (enqueue only)' },
       newChat: { type: "boolean", required: false, description: "Start a fresh conversation (default false = resume)" },

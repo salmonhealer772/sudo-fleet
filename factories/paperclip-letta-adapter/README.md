@@ -10,7 +10,7 @@ built-in `hermes_local`.
 - Paperclip's built-in provider list has no Letta adapter; the generic
   OpenAI-compatible/vLLM provider is an open feature request (#4344).
 - `snowctl/letta-code-paperclip-adapter` requires a running `letta server`
-  (`lettaServerUrl`). The sudo-fleet planners (Marc / ONalwase) run on the
+  (`lettaServerUrl`). The sudo-fleet planners run on the
   **local backend** (files on disk, `--backend local`), so that server adapter
   does not apply directly.
 - This adapter closes that gap the same way `hermes_local` does: **spawn the
