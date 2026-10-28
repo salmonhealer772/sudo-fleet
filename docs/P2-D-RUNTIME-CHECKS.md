@@ -556,6 +556,23 @@ read-only mode and prints hashes and counts. No `apply`, `patch`, `delete`, `sca
 `rollout`, `create`, `edit`, `cordon` or `drain`. No image was built and `sudo-agent:latest`
 was never tagged — it remains `16d149ddf0f2…`, untouched.
 
+Measured at the end of the run, not asserted:
+
+```
+$ kubectl get deploy -A --no-headers | wc -l
+103                                    # unchanged from before this phase
+$ kubectl get deploy -A ... | grep -c "sudo-agent:latest"
+59                                     # 60 Hermes deployments minus the one sandbox
+$ kubectl get deploy -A ... | grep "p2a-h1"
+sudo-mail-bot-hermes sudo-agent:p2a-h1,sudo-agent:p2a-h1,   # exactly one deployment
+$ docker image inspect sudo-agent:latest --format '{{.Id}} {{.Created}}'
+sha256:16d149ddf0f2d8f9fcbf6bd94447d6790104660e98f7f32c9b46b120bd1b4bca 2026-10-18T23:12:48…
+```
+
+One deployment differs from `sudo-agent:latest`; the other 59 are untouched and the shared
+tag still points at the old image, so nothing else in the fleet can be affected by this
+phase until someone deliberately propagates.
+
 The only state that changed on the pod was changed **by the pod's own agent in response to
 prompts I sent** (two turns: the gate diagnostic and a one-word reply), which is what checks
 1, 2 and 4 require in order to be real. Those two turns account for the entire
