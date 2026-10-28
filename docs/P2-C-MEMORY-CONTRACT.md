@@ -48,7 +48,8 @@ the numbers have two homes and no fourth, and the commit is pushed with `HEAD ==
 (§9). **PASS for the repository half.** The delivery half is by design not in this brief:
 the text reaches agents when they run an image containing it, and that is a rebuild + restart
 per agent — which the propagation job must do anyway. Nothing here requires a per-PVC step
-first, which is exactly the property that makes the propagation cheap.
+first, which is exactly the property that makes the propagation cheap. **The delivery half
+has since been measured once, end to end, on a recreated sandbox — §12.**
 
 | File | Change | Why |
 |---|---|---|
@@ -356,7 +357,7 @@ containing this file. That is all. No PVC marker, no SOUL deletion, no per-agent
 | Question | Answer |
 |---|---|
 | Of the ~60 Hermes agents now running, how many get the instruction on their next **restart, with their current image**? | **0.** The snippet is read from `/opt/comm/PERSONA-SNIPPET.md` *inside the image*; the image they run predates this commit. |
-| …on their next restart after being recreated on an image built from this commit? | **~60 of ~60, with no further step.** The entrypoint replaces the block between the markers on every boot. |
+| …on their next restart after being recreated on an image built from this commit? | **~60 of ~60, with no further step.** The entrypoint replaces the block between the markers on every boot. **Measured once, on one recreated agent — §12.** |
 | …if I had chosen the skill route? | **0 of ~60, even on the new image**, until `/opt/data/.comm-seeded` is deleted on each PVC. That is the trap this decision avoids. |
 | What does the propagation job have to do about it? | Exactly one thing, and it is already on its list: recreate each agent from the new image. **No marker step, no memory-file move for the instruction** (the legacy memory archive is a separate concern). |
 
@@ -551,3 +552,127 @@ docs report         bytes: 34284
 This footer is a second, later commit (`docs(P2-C): confirm the push`) on `main`: a report
 cannot contain the hash of the commit that first carries it. Everything above describes
 `afef43e`, which is the commit that changes behaviour; the footer commit only edits this file.
+
+---
+
+## 12. The delivery half, measured — STEP 7 on a recreated sandbox
+
+§1 signs off the repository half and calls the delivery half out of scope. It is no longer
+untested. This section records the first end-to-end delivery of *this* block to an agent
+that already had a past, and every number below is my own read-only re-measurement taken at
+**19:56Z on 2026-10-28**, not a copy of another hand's write-up. h2's pass on the same pod
+is `737a181` (`docs/P2-B-SANDBOX-RECREATE.md` §7 and §12.3); this section reads the same
+facts again, independently, and lands on the same two load-bearing digests (§12.5 notes
+where two cosmetic values in that write-up differ from what the file says).
+
+### 12.1 The object measured
+
+| item | value |
+|---|---|
+| pod | `sudo-mail-bot-hermes-66f565699b-lrfsz`, `2/2 Running`, restarts `0`, age 15 min |
+| image, both containers | `sudo-agent:p2a-h1` |
+| annotation `sudo-agent/image-sha` | `sha256:ebc56f72e84a2342b59344fdb413534e998420b69c0b12ea7e6b504ed63edbf9` |
+| `hermes --version` in the pod | `Hermes Agent v0.22.5 (2026.9.24) · upstream bf0203a7` |
+| what it was before | an agent with a past: 411 pre-upgrade sessions (P2-B §12.1), `.comm-seeded` 2026-09-30 and 18 of its own skills (both measured here) |
+
+A genuine recreate on h1's throwaway image tag — the pod is 15 minutes old, and the PVC it
+booted against is the one the agent had before (P2-B §3 states that baseline; P2-B §12.1
+re-counts it after).
+
+### 12.2 The answer: yes — and only inside the markers
+
+```
+$ kubectl exec … -c sudo-agent -- sh -c \
+    'wc -c /opt/data/SOUL.md; md5sum /opt/data/SOUL.md;
+     grep -n "FLEET-COMM-AWARENESS\|## Your memory" /opt/data/SOUL.md;
+     grep -c "## Your memory" /opt/data/SOUL.md; ls -l /opt/data/.comm-seeded'
+9559 /opt/data/SOUL.md
+62e1be7a40585e729c2704b8c19ef77c  /opt/data/SOUL.md
+54:<!-- FLEET-COMM-AWARENESS-BEGIN -->
+67:## Your memory
+79:<!-- FLEET-COMM-AWARENESS-END -->
+1
+-rw-r--r-- 1 root root 0 2026-09-30 04:47 /opt/data/.comm-seeded
+$ ls /opt/data/skills | wc -l
+18
+```
+
+- `## Your memory` appears **exactly once**, at **line 67**, strictly between the BEGIN (54)
+  and END (79) markers. It is inside the block the entrypoint owns, not appended after it.
+- **9,559 bytes** is exactly the post-upgrade size §6 recorded on the same agent — the
+  delivery did not depend on that measurement, it reproduces it.
+- **No PVC surgery, no marker deletion, no per-agent config edit** produced this. The only
+  writer is `bin/mcp_entrypoint.sh` on boot, which is the mechanism §4 chose.
+
+### 12.3 Two byte-level proofs: current text, and nothing else moved
+
+(a) **The block on the PVC is the committed snippet, not a stale baked copy.** Take the
+24 lines between the markers and digest them:
+
+```
+$ block = SOUL.md lines 55..78, between the markers     # 4,195 bytes, 24 lines
+$ sha256(block)                7c1420eb7393c86b13d0f985d37bf30787c90b1ec32ce4b814f5d415d817b9b7
+$ git show HEAD:factories/sudo-agent/comm/PERSONA-SNIPPET.md | sha256sum
+                               7c1420eb7393c86b13d0f985d37bf30787c90b1ec32ce4b814f5d415d817b9b7
+$ block == HEAD blob, byte for byte:  True
+```
+
+Equal — so the text that landed is the text `main` ships *today*, including the `## Your
+memory` section. A stale snippet baked into an older image would have produced a different
+digest here; the persona block is re-copied and re-rendered on every boot, so "the image is
+old" is not a defence this mechanism can hide behind.
+
+(b) **Everything outside the block is still the pre-upgrade file.** The pre-upgrade snippet
+is still in git, so the agent's own persona can be rebuilt and hashed without the old PVC:
+
+```
+$ pre  = SOUL.md lines 1..54   (through BEGIN)
+$ post = SOUL.md lines 79..    (END and after)
+$ rebuilt = pre + $(git show afef43e^:factories/sudo-agent/comm/PERSONA-SNIPPET.md) + post
+  7,891 bytes   md5 721754026f924d2079a37f0d323c6d22
+```
+
+7,891 bytes and that md5 are exactly the values §6 captured on the pod *before* the
+recreate. So the only bytes that changed on `/opt/data/SOUL.md` are the 13 lines the
+snippet itself grew by; the persona around them is untouched, and 7,891 → 9,559 (+1,668) is
+the snippet's own growth, not reconstruction drift.
+
+### 12.4 The contract is being followed in practice, not just installed
+
+The first real turn after the recreate wrote **one** entry, **115 characters**, at 19:41Z:
+
+```
+$ wc -c /opt/data/memories/MEMORY.md     →  115      mtime 2026-10-28 19:41
+```
+
+That is inside the band the section asks for (`one fact, a sentence or two, roughly 100–300
+characters`) and it is one entry, not a log. One observation is not compliance, but it is
+the right shape on the first attempt, which is more than the instruction alone can promise.
+
+### 12.5 Two cosmetic values in h2's write-up, and why they do not weaken it
+
+| value | h2's text (`737a181`) | measured here |
+|---|---|---|
+| line of `## Your memory` | 66 | **67** (1-based `grep -n`; 66 is its 0-based index) |
+| block size | 4,165 chars | **4,195 bytes** |
+
+Both sit inside h2's §12.3, next to the digest that *is* the proof; the digest and the
+reconstruction md5 both reproduce exactly, so the conclusion stands unchanged. The line
+number is flagged rather than edited because `docs/P2-B-SANDBOX-RECREATE.md` is h2's file —
+the partition holds even for a one-character correction.
+
+### 12.6 What this changes in the reach table, and what it does not
+
+- §6's second row — `~60 of ~60, with no further step` — stops being only a projection: it
+  now has **one measured instance**, on an agent that had a `.comm-seeded` dated 2026-09-30
+  and 18 skills of its own.
+- The rejection of Mechanism A is now **observed**, not merely reasoned: that marker and
+  those 18 skills are still there after the recreate, so a skill shipped in the new image
+  would have delivered nothing. The persona block is what delivered.
+- It does **not** move the number for the other ~59. They are still `0 of ~59` until their
+  own recreate; one instance shows the mechanism works, not that the population has been
+  reached. §6's first row stands.
+- It does not change §10. **This section's cluster access was read-only**: `kubectl get`,
+  and `exec` running `cat`, `wc`, `md5sum`, `grep`, `ls` — nothing written to any pod, PVC,
+  config, deployment or image. The two files used for the hashing were written to the host's
+  `/tmp` and removed afterwards.
