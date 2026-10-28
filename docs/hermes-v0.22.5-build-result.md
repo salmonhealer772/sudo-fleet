@@ -241,3 +241,48 @@ At HEAD `6fc1b95`, `factories/sudo-agent/setup.sh` carries `227: memory_char_lim
 **PHASE 1 BUILD PASSED — YES**
 
 Nine of nine checks measured. Check 5's `/opt/watch-sidecar` expectation and check 6's `pip show` command both needed correction (F3, F4); neither hid a defect. The one real defect found — h1's unresolvable `FROM` — was fixed by its owner and the final build proves it. The live fleet is byte-identical before and after.
+
+---
+
+## 8. Re-verification addendum, 2026-10-28T09:19Z (HEAD `eafdc50`) — qualified `FROM`, no alias
+
+h1 messaged that the `FROM` line is now the qualified reference in both places
+(`phase1-out/h1/Dockerfile` and `factories/sudo-agent/Dockerfile`, md5
+`4e9b190e6ad7eb870e536c996f56db78`, commit `a4e2483`) and asked for the full build.
+Re-ran it at HEAD, with no local alias anywhere on the daemon:
+
+```
+$ docker image inspect hermes-agent:v0.22.5
+Error response from daemon: No such image: hermes-agent:v0.22.5   <- alias gone, §6 cleanup held
+$ md5sum factories/sudo-agent/Dockerfile phase1-out/h1/Dockerfile buildctx/Dockerfile
+4e9b190e6ad7eb870e536c996f56db78  (all three identical)
+$ docker build --progress=plain -t sudo-agent:p1-build-h4b buildctx
+#4 [ 1/17] FROM docker.io/nousresearch/hermes-agent:v0.22.5@sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d
+BUILD_EXIT=0                                   <- 17/17 steps, full layer-cache hit, context 231.64 kB
+```
+
+Measured inside the resulting image (`--entrypoint /bin/sh`, throwaway tag):
+
+```
+hermes --version                          Hermes Agent v0.22.5 (2026.9.24) · upstream bf0203a7
+fastmcp / redis / ddgs                    4.0.9 / 8.1.0 / 9.16.1
+background_review.py                      1349 lines
+  grep -c "PROGRAMMATIC AUTO-SAVE"        0
+  grep -c "PROGRAMMATIC-AUTO-SAVE"        0
+  grep -c 'store.add("memory"'            0
+find / -name patch_memory_review.py       0 hits
+/opt/comm /opt/comm-tools /opt/comm-skills (8) /opt/meta-data /opt/hermes-mcp   all present
+ENTRYPOINT                                ["/opt/hermes-mcp/mcp_entrypoint.sh"], CMD null
+```
+
+Image ID differs from §6 — explained, not papered over: this export is a buildx
+manifest list, so `.Id` is the list digest `0b2ae2365561…` instead of the config digest
+`2581cc02810d`; every step was `CACHED`, so the filesystem is the one the checks above
+measured.
+
+Cleanup: `docker rmi sudo-agent:p1-build-h4b` → Untagged + Deleted `0b2ae2365561…`.
+`sudo-agent:latest` still `sha256:16d149ddf0f2…`, Created `2026-10-18T23:12:48-07:00`.
+No deployment created/patched/imported; no pod exec'd.
+
+**F1 closed by a real build:** the committed Dockerfile (`a4e2483`) resolves and builds
+from step 1 on its own — no hand-made tag, no pre-tag step.
