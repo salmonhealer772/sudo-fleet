@@ -234,7 +234,7 @@ Two practical consequences for the lead:
 
 Related, from the same exchange and not verified by me beyond the file state: the 66 live per-agent configs under `factories/sudo-agent/config/<name>.yaml` are gitignored instance material still carrying `100000`/`50000`, hostPath-mounted into each pod as `/opt/data/config.yaml` by `up.sh:1068-1071`. Those are an instance-level sweep for Phase 2, not a Phase 1 file change. Flagging so no one mistakes the factory's `40000`/`20000` for the running agents' values.
 
-At HEAD `6fc1b95`, `factories/sudo-agent/setup.sh` carries `227: memory_char_limit: 40000` / `228: user_char_limit: 20000` and no `100000`/`50000` anywhere — so the factory's two tracked sources (`config.yaml:50-51` and the `setup.sh:227-228` heredoc) agree, as §5 states.
+At HEAD `6fc1b95`, `factories/sudo-agent/setup.sh` carries `227: memory_char_limit: 40000` / `228: user_char_limit: 20000` and no `100000`/`50000` anywhere — so the factory's two tracked sources (`factories/sudo-agent/config.yaml:50-51` and `factories/sudo-agent/setup.sh:227-228`, the first-run heredoc) agree, as §5 states.
 
 ---
 
