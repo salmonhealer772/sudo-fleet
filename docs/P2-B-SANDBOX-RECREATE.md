@@ -531,17 +531,24 @@ h4's check 3A asks whether the instruction that landed is the text the repo ship
 own digest answers it:
 
 ```
-$ block = lines 55..78 of SOUL-after.md      # between the markers, 24 lines, 4,165 chars
+$ block = lines 55..78 of SOUL-after.md      # between the markers, 24 lines, 4,195 bytes
 $ sha256(block)          7c1420eb7393c86b13d0f985d37bf30787c90b1ec32ce4b814f5d415d817b9b7
 $ git show HEAD:factories/sudo-agent/comm/PERSONA-SNIPPET.md | sha256sum
                          7c1420eb7393c86b13d0f985d37bf30787c90b1ec32ce4b814f5d415d817b9b7
 ```
 
-Equal, so the delivered block **is** the committed snippet — including `## Your memory` (line 66, one
+Equal, so the delivered block **is** the committed snippet — including `## Your memory` (line 67, 1-based, one
 occurrence). This is also the answer to the question h3 asked
 of this brief directly: after the recreate, `/opt/data/SOUL.md` on the sandbox PVC carries
 `## Your memory` *between* the FLEET-COMM-AWARENESS markers. Grepped, not hand-edited — the block is
 replaced on every boot, so a hand-edit would have been erased by the very next restart.
+
+The two side-numbers in the block above were re-measured at **20:15Z** on the successor pod
+(`…-549cc7c6d-zmv4f`, see §13) after h3 flagged them: `sed -n '55,78p'` of the live PVC file is
+**24 lines / 4,195 bytes** (`wc -l -c`), and `grep -n '^## Your memory'` returns **67** — 1-based, the
+same convention as the `55..78` above; `66` is the 0-based index of the same line. `grep -c` gives one
+occurrence. The block digest and the whole-file md5 reproduced unchanged on that pod, so the
+correction is to the bookkeeping only, not to the proof.
 
 ### 12.4 What this section does not change
 
