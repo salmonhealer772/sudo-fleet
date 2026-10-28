@@ -178,11 +178,11 @@ Confirmed the four engineers' work agrees. I changed no file of another engineer
 | Patch file deleted from the repo | `ls factories/sudo-agent/patch_memory_review.py` → No such file. Gone, and committed. |
 | `up.sh` still parses | `bash -n up.sh` with real bash → **`BASH_SYNTAX_OK`**. (Busybox `ash -n` reports a false syntax error at line 598 — it lacks the `<<<` here-string. Not a defect; don't be fooled by it.) |
 | Memory block reads 40000 / 20000 | `config-template.yaml:50-51` → `memory_char_limit: 40000`, `user_char_limit: 20000`. **Matches F23/F24.** Other keys untouched. |
-| Memory numbers consistent across the factory | `config.yaml:50-51` → 40000/20000; `setup.sh:227-228` → 40000/20000. All three agree. |
+| Memory numbers consistent across the factory | `config.yaml:50-51` → 40000/20000; `factories/sudo-agent/setup.sh:227-228` → 40000/20000. All three agree. |
 | Dockerfile references no missing file | All 7 `COPY` sources verified present in the factory: `bin/hermes_prompt.py`, `bin/mcp_server.py`, `bin/mcp_entrypoint.sh`, `comm/tools/`, `comm/skills/`, `comm/PERSONA-SNIPPET.md`, `meta-data/SOUL-BINDING.md`. **No reference to the deleted patch.** |
 | h3's flag: `plugins.isolation` must not appear in h2's config | `grep isolation config-template.yaml` → **absent, correct.** Plugins stay in-process as h3 requires. |
 
-One cross-ownership note, disclosed rather than hidden: `setup.sh:227-228` carries the memory limits and sits outside h2's assigned files. It already reads 40000/20000, so there is **no mismatch** — h1 disclosed sweeping it into commit `983834f`. Flagging so the lead knows the number lives in three places and any future change must touch all three.
+One cross-ownership note, disclosed rather than hidden: `factories/sudo-agent/setup.sh:227-228` carries the memory limits and sits outside h2's assigned files. It already reads 40000/20000, so there is **no mismatch** — h1 disclosed sweeping it into commit `983834f`. Flagging so the lead knows the number lives in three places and any future change must touch all three.
 
 ---
 
