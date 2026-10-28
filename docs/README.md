@@ -71,6 +71,8 @@ does not.
 | [`P2-C-MEMORY-CONTRACT.md`](P2-C-MEMORY-CONTRACT.md) | Phase 2 record: the memory contract the agent is actually told, and where it is enforced. |
 | [`h5-P2-E-REPORT.md`](h5-P2-E-REPORT.md) | Phase 2 record: the documentation audit — what was false, what it says now, and where a stranger still gets stuck. |
 | [`P2-A-DEPLOY-PATH.md`](P2-A-DEPLOY-PATH.md) | Phase 2 record: what the deploy path builds and imports after the base bump. |
+| [`P2-B-SANDBOX-RECREATE.md`](P2-B-SANDBOX-RECREATE.md) | Phase 2 record: one live agent recreated onto the new image, and the three checks that it kept its past. |
+| [`P2-D-RUNTIME-CHECKS.md`](P2-D-RUNTIME-CHECKS.md) | Phase 2 record: the runtime checks on that sandbox — the tape, the comm layer, the MCP door, and the gate. |
 
 ## Keeping these honest
 

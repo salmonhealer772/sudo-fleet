@@ -558,3 +558,141 @@ evidence appendix measured against a 2026-10-27 snapshot copy, and its own heade
 says to re-grep ranges after edits. Eleven of its rows cite `docs/SPEC.md` or
 `ARCHITECTURE.md` line ranges that have moved since — re-pointing them is a pass
 over that appendix's evidence, not a knock-on from brief C.
+
+---
+
+## Independent verification of DOC-FACTS.md at `1c5a7f0`
+
+Adversarial read of h3's re-point. Verified against the **committed blob**
+(`git show origin/main:docs/DOC-FACTS.md`, commit `1c5a7f0bf5b9`, 222 lines, 122 rows)
+with `origin/main` = `1c5a7f0`, never a working-tree copy. Method: for every cite, resolve
+the path from the repo root (exact first, then unique suffix), cut the range with `sed -n`
+from the committed blob, and compare the **source text to the row's claim** — a grep hit is
+not a receipt. I did not edit `docs/DOC-FACTS.md`; that file belongs to h3 and a verifier
+that edits what it verifies has verified nothing.
+
+### Counts
+
+| Measure | Value |
+|---|---|
+| rows | 122 |
+| cite tokens in the two evidence columns (same extractor: 214 on the pre-h3 blob) | 229 |
+| resolve exactly from the repo root | 220 |
+| resolve only by unique suffix | 3 |
+| ambiguous / unresolved | 0 / 6 |
+| cited range past end of file | 0 |
+| cited range that is a blank line | 0 |
+| **fail_class_a** — resolves, but the text does not carry the claim | **3** |
+| **fail_class_b** — path needs suffix resolution instead of exact | **3** |
+| **fail_class_c** — a `setup.sh` row that does not say which `setup.sh` | **0** |
+
+`cites=229 fail_class_a=3 fail_class_b=3 fail_class_c=0`
+
+The six unresolved are not verifications: four are provenance mentions of
+`docs/MARC_CAESAR_STATUS.md`, which was deleted in `07d5d77` (rows 77, 79, 87, 97); one is
+the bare word `human.md` in row 87's prose; one is `FACTS.md` in row 112, which is a
+work-directory artifact and was never in the tree. I checked all four deleted-file cites at
+`07d5d77^` and each does say what the row says it said — but they cannot resolve at the tip,
+so they are history, not evidence.
+
+### FAIL table
+
+| Row | Line | Cite as committed | Why it fails |
+|---|---|---|---|
+| 39 | 94 | `sudo-agent/bin/up.sh:1019` | `:1019` is `tcpSocket:` inside the readiness probe. `runAsUser: 10000` / `runAsNonRoot: true` are at `:1040-1041` (row 37 cites those correctly). The status asserts "VERIFIED for Hermes only" on a line that carries no such thing. Also the only cite left in the file written factory-relative. |
+| 14 | 56 | `factories/sudo-agent/bin/up.sh` (tail); `factories/sudo-letta/bin/up.sh` (tail) | Claim: both factories "emit the same closing summary: Queue, Talk, Shell, MCP, Watch, Logs, Stop". Hermes does (`:1554-1564`, seven labelled lines). Letta does not: its tail (`:1076-1081`) is Talk/Shell/MCP/Watch/Logs/Stop — six lines, no `Queue`. Marked VERIFIED with no line range, so the range could not be cut; the substance is false for one of the two. |
+| 121 | 221 | `docs/SPEC.md:233-235` | `:233` is `## Session log` and `:235` says the session notes "are not all tracked in this repository". It carries neither "~94 agents" nor "42 PVCs". The row's other two cites do carry them (`IMPROVEMENTS.md:84` = "all 42 PVCs"; `api_server_ports.py:31` = "the whole live fleet is ~94 agents"). The SPEC cite resolved by moving `218 -> 233` onto a section that never held those numbers. |
+
+### The two rows the planner flagged
+
+- **Row 67 (line 80, the `8642 + cksum(name) % 5000` formula) — RIGHT.** It now cites
+  `docs/SPEC.md:37`, and at `1c5a7f0` `:37` does quote `8642 + cksum(name)%5000` inside a
+  sentence that calls it **stale** and points at `ARCHITECTURE.md`. The status says the doc
+  now flags its own figure, which is exactly what the line says. Corrected value and the
+  forbidden-8642 guard are cited each to a line that carries them (`:57`, `:80`, `:543`).
+- **Row 208 (line 221, the agent/PVC counts) — WRONG, and the old cite was always wrong.**
+  The section is indeed alive at `docs/SPEC.md:233` with a rewritten body, and h3 found
+  that. But the row's claim is the counts, and that section has never stated them: at
+  `1894b0b:docs/SPEC.md:218` the same heading sat over "kept in `logs/` ... Latest:
+  `logs/2026-10-01-session-closeout.md`". Re-pointing `218 -> 233` preserved a cite that
+  does not support the row. Fix is to drop that one cite, not to move it again.
+
+### Rows re-read by hand, beyond the flags
+
+R14, R25, R29, R30/67, R31, R37, R39, R60, R95, R121/208 and the four deleted-file rows.
+Two of those looked like failures in the truncated view and are not: row 25's range
+`:28-32` does contain "a collision is resolved by linear-probing the 61000..65535 ring"
+(`api_server_ports.py:32`), and row 29's `factories/sudo-agent/bin/up.sh:1163-1186` starts
+in a ConfigMap but reaches `kind: Service ... port: 8000 ... targetPort: $MCP_PORT` inside
+the range. Row 31 ends at `PAPERCLIP.md:107`, and `:107` is the line carrying
+"`8000 + hash % 22000` = 8000..29999" — the range is right, not one short. Row 60's 7-day
+TTL is `ex=7 * 24 * 3600` at `mcp_server.py:274`; row 95's "16 random alphanumerics" is
+`head -c 16` at `up.sh:426`. Every other row's cited lines carried its claim as written.
+
+### Header facts
+
+- `60dc842` as the rewrite — **RIGHT**. `git show --stat 60dc842` lists both
+  `docs/DOC-FACTS.md` (209 insertions) and `docs/SPEC.md` (36), and
+  `1894b0b` is an ancestor of it.
+- `1894b0b` as the snapshot tree — **WRONG**, and this is the one that matters.
+  `dbce5422b010ad3b523a945bb30b23f7` does match on both sides, but it is one file. Comparing
+  every file of `/tmp/oct26/sudo-fleet-documentation/src/repo` against
+  `git ls-tree -r 1894b0b` by git blob hash: **identical 86, differing 35, only in the copy
+  254, only in 1894b0b 14.** The differing set is the one the appendix cites: both factories'
+  `bin/up.sh`, `setup.sh`, `bin/k8s-up.sh`, both `mcp_entrypoint.sh`, `comm/README.md`,
+  `docs/KNOWN-ISSUES.md`, `README.md`, `comm_gate/__init__.py`. So the copy is not `1894b0b`
+  and the original code ranges never resolved against it — the closest commit by blob match
+  is `f70de48` (2026-10-26), 8 of 10 probes. `docs/SPEC.md` is identical across all of them,
+  which is why the md5 evidence looked like proof of the tree.
+- The date attached to `1894b0b` — **WRONG**: it is `2026-10-05`, not `2026-10-27`. The
+  `2026-10-27` is the working copy's read date.
+- "`up.sh` exists three times in the tree" — **WRONG**: four at `1c5a7f0` —
+  `factories/mac/up.sh`, `factories/sudo-gws/kube-scripts/up.sh`,
+  `factories/sudo-agent/bin/up.sh`, `factories/sudo-letta/bin/up.sh`. The path rule itself
+  is right and is what drove class b to 3; only the count is wrong. (`setup.sh` is three
+  times, not two: the header names root and `factories/sudo-agent/setup.sh` and omits
+  `factories/sudo-letta/setup.sh`.)
+
+### What is right, so it is on the record
+
+The path repair worked: class b went from 26 non-exact cites on the pre-h3 blob to 3, and
+class c to zero — all six `setup.sh` rows now carry `(repo root)`. No cite is a blank line or
+past end of file, which the pre-h3 blob had six of. No mermaid, no HTML, no images. No added
+sentence describes our checkout, our engineers, our host paths or our cluster: the only
+absolute path in the added text is the `/tmp/oct26` working-copy note that was already
+there. Rows 77/79/87 honestly downgrade themselves to INFERRED/ABSENT when their receipt was
+deleted in `07d5d77` — that is the behaviour this appendix exists to have.
+
+### Verdict
+
+**PASS-WITH-FAILURES-LISTED.** The appendix's *structure* is now sound: 220 of 229 cites
+resolve exactly and 3 rows attest to text that does not say what they claim. It can be
+trusted today for everything except rows 14, 39 and 121, and the header sentence that calls
+the working copy `1894b0b`. All four are mechanical, so I am handing them over as exact
+strings rather than editing h3's file.
+
+### Exact old -> new, for h3
+
+1. Row 39 status, line 94:
+   - old: `` VERIFIED for Hermes only (`sudo-agent/bin/up.sh:1019`); it is stated as a residual papercut, not a defect ``
+   - new: `` VERIFIED for Hermes only (`factories/sudo-agent/bin/up.sh:1040-1041`); it is stated as a residual papercut, not a defect ``
+2. Row 14, line 56 (whole row):
+   - old: `` | Both factory `up.sh` emit the same closing summary: Queue, Talk, Shell, MCP, Watch, Logs, Stop | `factories/sudo-agent/bin/up.sh` (tail); `factories/sudo-letta/bin/up.sh` (tail) | VERIFIED | ``
+   - new: `` | Both factory `up.sh` print a closing summary; Hermes prints seven labelled lines, Letta six and not `Queue` | `factories/sudo-agent/bin/up.sh:1554-1564`; `factories/sudo-letta/bin/up.sh:1076-1081` | **STALE** — the summaries are not the same: Letta's tail is Talk/Shell/MCP/Watch/Logs/Stop, with no `Queue` line | ``
+3. Row 121, line 221 (drop one cite):
+   - old: `` `docs/SPEC.md:233-235`; `docs/IMPROVEMENTS.md:84`; `factories/sudo-agent/bin/api_server_ports.py:31` ``
+   - new: `` `docs/IMPROVEMENTS.md:84`; `factories/sudo-agent/bin/api_server_ports.py:31` ``
+4. Header, lines 8-9 of the file:
+   - old: `` `/tmp/oct26/sudo-fleet-documentation/src/repo`, which is tree `1894b0b` (2026-10-27): its `` followed by `` `docs/SPEC.md` and `git show 1894b0b:docs/SPEC.md` are the same file (`dbce5422…`). ``
+   - new: `` `/tmp/oct26/sudo-fleet-documentation/src/repo` (read 2026-10-27). Its `docs/SPEC.md` is identical to `git show 1894b0b:docs/SPEC.md` (`dbce5422…`) — but the copy is **not** tree `1894b0b` (2026-10-05): 35 of its files differ from that commit and 254 exist only in it, so the original code ranges never resolved against `1894b0b`. ``
+5. Header, path rules:
+   - old: `` `up.sh` exists three times in the tree, so factory ``
+   - new: `` `up.sh` exists four times in the tree (`factories/mac/`, `factories/sudo-gws/kube-scripts/`, and both factories' `bin/`), so factory ``
+
+### Note on the docs index
+
+`docs/README.md` already indexed all four reports named for this turn — `DOC-FACTS.md` in the
+full index, and `P2-A-DEPLOY-PATH.md`, `P2-C-MEMORY-CONTRACT.md`, `h5-P2-E-REPORT.md` in the
+Phase records table — as of `c7ead0d`, which is in the tree at `4918ca2`. The real gaps were
+`P2-B-SANDBOX-RECREATE.md` and `P2-D-RUNTIME-CHECKS.md`, both landed this week and neither
+listed; those two rows are what this turn added.
