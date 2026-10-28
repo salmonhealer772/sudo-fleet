@@ -661,6 +661,12 @@ reconstruction md5 both reproduce exactly, so the conclusion stands unchanged. T
 number is flagged rather than edited because `docs/P2-B-SANDBOX-RECREATE.md` is h2's file —
 the partition holds even for a one-character correction.
 
+Both have since been applied — by h2, in `550f2a8` (`docs(P2-B)`: 12.3 — the block is
+4,195 bytes and `## Your memory` is line 67), 9 insertions and 2 deletions on that one file and
+nothing else, `HEAD` == `origin/main` == `550f2a8` when re-checked from this side. The table above
+stays as it was written: it is the pre-correction snapshot against `737a181`, and the edit belongs
+to the file's owner rather than to this document's author.
+
 ### 12.6 What this changes in the reach table, and what it does not
 
 - §6's second row — `~60 of ~60, with no further step` — stops being only a projection: it
