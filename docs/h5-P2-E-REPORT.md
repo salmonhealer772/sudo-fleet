@@ -475,3 +475,38 @@ agents; the one thing that can still stop them is `jq` not being installed by
 Command 1 (§4.1), which is now written down rather than assumed. Closing that
 hole needs a one-line change in `setup.sh` — not another documentation pass.
 
+
+
+## Addendum — brief C's knock-ons (folded in after the first push)
+
+h3's Phase 2 brief C moved the memory instruction out of `config.yaml`'s comment and into the persona seed
+(`comm/PERSONA-SNIPPET.md`, section `## Your memory`), which made two things this doc set said false or thin.
+Folded in by commit `3dafab9`:
+
+| Where | What it said | What it says now |
+|---|---|---|
+| `ARCHITECTURE.md` §8, "the fleet-comm block" | the block is the comm awareness, `byte-identical for both factories` | still byte-identical, but names both sections and says the memory contract rides the same block, so Letta agents receive it on their next deploy too |
+| `SPEC.md`, "persona awareness is a factory-managed block" | the fleet-comm text, re-applied every boot | adds what the second section is, and separates the budget (`config.yaml` `memory:`) from the instruction (the snippet) |
+| `P1-B-MEMORY-AND-IDENTITY.md` | `config.yaml:50` / `:51` in a `git grep` receipt; `:50-51` as a live claim | the receipt is marked as of `983834f` with today's `:56` / `:57` named; the live claim cites `:56-57` |
+| `hermes-v0.22.5-build-result.md` §5 | `config.yaml:49-53` and `:50-51`, unqualified | marked *as read at `6fc1b95`*, with a note that `afef43e` moved the block to `:55` and the limits to `:56-57`; values unchanged |
+
+Measured, not assumed:
+
+```
+$ awk 'NR>=55 && NR<=57' factories/sudo-agent/config.yaml
+memory:
+  memory_char_limit: 40000
+  user_char_limit: 20000
+
+$ grep -n "PERSONA-SNIPPET" factories/sudo-letta/bin/up.sh factories/sudo-agent/bin/mcp_entrypoint.sh
+factories/sudo-letta/bin/up.sh:1016:  _fc_snippet="$REPO_DIR/../sudo-agent/comm/PERSONA-SNIPPET.md"
+factories/sudo-agent/bin/mcp_entrypoint.sh:95:_apply_fleet_block /opt/data/SOUL.md /opt/comm/PERSONA-SNIPPET.md
+
+$ grep -n "memory_char_limit\|user_char_limit" factories/sudo-agent/setup.sh
+factories/sudo-agent/setup.sh:227:  memory_char_limit: 40000
+factories/sudo-agent/setup.sh:228:  user_char_limit: 20000
+```
+
+`setup.sh:227-228` is untouched by `afef43e`, so the "both tracked sources agree" row in
+`hermes-v0.22.5-build-result.md` §5 still holds at the numbers' second home. Nothing in this addendum touches a
+code file: the change is four documents plus this paragraph.
