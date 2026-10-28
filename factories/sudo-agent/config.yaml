@@ -41,11 +41,17 @@ terminal:
 # pair that filled (99,861 chars, 34 entries averaging 2,850) and silently stopped
 # accepting writes. Fix the writer instead.
 #
-# MEMORY INSTRUCTION — what this store is FOR, not how big it may grow:
-#   SAVE      durable facts about the environment, team conventions, a procedure
-#             that took real effort to work out, corrections the operator made.
-#   DO NOT SAVE  task text, a brief someone sent you, another agent's message, or
-#             conversational filler. Transcripts live in session_search, not here.
+# WHAT AN AGENT IS TOLD IS NOT IN THIS FILE — a YAML comment is read by the person
+# editing it, never by the model, and a budget does not tell an agent what belongs
+# in the store. The instruction that shapes what it saves is the persona seed,
+# applied on EVERY boot: comm/PERSONA-SNIPPET.md section "## Your memory" -> baked to
+# /opt/comm/PERSONA-SNIPPET.md -> SOUL.md by bin/mcp_entrypoint.sh:95. Edit it
+# there; do not copy it back here, or the two copies drift.
+#
+# THE NUMBERS have exactly two homes and both must move in the same commit: this
+# `memory:` block, the seed for a NEW agent, and setup.sh's only-if-absent heredoc,
+# so deleting this file cannot resurrect the old pair. Never repeat the numbers in
+# the persona text and never add a third home.
 memory:
   memory_char_limit: 40000
   user_char_limit: 20000

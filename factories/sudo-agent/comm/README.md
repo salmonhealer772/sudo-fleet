@@ -16,7 +16,7 @@ Three folders, three layers that must align:
 |---|---|---|
 | **Tool** | `tools/` | the mechanism — the Python CLI backends (baked into the image at `/opt/comm-tools/`) |
 | **Skill** | `skills/` | the procedure — when + how to call each tool (seeded into `$HERMES_HOME/skills/` on first boot) |
-| **Persona** | `PERSONA-SNIPPET.md` | the awareness — applied to `SOUL.md` as a factory-managed block on every boot so the agent knows it has these |
+| **Persona** | `PERSONA-SNIPPET.md` | the awareness — applied to `SOUL.md` as a factory-managed block on every boot so the agent knows it has these tools, and what its memory is for |
 
 ## The three tools
 
@@ -56,3 +56,30 @@ Three folders, three layers that must align:
 
 A fresh engineer is therefore born able to list, message, and check its
 siblings — no post-deploy install, no one-off.
+
+## Why the persona block also carries the memory contract
+
+`PERSONA-SNIPPET.md` has two sections: `## Fleet communication` and `## Your
+memory`. The second one exists because the snippet is the only text in this repo
+that is guaranteed to be in an agent's context on every boot — in both factories,
+with no marker to clear and nothing to load first.
+
+The memory budget (`memory_char_limit` / `user_char_limit`) lives in
+`factories/sudo-agent/config.yaml`, and a YAML comment reaches the maintainer, not
+the model. A budget tells an agent how much room it has; nothing in it says what
+belongs in the store. That is what `## Your memory` says, and it is the whole
+reason it exists: a model-written store whose writer has never been told its shape
+fills with re-filed prompts and then stops accepting writes.
+
+Three rules hold this together:
+
+- **One authored copy.** The text lives here and only here. `config.yaml` points
+  at it rather than repeating it; do not paste it into a skill as well, or the two
+  copies will drift and an agent will believe whichever it read first.
+- **No numbers in the persona text.** The char limits have exactly two homes —
+  `config.yaml` and `setup.sh`'s only-if-absent heredoc — because an agent reading
+  its own budget starts rationing entries against it instead of judging facts.
+- **Skills are the wrong carrier for it.** `comm/skills/` is seeded on FIRST boot
+  only behind `/opt/data/.comm-seeded`, so a new skill reaches no agent that
+  already has a PVC; and skill content is loaded on demand, while this instruction
+  has to be present at the moment the agent decides what to save.
