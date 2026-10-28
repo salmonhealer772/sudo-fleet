@@ -387,6 +387,18 @@ before and after — and its pod's restart count unchanged at 6.
 +_import_image "$AGENT_IMAGE"
 ```
 
+⚠ **Correction, added after `70f207a` (2026-10-28 20:08Z).** The annotation above — `x4 … the two
+seed initContainers` — describes what `a6abd1e` *intended*, not what it did. Only the agent-container and
+the watch-container lines expanded. The `seed-soul` initContainer is built inside a **quoted** heredoc
+(`cat <<'SEEDSOUL'`), and a quoted heredoc performs no expansion, so that site emitted the literal text
+`image: $AGENT_IMAGE` — an invalid image reference, so that initContainer could never start. It did not bite
+*this* sandbox (mail-bot-hermes carries no `config/mail-bot-hermes.SOUL.md`, so no `seed-soul`
+initContainer is emitted at all — see §13.1), but it would have broken the recreate of any agent that
+does carry a SOUL, i.e. all five `sudo-fleet-glm-h{1..5}`. h1 fixed it in **`70f207a`** with an
+`@AGENT_IMAGE@` placeholder substituted once after the heredoc (the `@SOUL_STOCK_MD5@` pattern) plus an
+`_manifest_check` backstop that aborts before `kubectl apply` on any manifest whose `image:` line still
+carries a literal `$`. Both directions are reproduced, and the deploy path is re-exercised, in §13.
+
 `bash -n up.sh` → clean (real bash; `ash -n` reports a false error at the `<<<` here-string, as
 Phase 1 recorded).
 
@@ -537,3 +549,103 @@ Nothing in §1–§11 is corrected by the re-measurement; every headline claim r
 that will drift for anyone re-reading this later is §12.1's session/message total, and it should: the
 agent is alive and writing. `/tmp/p2-selfcopy` was already gone when this pass started, and this pass
 created no copy of its own.
+
+
+---
+
+## 13. Re-check on the fixed deploy path (`70f207a`), and the recreate re-run
+
+Measured **2026-10-28 19:59Z–20:08Z** (host local -0700), by the same engineer, after h1's `70f207a`
+landed. The repo `HEAD` moved during this pass (`dc065db` when measured); `up.sh` did not:
+`sha256(worktree) == sha256(git show HEAD:factories/sudo-agent/bin/up.sh) ==
+4981515f499af187fd309be1886c4da2e0b6a086990575d7e4faa578d35cec72` — the `70f207a` blob (`a6abd1e`'s is
+`38d997c18c15…`).
+
+### 13.1 The SOUL branch now renders the candidate tag — and did not before
+
+Executed, not read. Sandbox tree (`/tmp/h2p2b-render`: a copy of `bin/`, `config.yaml`, `Dockerfile`, one
+`config/<name>.yaml`), with `docker`/`kubectl`/`k3s`/`ctr` replaced by recording stubs on `PATH`,
+`bin/redis-up.sh` stubbed out, `SUDO_AGENT_SKIP_*_PROBE=1` and `SUDO_AGENT_ALLOW_STALE_IMAGE=1` (the stub
+image cannot carry the sources). No cluster call, no real Redis. One throwaway agent name per case; the
+SOUL-bearing case got a copy of the real `config/sudo-fleet-glm-h2.SOUL.md`.
+
+| # | case | result |
+|---|---|---|
+| A | HEAD + SOUL seed + `SUDO_AGENT_IMAGE=sudo-agent:p2a-h1` | rc 0; `image:` at **97** (seed-soul), **110** (agent), **214** (watch) — all `sudo-agent:p2a-h1`; literal-`$` image lines **0** |
+| B | `a6abd1e` + SOUL seed + same override (control) | rc 0; **97 `image: $AGENT_IMAGE`**, 110/214 `sudo-agent:p2a-h1`; literal-`$` **1** |
+| C | SOUL-less agent (`mail-bot-hermes` shape) + override, HEAD vs `a6abd1e` | rc 0 both; **byte-identical**, sha256 `8aa53e8d55eb6b99d4ecbdebc25ca48036c9dc0657c6a437156426a78be9160d`; **0** seed initContainers |
+| D | override **unset**, HEAD vs `a6abd1e` | rc 0 both; **byte-identical**, sha256 `8c612ff0f171271fc6cb5b5affc4facbd7c280f8fb76a7954e93a7e6022b5127`; both `sudo-agent:latest` |
+| E | `SUDO_AGENT_IMAGE='$AGENT_IMAGE'` | rc **1**; `_manifest_check` → “an image: line with an unexpanded variable (literal $)”, aborting **before** `→ Deploying…`; nothing applied |
+
+B is h1's defect reproduced from the other side. **C is why the 19:39Z deploy in §5–§6 was not a bad
+deploy**: this sandbox has no `config/mail-bot-hermes.SOUL.md`, so the seed block is never emitted, and the
+two revisions produce the *same* manifest for it (`initContainers` empty in both, and empty in the live
+Deployment). The broken site was unreachable here — it was reachable for every agent carrying a SOUL. A is
+the fix working; E is the backstop that keeps the class from recurring. D is the invariant h1 claimed for
+the default path, re-measured in my own tree: unset still renders `sudo-agent:latest`, byte-identical
+across the two revisions.
+
+### 13.2 The recreate, re-run on the fixed path
+
+No snapshot this time. The frozen copy in §5.2 was a workaround for h1 editing the live file; `up.sh` at
+HEAD is committed, clean, and carries the override itself:
+
+```
+cd /opt/0-0/sudo-fleet/factories/sudo-agent && \
+KUBECONFIG=/etc/rancher/k3s/k3s.yaml SUDO_AGENT_IMAGE=sudo-agent:p2a-h1 \
+  bash bin/up.sh --mail-bot-hermes
+→ rc 0
+```
+
+Redis (h1's second abort hazard) did **not** refuse — exactly as predicted for the real tree:
+`node port 6380 already owned by this deployment's own redis pod — continuing (idempotent)`. The shared
+object did not move: `sudo-agent-redis` `generation 3` / `resourceVersion 1002953`, pod restarts 6, before
+and after.
+
+The run was **not** a byte-level no-op, and the difference is the part worth recording:
+
+| Before | After |
+|---|---|
+| Deployment `gen 19`, `rv 1109466` | `gen 22`, `rv 1110439` (`1110473` after the Paperclip pass) |
+| pod `…-66f565699b-lrfsz`, uid `996eb0cf…`, 19:39:24Z | pod `…-549cc7c6d-zmv4f`, uid `8de88c33…`, 20:06:33Z, `2/2 Running`, restarts 0 |
+| `images=sudo-agent:p2a-h1,sudo-agent:p2a-h1` | unchanged |
+| annotation `sudo-agent/image-sha=sha256:ebc56f72…` | unchanged |
+| `deployments/mail-bot-hermes.yaml` md5 `7a600269…` | `205c8cba…` |
+
+The manifest delta was three **operator-added** env vars being reconciled into the generated file —
+`API_SERVER_KEY` (as a `secretKeyRef`), `API_SERVER_HOST=0.0.0.0`, `API_SERVER_PORT=63209` — plus a
+refreshed `PAPERCLIP_TOKEN` value. They were already on the live Deployment but not in the file, so
+`kubectl apply` reported `deployment.apps/sudo-mail-bot-hermes configured` and the pod rolled. `up.sh`'s
+Paperclip auto-hire then **re-used** agent `a929e3af-7daa-42c5-b8d9-2e71ba02e315` (no new agent was
+created) and re-injected `PAPERCLIP_*`, which guarantees a rollout on **every** `up.sh` run — so re-running
+a sandbox is never free, even when the image and the generated spec are unchanged.
+
+Nothing else moved. Fleet deployment→image map (92 lines) **identical** before/after; `sudo-agent:latest`
+still `sha256:16d149ddf0f2…`; this agent's secrets (`1109289`, `1109290`), `openrouter-api-key` (`883257`),
+its services (`api 1109316`, `mcp 1109311`, `watch 1109313`) and ConfigMaps (`watch-config 1109299`,
+`watch-plugin 1109308`, `comm-gate-plugin 1109310`) all at the same `resourceVersion`.
+
+### 13.3 Still itself, after the second recreate
+
+Read back inside the new pod, read-only:
+
+| Check | Result |
+|---|---|
+| `hermes --version` | `Hermes Agent v0.22.5 (2026.9.24) · upstream bf0203a7` |
+| container `imageID` | `sha256:2003be5cb43493c7696287804c7ffed870e242fc8a26fdd26d182bb3e8fabd1e` — the same containerd image as before the re-run |
+| `state.db` | `78,569,472` bytes — **unchanged**; `integrity_check` `ok`; `schema_version` **32** |
+| sessions / messages | **414 / 6,358** (§3's baseline was 411 / 6,344 — every old row is still there and the agent kept writing) |
+| `SOUL.md` | md5 `62e1be7a40585e729c2704b8c19ef77c`, 9,559 bytes — identical to §6 and §12.2 |
+| skills | 18 |
+| memory budget | `memory_char_limit: 40000` / `user_char_limit: 20000` |
+| patch marker / `patch_memory_review.py` | 0 / 0 hits |
+
+### 13.4 What this section corrects
+
+- **§9's `x4 … the two seed initContainers` was wrong** as a description of what `a6abd1e` did; the
+  correction note now sits under that diff, and §13.1 B reproduces the failure. The deploy-path gap it was
+  fixing was real — the fourth site simply did not take.
+- §5.1's and §8 item 3's “guard still uncommitted / h1's to commit” were corrected by a **concurrent pass
+  on this same file** — `cdd413a`, 20:07:38Z — not by this section and not, as an earlier draft of this
+  paragraph claimed, by `737a181`. `898b6bc` landed the guard. Nothing else in §1–§12 is retracted: the recreate, the same-self
+  evidence and §12's independent re-measurement all reproduce on the fixed deploy path.
