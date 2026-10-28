@@ -351,29 +351,45 @@ matches.)
 
 ### The proof, and how to run it without touching the box
 
-Running `factories/sudo-agent/setup.sh` naively in a scratch copy is **not safe**: its line 64 runs
-`docker build -t sudo-agent:latest` unconditionally — the `hermes-agent:latest` inspect guard above it
-covers only the BASE image — so a plain scratch run retags the live image, and with a reachable cluster
-the script then runs `bin/redis-up.sh` against the shared queue Redis. Stub both tools on `PATH` and run
-the real script:
+Running `factories/sudo-agent/setup.sh` naively in a scratch copy is **not safe**: the `_retry`ed build at
+`:63-64` runs `docker build -t sudo-agent:latest` unconditionally — the `hermes-agent:latest` inspect
+guard at `:51` covers only the BASE image — so a plain scratch run retags the live image, and with a
+reachable cluster the script then runs `bin/redis-up.sh` against the shared queue Redis. That is filed as
+**D9** in `docs/KNOWN-ISSUES.md` and is still unresolved, because the fix is a maintainer choice: mirror
+the guard, or build a content-addressed tag and have `bin/up.sh` deploy that. Stub both tools on `PATH`
+first, and run a tracked-only copy whose sha256 you have actually checked:
 
 ```
-$ mkdir -p /tmp/pseed/stub && cp /opt/0-0/sudo-fleet/factories/sudo-agent/setup.sh /tmp/pseed/
-$ # stub/docker: `info` and `image` exit 0, `build` echoes "skipped" and exits 0;  stub/kubectl: exit 1
-$ cd /tmp/pseed && PATH=/tmp/pseed/stub:$PATH DEEPSEEK_API_KEY=sk-not-a-trial-key bash setup.sh
-RUN_RC=0
-$ grep -n -A7 '^memory:' config.yaml
-8:memory:
-9-  memory_char_limit: 40000
-10-  user_char_limit: 20000
-11-  memory_enabled: true
-12-  user_profile_enabled: true
-13-  write_approval: false
-14-  nudge_interval: 1
+$ cd /opt/0-0/sudo-fleet && git archive HEAD | tar -x -C /tmp/h2-correction/repo
+$ cd /tmp/h2-correction/repo/factories/sudo-agent && sha256sum setup.sh && wc -l < setup.sh
+578eaaade845b0a47c773527e893c9434a355c5e01f1dad5541ce6efb865a822  setup.sh     283
+$ # stub/docker: `info` and `image` exit 0 for BOTH images, `build` logs the call and exits 0
+$ # stub/kubectl: exit 1, so the reachability probe fails and redis-up.sh is skipped
+$ rm -f config.yaml .env
+$ PATH=/tmp/h2-correction/bin:$PATH DEEPSEEK_API_KEY=<any non-empty value> bash setup.sh </dev/null
+SETUP_EXIT=0
+$ grep -c 'memory_char_limit: 40000' config.yaml ; grep -c '100000' config.yaml
+1
+0
 ```
 
-The same harness against the pre-fix file emitted `100000` / `50000` at the same lines, so the check
-discriminates rather than always passing.
+Re-executed at `eafdc50` on those bytes: `SETUP_EXIT=0`, generated `config.yaml` sha256 `7b00d917…`,
+`40000`/`20000` present, `100000`/`50000` absent — and the stubbed run logged exactly `DOCKER_CALL: info`,
+`DOCKER_CALL: image inspect hermes-agent:latest`, then an unconditional
+`DOCKER_CALL: build -t sudo-agent:latest -f <tree>/Dockerfile <tree>`, i.e. D9 reproduced with **both**
+images reported present. The same harness on the bytes from `983834f^` (`b5fe0f3b…`) emits `100000` /
+`50000` at the same two lines, so the check discriminates instead of always passing.
+
+**Provenance warning — the transcript that used to stand here was wrong, and the directory it cited is the
+proof.** It was assembled from two different runs and its command block named `/tmp/pseed`, which does not
+hold the fixed file: `/tmp/pseed/setup.sh` is
+`b5fe0f3bb22cc7422ce0bde96e9b7cd710d4c29b814991faa719f15e21606fdc`, i.e. exactly
+`git show 983834f^:factories/sudo-agent/setup.sh`, stamped `02:01:27` — the tree at `a4e2483`, 89 s before
+`983834f` landed at `02:02:56`. Running the harness on those bytes regenerates `/tmp/pseed/config.yaml`
+byte for byte (sha256 `837e08a2…`, `100000`/`50000`), so that directory records a **pre-fix** run, not the
+fix. The `40000`/`20000` shown above were run from a tracked-only copy of HEAD (`/tmp/oct28/p1b-setup-seed`)
+and have since been re-executed at `eafdc50`. Trust the sha256 of the script you ran, not the directory
+name in an old transcript.
 
 ### Still open: 66 instance configs, none of them moved
 
