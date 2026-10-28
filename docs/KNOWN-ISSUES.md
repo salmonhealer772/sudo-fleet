@@ -309,37 +309,57 @@ Found by an engineer during the 2026-10-27 documentation pass, and confirmed by 
 
 ### D9. `setup.sh` rebuilds and retags `sudo-agent:latest` on every run — MEDIUM — unresolved
 
-Finding: the agent-image build in `factories/sudo-agent/setup.sh` is unconditional. The base
-image is guarded — `if ! docker image inspect hermes-agent:latest` at `:51` decides whether to
-build it — but the sudo-agent build at `:63-64` is
-`docker build -t sudo-agent:latest -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"`, run on every
-invocation with no existence check.
+Finding: the sudo-agent image build in `factories/sudo-agent/setup.sh` is
+unconditional. The base image directly above it is inspect-guarded; the agent
+build is not. Every run retags `sudo-agent:latest` from whatever tree that run is
+executing — a re-run on a host that already has a good image, or a run from a
+stale, partial, or foreign copy. The tree that gets built is the tree the script
+was copied from, which is not necessarily the current checkout.
 
-So the host's `sudo-agent:latest` is whatever tree ran the installer last — a stale clone, a
-scratch copy, a checkout of another branch. Pods already running keep the image they started
-with; the next pod to start gets the new one. Nothing fails, nothing prints a version, and the
-installer advertises itself as `re-runnable, idempotent` (repo-root `setup.sh:219`), which is
-exactly the operation that moves the tag.
+Consequence: the tag that running pods were started from now points at a
+different image. Pods already running keep the image they started with — the
+generated agent Deployments pin the tag with `imagePullPolicy: IfNotPresent` —
+and the next pod to be created, recreated, or rolled starts on the new one. The
+result is a silent version split, some deployments on the old image and some on
+the new, with no error, no prompt, and no line of output that says a tag moved.
 
-Command 1 inherits it: repo-root `setup.sh:453` pipes the key into `$AGENT_REPO/setup.sh`, so a
-bootstrap re-run has the same effect. `docs/P1-B-MEMORY-AND-IDENTITY.md:182-183` already notes
-the hazard — a plain scratch run of the seed branch retags the live image before the seed is
-ever reached — but recorded it only as a reason to stub `docker` first, never as a defect.
+It also contradicts the rebuild trap the docs already carry: `docs/OPERATIONS.md`
+section 4.6 and the `image-sha` pod annotation described in `docs/ARCHITECTURE.md`
+exist because a same-tag rebuild is invisible to a controller that pins
+`:latest`. The fleet relies on that explicit image identity at deploy time; an
+unguarded retag rotates the identity out from under it.
 
-Evidence: with a logging `docker` stub first on `PATH` where both `hermes-agent:latest` and
-`sudo-agent:latest` report present, one real run of `setup.sh` (absent `config.yaml`, `kubectl`
-stubbed to exit 1 so no cluster call is made) emitted exactly:
-`DOCKER_CALL: info` / `DOCKER_CALL: image inspect hermes-agent:latest` /
-`DOCKER_CALL: build -t sudo-agent:latest -f <tree>/Dockerfile <tree>`. The base build was
-skipped as designed; the agent build was not.
+The repo-root bootstrap inherits the behaviour. `setup.sh:453` pipes the key into
+the factory tree's `setup.sh`, so a re-run of the README's Command 1 has the same
+effect.
 
-Unresolved: yes. Two candidate fixes, neither chosen here: (a) mirror the base-image guard and
-skip the build when `docker image inspect sudo-agent:latest` succeeds — cheapest, but then a
-Dockerfile change can never be picked up without a manual `docker rmi`; (b) build to a
-content-addressed tag and have `bin/up.sh` deploy that tag, leaving `:latest` alone — no silent
-overwrite, but it touches the deploy path and the generated manifest. The choice is a
-maintainer decision, not a documentation one. Nothing was rebuilt, retagged or deployed while
-recording this.
+Evidence: `factories/sudo-agent/setup.sh:51` is the base-image guard,
+`if ! docker image inspect hermes-agent:latest &>/dev/null; then`. Line 63 builds
+and tags the agent image on every invocation, with its failure handler on `:64`.
+Both are present at `c0d44f5` and unchanged at `41eba2b`:
 
-Found by sudo-fleet-glm-h1 on 2026-10-28 while qualifying the seed-branch proof at HEAD, using
-the stub-`PATH` harness approach recorded in `docs/P1-B-MEMORY-AND-IDENTITY.md:214-215`.
+`_retry 3 "docker build sudo-agent" docker build -t sudo-agent:latest -f`
+`"$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" \`
+`  || { echo "Sudo-agent build failed."; exit 1; }`
+
+Proven with a logging `docker` stub first on `PATH` — a stub whose `build`
+subcommand logs its argv and exits 0 — on a host where both
+`hermes-agent:latest` and `sudo-agent:latest` already report present. One run of
+the script emitted `DOCKER_CALL: info`,
+`DOCKER_CALL: image inspect hermes-agent:latest`,
+`DOCKER_CALL: build -t sudo-agent:latest -f <tree>/Dockerfile <tree>`: the base
+build was skipped as designed, the agent build was not.
+
+Unresolved: yes. This is a behaviour change in the installer, not a docs fix, and
+it must not be fixed by simply deleting the build — a tree without the image
+still needs one. Two candidate fixes, neither chosen here: (a) guard the build on
+`docker image inspect sudo-agent:latest` the way the base image is already
+guarded — cheapest, but a Dockerfile change can then never be picked up without a
+manual `docker rmi`; (b) build to a content-addressed or per-commit tag and have
+the deploy path pin that tag — no silent overwrite, but it touches the deploy path
+and the generated manifest. The choice is a maintainer decision, not a
+documentation one. Nothing was rebuilt, retagged, or deployed while recording
+this.
+
+Found by engineer h1 (`sudo-fleet-glm-h1`, the `sudo-sudo-fleet-glm-h1`
+deployment) on 2026-10-28, and confirmed by the lead at HEAD.
