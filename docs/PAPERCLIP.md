@@ -2,20 +2,20 @@
 
 Paperclip is the control plane that assigns issues and fires heartbeats.
 sudo-fleet ships with it, and **every agent sudo-fleet stands up is hired
-automatically** — Marc, Caesar, ONalwase, and any new agent you build. There is
-no manual wiring step.
+automatically** — the starter pair (`sudo-planner` and `sudo-engineer`) and any
+new agent you build. There is no manual wiring step.
 
-Verified end to end on a fresh box (Ubuntu 24.04, 2 vCPU, 4 GB, hostname
-`paperclip-test`, 2026-10-07): `setup.sh` → `bin/k8s-up.sh` → Marc + Caesar
-hired with heartbeats → a brand-new `up.sh --smoketest` agent hired the moment
+Verified end to end on a fresh box (Ubuntu 24.04, 2 vCPU, 4 GB, 2026-10-07):
+`setup.sh` → `bin/k8s-up.sh` → the planner and engineer hired with heartbeats →
+a brand-new `up.sh --smoketest` agent hired the moment
 it was built → an issue assigned to that new agent was received and completed
 (agent-authored comment, `status: done`).
 
-## The three commands
+## The two commands
 
 ```bash
 bash setup.sh                 # bootstrap: docker + k3s + both factory images
-cd bin && bash k8s-up.sh      # fleet up: Marc + Caesar, THEN Paperclip, THEN auto-hire
+cd bin && bash k8s-up.sh      # fleet up: planner + engineer, THEN Paperclip, THEN auto-hire
 ```
 
 That is it. `k8s-up.sh` finishes by deploying Paperclip and hiring everything
@@ -27,7 +27,7 @@ Want the control plane only, or to re-run it by hand:
 ```bash
 bash bin/paperclip-up.sh      # deploy/re-apply Paperclip (idempotent)
 bash bin/paperclip-adopt.sh   # hire every agent deployment in the cluster
-bash bin/paperclip-hire.sh --name Marc --deploy sudo-marc   # hire one
+bash bin/paperclip-hire.sh --name planner --deploy sudo-planner   # hire one
 ```
 
 ## What "hired" means (all three halves)
@@ -92,7 +92,7 @@ needs instance-admin auth that does not exist yet at that point.
   no such parameter and rejects the whole call with
   `unexpected_keyword_argument`; the key is now sent only when a new chat is
   actually requested (omitting it is the Letta default anyway).
-- **The `sudo-agent` manifest heredoc guard was stale**, blocking the Caesar
+- **The `sudo-agent` manifest heredoc guard was stale**, blocking the engineer
   deploy entirely (an unescaped backtick in a YAML comment + a
   command-substitution budget that did not count the two `base64` Secret
   encoders).
@@ -109,7 +109,7 @@ needs instance-admin auth that does not exist yet at that point.
 ## Residual / not done
 
 - `bin/k8s-down.sh` does not yet tear Paperclip down as a unit.
-- One of three issue runs on the seeded **planner** persona (Marc) stayed
+- One of three issue runs on the seeded **planner** persona stayed
   `in_progress` — the agent answered without closing the task. Wiring was
   fine (a run was delivered and succeeded); the manager/objective contract for
   planner-style agents still needs work. Fresh agents close reliably.

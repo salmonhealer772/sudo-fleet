@@ -25,8 +25,8 @@ set -uo pipefail
 # re-minted only when none of the injected env is present).
 #
 # Usage:
-#   bash bin/paperclip-hire.sh --name Marc [--kind letta|hermes]
-#        [--namespace sudo-fleet] [--deploy sudo-marc] [--mode direct|inbox]
+#   bash bin/paperclip-hire.sh --name planner [--kind letta|hermes]
+#        [--namespace <ns>] [--deploy sudo-planner] [--mode direct|inbox]
 #        [--heartbeat 120] [--role general] [--no-env] [--json]
 
 CRED="/logs/paperclip/paperclip.env"

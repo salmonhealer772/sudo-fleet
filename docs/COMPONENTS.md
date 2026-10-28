@@ -24,7 +24,7 @@ see [`REPOSITORY-VS-INSTANCE.md`](REPOSITORY-VS-INSTANCE.md).
 | Path | Kind | What it is |
 |---|---|---|
 | `setup.sh` | infrastructure | Command 1. Installs docker and k3s, writes `.env`, builds both factory images, installs the boot-time recovery unit. Deploys no agent. |
-| `bin/k8s-up.sh` | infrastructure | Command 2. Deploys the starter pair (a Letta planner and a Hermes engineer). Names configurable; identity seed optional. |
+| `bin/k8s-up.sh` | infrastructure | Command 2. Deploys the starter pair (a Letta planner and a Hermes engineer) as `sudo-planner` / `sudo-engineer`, then brings up Paperclip. Names configurable; identity seed optional and absent by default. |
 | `bin/k8s-down.sh` | infrastructure | Stops the pair (preserving state), or purges their PVCs, or tears down k3s. |
 | `bin/k8s-auto-up.sh` | infrastructure | The boot-time re-apply. Run by the systemd unit `setup.sh` installs. |
 | `bin/verify-change.sh` | infrastructure | Read-only post-change verification: runtime, config drift, auth, exposure. |

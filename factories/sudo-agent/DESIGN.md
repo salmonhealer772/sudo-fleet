@@ -49,7 +49,8 @@ One command. Hermes Agent on DeepSeek — contained in Docker. Multiple agents b
 - Docker socket mounted at `/var/run/docker.sock` — can run Docker commands
 - Hermes Agent gateway running (background)
 - DeepSeek via custom OpenAI-compatible endpoint (`api.deepseek.com/v1`)
-- Auto memory (MEMORY.md 100k chars + USER.md 50k chars injected at session start)
+- Native memory (`MEMORY.md` 40000 chars + `USER.md` 20000 chars, written by the
+  model, injected at session start)
   - nudge_interval: 1 (reviews memory every turn)
 - Session search (FTS5) for older conversations
 - `SUDO_PASSWORD` env var set — agent can `sudo` anything
@@ -275,7 +276,7 @@ re-checked is not a deploy.
 
 ## How Auto Memory Works
 
-The agent automatically saves preferences, facts, corrections, and context without any manual commands. At the start of every session, memory entries are injected into the system prompt. There's no "remember this" command — it just does it.
+The agent writes its own memory: Hermes nudges it to review `MEMORY.md` / `USER.md` every turn (`nudge_interval: 1`), and the model decides what is worth keeping. You do not have to ask it to remember, and nothing dumps whole messages into the store — the old save-every-message patch is gone. At the start of every session both stores are injected into the system prompt.
 
 ## Stack
 

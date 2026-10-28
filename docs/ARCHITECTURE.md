@@ -8,7 +8,8 @@ files. No live cluster was consulted: every statement below is a property of the
 ## 1. What the repository installs, and the two commands
 
 One disposable "room" on a single Linux box: Docker and single-node k3s; two locally-built images
-(`sudo-agent:latest`, built on `hermes-agent:latest`, and `sudo-letta:latest`); a per-agent Kubernetes surface
+(`sudo-agent:latest`, built `FROM nousresearch/hermes-agent:v0.22.5` — a pinned
+release tag, not `:latest` — and `sudo-letta:latest`); a per-agent Kubernetes surface
 (Secret, PVC, Deployment with two containers, one or two Services, one to three ConfigMaps) generated into
 `factories/<factory>/deployments/<name>.yaml` by each factory's `up.sh`; one shared queue-Redis Deployment per
 factory; an optional Paperclip control plane; and a systemd oneshot unit that brings it all back after a reboot.
@@ -21,42 +22,32 @@ gitignored), derives the rest (`DEEPSEEK_API_KEY`, `API_KEY`, `LLM_PROVIDER`), i
 `sudo-fleet-boot.service` → `bin/k8s-auto-up.sh`.
 
 **Command 2 — stand the fleet up** (`bin/k8s-up.sh`). Checks the kubeconfig, waits for the node Ready, sources
-`.env`, re-seeds the two factory `.env` files (`sudo` strips the caller's exported environment), deploys Marc
-(Letta planner) and Caesar (Hermes engineer) through each factory's `up.sh --from-glimor`, waits for both pods
-Ready, verifies both PVCs and four Services, then brings up Paperclip and auto-hires.
+`.env`, re-seeds the two factory `.env` files (`sudo` strips the caller's exported environment), deploys the
+starter pair — `planner`, a Letta planner, then `engineer`, a Hermes engineer (`PLANNER_NAME` / `ENGINEER_NAME`
+override them; the factories prepend `sudo-`) — waits for both pods Ready, verifies both PVCs and four
+Services, then brings up Paperclip and auto-hires. `--from-glimor <dir>` is appended to a factory call only
+when `deployments/<Name>/` exists (name capitalised, e.g. `deployments/Planner`), so a fresh clone with no
+saved identity deploys two clean agents.
 
 **The identity tree — `deployments/`.** `bin/k8s-up.sh` sets `GLIMORS_DIR="$FLEET_HOME/deployments"`; that
-directory is the seed source for `--from-glimor`. It is tracked, and it currently holds two packages,
-`deployments/ONalwase/` and `deployments/Talker/`, both `kind: letta`. A package of this shape is a directory
-carrying `kind`, `name`, `meta.yaml`, `allowlist.txt`, an agent-kind directory (`letta/` or `hermes/`), and — on
-the Letta side — an agent record plus a committed MemFS `memory/` with `system/persona.md` and
-`system/human.md`. Those are live agent identities, committed to the factory repository.
+directory is the seed source for `--from-glimor`, looked up under the capitalised agent name
+(`deployments/Planner/` for the default `planner`). A package of this shape is a directory carrying `kind`,
+`name`, `meta.yaml`, `allowlist.txt`, an agent-kind directory (`letta/` or `hermes/`), and — on the Letta side —
+an agent record plus a committed MemFS `memory/` with `system/persona.md` and `system/human.md`.
 
-That is the second thing this tree is. `SOURCE-OF-TRUTH.md` says workload content (personas, memory, the work
-itself) belongs in a separate product repository and that this repo owns only how agents are deployed. Both
-statements are visible to a reader at once. The tension is real, it is not resolved here, and the doc set
-records it as a known issue (D5 in [`KNOWN-ISSUES.md`](KNOWN-ISSUES.md)) rather than resolving it by deleting
-committed identities.
+The repository ships **no** package: `deployments/` holds only its `README.md`, and `.gitignore` excludes
+`deployments/*/`. `SOURCE-OF-TRUTH.md` says workload content (personas, memory, the work itself) belongs to a
+separate product repository, and a saved identity is that kind of content — so it stays in the instance, not
+here. See [`REPOSITORY-VS-INSTANCE.md`](REPOSITORY-VS-INSTANCE.md).
 
-> **NOTE — Command 2 currently cannot complete (D1).** `k8s-up.sh` seeds Marc from `$GLIMORS_DIR/Marc` and
-> Caesar from `$GLIMORS_DIR/Caesar`. `deployments/` exists, but it holds only `ONalwase/` and `Talker/` — both
-> Letta. Commit `98caf2b` ("chore: remove marc and caesar deployments (replaced by the AO talker agent)")
-> deleted `deployments/Marc/` and `deployments/Caesar/`, so both paths `k8s-up.sh` names are dangling. The seed
-> source the README documents as tracked is gone.
->
-> Intended mechanism: each factory validates the glimor before emitting anything (`letta/settings.json` for
-> Letta, `hermes/SOUL.md` for Hermes) and, when valid, emits an `initContainer seed-glimor` that copies the
-> glimor into the PVC before the agent process starts, guarded by a `.glimor-seeded` marker so a restart
-> preserves the fork's runtime changes. A missing or invalid glimor fails that initContainer and the deploy
-> aborts loudly — the intent is "never a blank agent".
->
-> Actual behaviour on a fresh clone: the path test fails, `up.sh` prints `✗ --from-glimor …: missing letta/ or
-> letta/settings.json` (Hermes: `missing hermes/ or hermes/SOUL.md`) and exits 1 **before** it writes a manifest
-> or calls `kubectl apply`. `k8s-up.sh` wraps the call in `_retry 3` — three attempts, 1 s and 2 s backoff —
-> then dies at step 3/4 with "sudo-letta up.sh --marc --from-glimor failed". No Deployment, PVC or Service is
-> created for Marc; Caesar is never reached; the PVC/Service verification and the Paperclip step never run.
-> Command 1 is unaffected — the cluster and images exist, the seeded identities do not. `k8s-auto-up.sh` re-runs
-> the same script on every boot, so the failure repeats on a schedule nobody is watching.
+> **What a fresh clone deploys.** With no package under `deployments/`, `_seed_for` emits nothing and each
+> factory's `up.sh` runs with no `--from-glimor`: `sudo-planner` and `sudo-engineer` come up with no seeded
+> identity and grow one from use. The guard runs the other way — a `--from-glimor` that names a missing or
+> invalid directory aborts the deploy before `kubectl apply` (`✗ --from-glimor …: missing letta/ or
+> letta/settings.json`; Hermes: `missing hermes/ or hermes/SOUL.md`), so a mistyped seed never yields a silent
+> blank agent. A valid one is copied into the PVC by an `initContainer seed-glimor` behind a `.glimor-seeded`
+> marker, so a restart keeps the agent's runtime changes; the sidecar and the two watch containers are
+> unaffected either way.
 
 ## 2. The two factories and the two agent kinds
 
@@ -66,7 +57,7 @@ committed identities.
 | Invocation | `hermes -z`, one-shot, **stateless per invocation** | `letta` CLI, **resumes** the conversation |
 | MCP tool | `hermes_prompt(prompt, json, mode, source)` | `letta_prompt(prompt, stream, json, new_chat, mode, source)` |
 | Durable state | PVC `/opt/data` (SOUL.md, `config.yaml`, `state.db`, memory, skills) | PVC `/home/node/.letta` (settings, agent records, MemFS) |
-| Memory | files injected at session start | MemFS, a git-backed memory filesystem |
+| Memory | native `MEMORY.md` / `USER.md` on the PVC, written by the model, budgeted 40000/20000 chars, injected at session start | MemFS, a git-backed memory filesystem |
 | Agent port | `MCP_PORT` 8000..29999 | `MCP_PORT` 8000..29999 |
 | Extra | `API_SERVER_PORT` 61000..65535 | `WATCH_PORT` only |
 | Services | `-mcp`, `-watch`, `-api` | `-mcp`, `-watch` |
@@ -74,7 +65,10 @@ committed identities.
 **Hermes is stateless per invocation.** Each prompt is a fresh `hermes -z` process; there is no conversation to
 resume, and `--stream` / `--new-chat` are CLI-parity no-ops at the MCP door. Identity therefore lives entirely
 in files on the PVC — the agent's continuity is the filesystem, not the process. Queued prompts cannot corrupt
-one another, but nothing carries context forward either, and a lost prompt leaves no trace.
+one another. What carries forward is what the agent wrote down: the native memory stores are injected at
+session start, inside the budget `config.yaml` sets (`40000` / `20000` characters), so a new process starts
+with the facts the previous one chose to keep — not with the previous conversation. A lost prompt leaves no
+trace.
 
 **Letta is stateful.** `letta` resumes the agent record and conversation named in `settings.json` /
 `settings.local.json`, and its memory is a git-tracked filesystem under `lc-local-backend/memfs/*/memory`.
@@ -307,10 +301,11 @@ On Letta an agent with no MemFS yet is a warning: the block lands on the next de
    `api_server_ports.py`.
 4. **Write the manifest** to `factories/<factory>/deployments/<name>.yaml`: one gitignored file per agent, and
    the artifact later re-applied.
-5. **Import images.** They exist only in the local Docker daemon and the k3s containerd store; there is no
-   registry. `up.sh` imports them (`docker save | k3s ctr image import -`, `ctr` fallback, retries) and treats
-   an image still absent from containerd as **fatal** — the pods pin `:latest` with `IfNotPresent`, so a silent
-   import failure becomes `ImagePullBackOff`.
+5. **Import the image.** It exists only in the local Docker daemon and the k3s containerd store; there is no
+   registry. `up.sh` imports the image its pod runs (`sudo-agent:latest` here, `sudo-letta:latest` on the
+   other factory) with `docker save | k3s ctr image import -` (a `ctr` fallback, retries). An image still
+   absent from containerd is **fatal** — the pod pins `:latest` with `IfNotPresent`, so a silent import
+   failure becomes `ImagePullBackOff`.
 6. **Apply.** `kubectl apply -f <yaml> --validate=false`, failing loudly. Hermes stamps content digests into the
    pod annotations (`watch-scripts-sha`, `image-sha`), because a same-tag image rebuild or a ConfigMap edit does
    not otherwise roll a pod.

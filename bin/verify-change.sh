@@ -93,7 +93,7 @@ Usage: bash bin/verify-change.sh --namespace <ns> --target <name> [options]
 
 REQUIRED
   --namespace <ns>       Kubernetes namespace the target lives in.
-  --target <name>        Deployment name to verify (e.g. sudo-marc, paperclip).
+  --target <name>        Deployment name to verify (e.g. sudo-planner, paperclip).
 
 OPTIONS
   --url <health-url>     Health endpoint to probe. If omitted, the URL is

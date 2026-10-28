@@ -56,6 +56,21 @@ assert something and it is not there, add it with its evidence.
 | [`PAPERCLIP.md`](PAPERCLIP.md) | The optional control plane. | both |
 | [`verifications/`](verifications/) | Dated verification records for specific changes. | both |
 
+## Phase records
+
+Dated records of a change, with the evidence behind it. Read the one covering
+the area you are about to touch; they carry the measurements the prose above
+does not.
+
+| Document | What it records |
+|---|---|
+| [`h1-P1-A-REPORT.md`](h1-P1-A-REPORT.md) | Phase 1 record: the pinned base, the deleted memory patch, and the `setup.sh` retag hazard. |
+| [`hermes-v0.22.5-build-result.md`](hermes-v0.22.5-build-result.md) | Phase 1 record: the build checks on the v0.22.5 image, and what "the patch is gone" was measured with. |
+| [`hermes-v0.22.5-plugin-compat.md`](hermes-v0.22.5-plugin-compat.md) | Phase 1 record: whether the two plugins still fire on v0.22.5 — all nine hooks, at the fire sites. |
+| [`P1-B-MEMORY-AND-IDENTITY.md`](P1-B-MEMORY-AND-IDENTITY.md) | Phase 1 record: the memory budget, the memory instruction, and where it does and does not reach. |
+| [`P2-C-MEMORY-CONTRACT.md`](P2-C-MEMORY-CONTRACT.md) | Phase 2 record: the memory contract the agent is actually told, and where it is enforced. |
+| [`h5-P2-E-REPORT.md`](h5-P2-E-REPORT.md) | Phase 2 record: the documentation audit — what was false, what it says now, and where a stranger still gets stuck. |
+
 ## Keeping these honest
 
 A document is a claim about the code. When the two disagree, the code wins and

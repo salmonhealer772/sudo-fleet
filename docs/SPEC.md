@@ -254,5 +254,7 @@ misread as already solved:
   contains every agent exposing the service pair in the discovery namespace.
   Namespace/team scoping is the NEXT.md direction, not a shipped feature.
 - The deployment path described in "Bootstrap state" (a router pair seeded from
-  committed identity packages) **cannot complete on a fresh clone** today,
-  because those identity packages were removed. See `KNOWN-ISSUES.md` D1.
+  committed identity packages) now runs **unseeded** on a fresh clone: those
+  packages are not in the repository, and `bin/k8s-up.sh` passes `--from-glimor`
+  only when one exists under `deployments/`. The pair comes up without an
+  identity and grows one from use.

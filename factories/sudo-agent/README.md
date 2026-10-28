@@ -1,11 +1,17 @@
 # sudo-agent
 
-**One command. Hermes Agent with **privileged** root inside its container.**
+**One command.** Hermes Agent with **privileged** root inside its container.
 
 ## What It Does
 
-- **Auto memory** — everything you tell it gets stored. No commands, no prompts, no opt-in.
-- **Auto recall** — relevant context appears when you need it. Start a new session, it remembers.
+- **Memory the agent writes itself** — Hermes' native store, kept on the pod's volume:
+  `MEMORY.md` and `USER.md`, budgeted at 40000 and 20000 characters
+  (`memory_char_limit` / `user_char_limit` in `config.yaml`). The model decides what is
+  durable and saves it; nothing dumps whole messages into the store. What belongs in
+  it is stated in the persona block every agent boots with
+  (`comm/PERSONA-SNIPPET.md`, section "## Your memory"), not in the YAML.
+- **Auto recall** — both stores are injected at the start of every session, so a new
+  session begins already knowing what the last one chose to keep.
 - **Full privileged sudo** — the agent has **full privileged access** inside its own container. Can `apt install`, `sudo` anything, **mount filesystems**, **load kernel modules**, **run Docker (socket mounted)**, access `/dev` devices, edit configs, do whatever it wants.
 - **Isolation boundary** — designed so the agent cannot reach the host. Docker is the cage. With `--privileged` that boundary is thinner, so don't run this on a production host with sensitive data.
 - **Multi-agent** — run alice, bob, charlie in parallel. Each gets its own container, brain, memory, and sudo password.
@@ -19,6 +25,11 @@
 | `bin/` | **The real path** (k3s) | MCP service, prompt-distributor queue, observer sidecar, `stream.sh` |
 
 ## Quick Start
+
+These are the factory-level commands: they need Docker and a k3s cluster that
+already exist. The repository root's `setup.sh` (Command 1) installs both, and
+`bin/k8s-up.sh` (Command 2) deploys the starter pair. Use this page when you
+want one more agent of this kind.
 
 ```bash
 git clone https://github.com/salmonhealer772/sudo-fleet.git && cd sudo-fleet/factories/sudo-agent
@@ -74,7 +85,9 @@ The sudo password is random 16-char alphanumeric, generated on first `up.sh`, sa
 
 ## What It Can't Do (Yet)
 
-- Run local LLMs — DeepSeek API only
+- Reach a model that is not behind an OpenAI-compatible API — any such endpoint
+  works via `LLM_BASE_URL` / `LLM_PROVIDER` / `LLM_MODEL` in the fleet `.env`
+  (DeepSeek by default), and the image ships no model weights of its own
 - Multi-agent orchestration between containers — single agent per container
 
 ## MCP Service (every pod)
@@ -154,13 +167,21 @@ backing. See `DESIGN.md` for the full topology and the hostNetwork design rules.
 
 - **Never write "verified" in a commit message before the verification output
   exists; if a test runs after the commit, say so in a follow-up commit.**
-- Changing `bin/mcp_server.py`, `mcp_entrypoint.sh`, `hermes_prompt.py`,
-  `Dockerfile` or `patch_memory_review.py` means the **image** must be rebuilt
-  (`docker build -t sudo-agent:latest -f Dockerfile .`) before deploying;
-  `up.sh` refuses to deploy `sudo-agent:latest` when the **content** of
-  `mcp_server.py` / `hermes_prompt.py` / `mcp_entrypoint.sh` differs from what is
-  baked into the image (a digest comparison, so a `touch` or a fresh clone is not
-  a false alarm). `SUDO_AGENT_ALLOW_STALE_IMAGE=1` overrides it.
+- **What `up.sh` enforces.** Before deploying, `up.sh` digests the three files the
+  Dockerfile `COPY`s — `bin/mcp_server.py`, `bin/hermes_prompt.py`,
+  `bin/mcp_entrypoint.sh` — and compares that against the same files read out of the
+  `sudo-agent:latest` image. If they differ it **refuses to deploy** and exits 1
+  (`_assert_image_fresh`), because `imagePullPolicy: IfNotPresent` would otherwise
+  keep the old code running. It compares content, not timestamps, so a `touch` or a
+  fresh clone is not a false alarm. `SUDO_AGENT_ALLOW_STALE_IMAGE=1` overrides it.
+- **What it does not enforce.** A changed `Dockerfile`, `comm/` tree or `meta-data/`
+  file is outside that digest: `up.sh` only prints a note when the image predates the
+  Dockerfile, and cannot see the other directories at all. Rebuild by hand:
+  `docker build -t sudo-agent:latest -f Dockerfile .`
+- **A missing image is not an error.** `up.sh` builds it from this Dockerfile
+  (`_ensure_image_built`) and imports it into k3s before deploying.
+- **The base is pinned.** `FROM nousresearch/hermes-agent:v0.22.5`. Bump that line
+  deliberately; do not go back to `:latest`.
 
 ## Why not eliza-gbrain-docker?
 

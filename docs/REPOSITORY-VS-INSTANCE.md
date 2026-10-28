@@ -131,10 +131,10 @@ deterministic port scheme, the MCP door and its queue, the watch sidecar, the th
 communication tools with their skills and the load-skill gate, the persona block
 that makes an agent aware of them, and the docs describing the contracts.
 
-The default seed pair is **not** currently included: the identity packages that
-`bin/k8s-up.sh` seeds from were removed from the repository, so that script fails
-on a fresh clone. A clone produces a working fleet today by deploying agents with
-each factory's own `up.sh`. See `KNOWN-ISSUES.md` D1.
+The default pair ships with **no identity**: `deployments/` holds only its
+`README.md`, and `bin/k8s-up.sh` passes `--from-glimor` only when a saved package
+exists, so a fresh clone deploys two clean agents. A saved identity is instance
+material — gitignored by default, never part of the product.
 
 The instance supplies what is specific to the user: an LLM API key and base URL
 (one key serves both agent kinds), optionally a web-search key, the host it runs on,

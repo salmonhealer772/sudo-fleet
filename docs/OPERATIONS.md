@@ -9,11 +9,13 @@ call needs `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml`.
 
 ## 1. Prerequisites and what the bootstrap writes outside the repo folder
 
-A bare Linux box (or WSL2 distro, or Lima VM) with systemd, curl, git and root or sudo — no docker, no
-k3s. Command 1 is `git clone <repo-url> && cd sudo-fleet && bash setup.sh`: it prompts for one LLM API
-key, an LLM base URL (blank means the provider default) and an optional web-search key; writes `.env`
-at the repo root with mode 600; derives the rest; installs docker and k3s; builds both factory images;
-installs the boot unit. It deploys no agent.
+A bare Linux box (or WSL2 distro, or Lima VM) with systemd, curl, git, `jq` and root or sudo — no docker,
+no k3s. `jq` is a real prerequisite, not a nicety: `bin/talk.sh` (
+§3.1) and `bin/verify-change.sh` parse `kubectl` output with it, and Command 1
+does not install it. Command 1 is `git clone <repo-url> && cd sudo-fleet && bash setup.sh`: it prompts
+for one LLM API key, an LLM base URL (blank means the provider default) and an optional web-search key;
+writes `.env` at the repo root with mode 600; derives the rest; installs docker and k3s; builds both
+factory images; installs the boot unit. It deploys no agent.
 
 Everything fleet-related stays inside the repo folder — the factory trees, `.env`, generated
 `deployments/<name>.yaml`, `durable-boot-proof/`. What it writes elsewhere is system tooling, and these
@@ -37,15 +39,16 @@ agent containers mount the docker socket.
 
 ## 2. Deploying an agent
 
-### 2.1 Two commands, and the state of the second
+### 2.1 Two commands, and the starter pair
 
-`bash setup.sh`, then `cd bin && bash k8s-up.sh`. The second stands up the two router agents the
-repository ships as its default pair, by passing committed seed directories to each factory's `up.sh`.
-In this revision those directories do not exist — a commit removed them and `deployments/` holds
-different identities — so `k8s-up.sh` fails loudly at the seed check on a fresh clone. That is by
-design: a missing seed fails the deploy rather than producing a blank agent. Since `bin/k8s-auto-up.sh`
-re-runs `k8s-up.sh` on every boot, the same failure repeats unattended. Deploying individual agents
-through the factory scripts is unaffected, and is the path below.
+`bash setup.sh`, then `cd bin && bash k8s-up.sh`. The second stands up the starter pair — `planner`
+(a Letta planner) and `engineer` (a Hermes engineer), overridable with `PLANNER_NAME` / `ENGINEER_NAME` —
+and needs no identity package: each factory call gets `--from-glimor <dir>` only when
+`deployments/<Name>/` exists, so a fresh clone deploys two clean agents with no seed. A seed that *is*
+named and is missing or invalid aborts that factory's `up.sh` before `kubectl apply`, rather than
+producing a half-seeded pod. `bin/k8s-auto-up.sh` re-runs the same script on every boot, so the boot
+unit's output is worth reading after the first install. Deploying individual agents through the factory
+scripts is the path in 2.2.
 
 ### 2.2 The command, per kind
 

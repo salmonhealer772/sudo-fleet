@@ -141,34 +141,35 @@ the existing shape: severity / finding / evidence / unresolved. None of these
 were fixed by that pass — it was documentation-only, and several of them are
 architecture questions, not typos.
 
-### D1. `bin/k8s-up.sh` cannot complete: the identity packages it seeds from were deleted — HIGH — unresolved
+### D1. ~~`bin/k8s-up.sh` cannot complete: the identity packages it seeds from were deleted~~ — RESOLVED in code (`07d5d77`); the pages that still said otherwise were corrected 2026-10-28
 
-Finding: Command 2 deploys `Marc` (a Letta planner) and `Caesar` (a Hermes
-engineer) by passing `--from-glimor "$FLEET_HOME/deployments/Marc"` and
-`--from-glimor "$FLEET_HOME/deployments/Caesar"` to each factory's `up.sh`, then
-waits for pods labelled `agent=marc` and `agent=caesar`.
+Finding (recorded 2026-10-27): Command 2 deployed `Marc` and `Caesar` by
+passing `--from-glimor "$FLEET_HOME/deployments/Marc"` (and `.../Caesar`) to
+each factory's `up.sh`, then waited on pods labelled `agent=marc` /
+`agent=caesar`. Both directories had been deleted, and because a named-but-missing
+seed is deliberately fail-loud, the deploy aborted at the first `up.sh` call —
+on every boot, since `bin/k8s-auto-up.sh` re-runs it.
 
-Both directories are gone. `deployments/` now holds only `ONalwase/` and
-`Talker/`. They were removed by commit `98caf2b` ("chore: remove marc and
-caesar deployments (replaced by the AO talker agent)").
+Resolved by the code in commit `07d5d77` ("fix: repair Command 2, hash the trial
+key, and keep instance identity out"). At HEAD:
 
-Because the glimor seed is deliberately fail-loud, the deploy aborts at the
-first `up.sh` call. `bin/k8s-auto-up.sh` re-runs `k8s-up.sh` on every boot, so
-the failure repeats on every boot of any instance that installed the unit.
+- the defaults are `PLANNER_NAME=planner` / `ENGINEER_NAME=engineer`
+  (`bin/k8s-up.sh:30-31`), producing `sudo-planner` / `sudo-engineer`
+  (`:32-33`);
+- `_seed_for` (`:37-41`) emits `--from-glimor <dir>` **only when that directory
+  exists**, so an empty `deployments/` deploys two clean agents;
+- the pair is waited on by label (`agent=planner`, `agent=engineer`); grep for
+  `marc`/`caesar` in `bin/k8s-up.sh` and `bin/k8s-down.sh` returns nothing, so
+  the fixed pair is gone from the deploy and the teardown.
 
-Evidence: `ls deployments/` → `ONalwase Talker`. `grep -n GLIMORS_DIR
-bin/k8s-up.sh` → `GLIMORS_DIR="$FLEET_HOME/deployments"`, used as
-`.../Marc` and `.../Caesar`. `git log --diff-filter=D -- deployments/` shows the
-deletion in `98caf2b`.
+Evidence at HEAD: `ls deployments/` → `README.md` only; `grep -n _seed_for
+bin/k8s-up.sh` → `:37`; `git log --oneline -S _seed_for -- bin/k8s-up.sh` →
+`07d5d77`.
 
-Related: `bin/k8s-down.sh --purge` documents itself as deleting
-"sudo-marc-data, sudo-caesar-data" — it carries the same fixed-pair assumption,
-so a purge on an instance that never deployed that pair deletes nothing and
-reports success.
-
-Unresolved: yes. It is a product decision, not a doc fix — either restore
-neutral seed identities, or make `k8s-up.sh` deploy nothing by default and
-document the factory `up.sh` as the only path. NOT fixed here.
+Unresolved: no, in code. The residue was documentation: `ARCHITECTURE.md` §1,
+`OPERATIONS.md` §2.1, `REPOSITORY-VS-INSTANCE.md` and `SPEC.md` each still told
+the reader that Command 2 fails on a fresh clone. All four were corrected in
+the same pass as this entry.
 
 ### D2. A boot unit installed by an older revision points at a path that does not exist — MEDIUM — unresolved
 
