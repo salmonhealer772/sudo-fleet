@@ -266,6 +266,26 @@ Then it silently recreates the file — and before this fix it would have recrea
 `100000`/`50000` and undone P1-B with nothing in the history to show it, so it would have read as though
 the template had never been fixed. That is the whole hazard; it was worth two integers.
 
+**What actually protects a new agent: the tracked template, not the heredoc.** `13784dc` is an
+ancestor of `983834f`, so `factories/sudo-agent/config.yaml` — a tracked file (blob `ec25a14c…` at
+`983834f^`) — is already `40000`/`20000` there, byte-identical to `983834f` (`f5cf7ee1…`, 98 lines,
+`:50`/`:51`). Four cells re-run by me in `/tmp/h2-causal/` and reproduced independently by h1 in
+`/tmp/h1-recheck2/`:
+
+```
+rev        config.yaml   seed fires   config.yaml after setup.sh
+983834f^   present       no           f5cf7ee1…  98 lines  40000/20000 at :50/:51
+983834f    present       no           f5cf7ee1…  identical bytes
+983834f^   absent        yes          837e08a2…  14 lines  100000/50000
+983834f    absent        yes          7b00d917…  14 lines  40000/20000
+```
+
+(The one `100000` in a present row is the template's own comment at `config.yaml:40`, not a setting.)
+So the value a checkout ships is lowered by `13784dc`, and by `983834f` only on the path where the
+heredoc runs at all (the template deleted). The heredoc edit can neither regress nor rescue what a
+checkout gets, because a checkout never reaches it: read `983834f` as defence in depth for the
+deleted-template path, not as the commit that lowered the new-agent budget.
+
 **`git grep` after the fix** (tracked files):
 
 ```
