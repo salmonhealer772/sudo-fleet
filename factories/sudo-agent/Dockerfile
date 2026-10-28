@@ -1,9 +1,15 @@
-# sudo-agent — Hermes Agent with root access + save-everything auto-memory
-# Builds on top of hermes-agent:latest, adds sudo, patches background review
-# to programmatically save every user message to memory (no LLM curation).
-# Also adds docker CLI, fuse, and other tools for full Ubuntu-like capabilities.
+# sudo-agent — Hermes Agent with root access and Hermes' own native memory
+# Builds on top of a PINNED hermes-agent release (see the FROM line below),
+# and adds sudo, the docker CLI, fuse and the per-pod MCP/comm layer.
+# Memory is handled by Hermes itself; the old build-time auto-save patch is gone.
 
-FROM hermes-agent:latest
+# PINNED BASE — deliberately a version tag, not :latest. The unpinned tag
+# silently drifted a month behind (agents still reported 2026.9.24 while
+# v0.22.5 had shipped) and nobody noticed until the memory patch broke.
+# Bump this line on purpose; do not go back to :latest.
+# v0.22.5 is a multi-arch manifest (linux/amd64 + linux/arm64) and this node is
+# arm64, so the plain tag is the right one — never an arch-suffixed tag.
+FROM hermes-agent:v0.22.5
 
 # The modern hermes-agent base ships uv under /opt/hermes/tools/uv-<ver>-linux-x64/
 # (NOT on PATH). Expose it so the `uv pip install` steps below can resolve it.
@@ -72,9 +78,8 @@ COPY comm/PERSONA-SNIPPET.md /opt/comm/PERSONA-SNIPPET.md
 # live-v2 repo) — that is the single source of truth for skills.
 COPY meta-data/SOUL-BINDING.md /opt/meta-data/SOUL-BINDING.md
 
-# Copy the memory review patcher and run it
-COPY patch_memory_review.py /tmp/patch_memory_review.py
-RUN python3 /tmp/patch_memory_review.py && rm /tmp/patch_memory_review.py
+# REMOVED: the build-time memory patch that used to be copied and run here.
+# Hermes saves memory natively now; the patch wrote raw user text and broke on base bumps.
 
 # Pre-seed agent education: tell the agent how to discover its own tools
 RUN mkdir -p /opt/data/home/.hermes && \
@@ -88,4 +93,4 @@ ENV SUDO_PASSWORD=""
 # pod's main process.
 ENTRYPOINT ["/opt/hermes-mcp/mcp_entrypoint.sh"]
 
-LABEL sudo-agent="true" description="Hermes Agent with sudo + save-everything memory"
+LABEL sudo-agent="true" description="Hermes Agent with sudo + native memory"

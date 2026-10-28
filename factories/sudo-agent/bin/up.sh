@@ -553,7 +553,7 @@ echo "→ watch scripts digest: ${WATCH_SCRIPTS_SHA:0:12}"
 # IfNotPresent, so a REBUILT image under the same tag does NOT roll the
 # Deployment on its own: kubectl apply sees the tag and the watch-scripts
 # digest both unchanged and reports "deployment ... unchanged", leaving the
-# running pod on the OLD image. An image-only fix (e.g. a patch_memory_review.py
+# running pod on the OLD image. An image-only fix (e.g. the old patch_memory_review.py
 # change) would silently never reach the pod. Pin the docker image's
 # content-addressable ID as a pod-template annotation so kubectl apply
 # recreates the pod exactly when the image content changes.
@@ -1394,18 +1394,18 @@ _assert_image_fresh() {
       exit 1
     fi
   fi
-  # Secondary, advisory only: the Dockerfile / memory patcher are not readable
-  # from the image, so fall back to a timestamp note for those two.
+  # Secondary, advisory only: the Dockerfile is not readable from the image,
+  # so fall back to a timestamp note for it.
   local created_epoch=0 newest=0 f m created
   created="$(docker image inspect "$img" --format '{{.Created}}' 2>/dev/null || true)"
   created_epoch="$(date -d "$created" +%s 2>/dev/null || echo 0)"
-  for f in "$REPO_DIR/Dockerfile" "$REPO_DIR/patch_memory_review.py"; do
+  for f in "$REPO_DIR/Dockerfile"; do
     [[ -f "$f" ]] || continue
     m="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
     if (( m > newest )); then newest=$m; fi
   done
   if (( created_epoch > 0 && newest > created_epoch )); then
-    echo "⚠ note: $img predates $REPO_DIR/Dockerfile or patch_memory_review.py; rebuild if you changed them" >&2
+    echo "⚠ note: $img predates $REPO_DIR/Dockerfile; rebuild if you changed it" >&2
   fi
 }
 
