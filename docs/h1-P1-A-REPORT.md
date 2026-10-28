@@ -7,7 +7,8 @@ Commits pushed: **37b863b** — `pin base to v0.22.5 and remove the memory patch
 `fix(factory): qualify the pinned base image` (correction after h4's build — §5).
 Status: **DONE** — pinned to the fully qualified `nousresearch/hermes-agent:v0.22.5`,
 patch gone from every functional reference, line-556 rationale intact, up.sh parses,
-the base reference builds (probe in §5), pushed to origin/main, fleet untouched.
+the base reference builds (probe in §5), and the committed factory tree passes a full
+20/20 build from a clean context (§6), pushed to origin/main, fleet untouched.
 
 Working copies of what I produced:
 `/tmp/oct27/hermes-upgrade-research/phase1-out/h1/{Dockerfile,up.sh}` plus this report.
@@ -212,6 +213,11 @@ hermes-agent:v0.22.5               9c5561579f3f   <- alias h4 made by hand to st
 nousresearch/hermes-agent:v0.22.5  9c5561579f3f
 ```
 
+**Correction (§6):** the `<- alias h4 made by hand` label on that line is wrong. h4 did
+not create that tag and it does not exist on the daemon (`docker image inspect
+hermes-agent:v0.22.5` → `No such image`). The attribution was my inference from the
+listing, not something I measured. Nothing in the build path needs the alias.
+
 Nothing in the factory ever creates a local `hermes-agent:v0.22.5` (`up.sh` only
 special-cases `hermes-agent:latest`), so the bare pin could never resolve on a clean
 host. That is F1 above, now proven by a real build instead of predicted, and
@@ -256,9 +262,9 @@ and line 1408 names no file.
 
 Three notes for the lead:
 
-* h4's local alias tag `hermes-agent:v0.22.5` is not needed once this commit is in. I
-  left it in place — h4's build was in flight, and removing a tag h4 created is h4's
-  call, not mine.
+* The local alias tag `hermes-agent:v0.22.5` is not needed once this commit is in. It
+  was not created by h4 and no longer exists (§6); there was nothing of h4's to leave in
+  place.
 * F2 still stands and is now the remaining clean-host gap: `up.sh` still builds and
   imports `hermes-agent:latest` as the base whatever the Dockerfile's FROM says. That
   needs its own brief; this commit does not touch it.
@@ -270,3 +276,57 @@ Three notes for the lead:
   first, so the pending change went in with my commit. The bytes are correct (they match
   `config.yaml` and F23/F24), so I did not revert them; the commit boundary is wrong, not
   the content. Disclosed to the lead and to h2.
+
+---
+
+## 6. Reconciled with h4's factory-tree build, 2026-10-28 — PASS, and two corrections to §5
+
+h4 built the committed tree at HEAD `01e4d79` (my `a4e2483` Dockerfile included) from the
+directory `setup.sh:63` actually sends, and it passed: 20/20 steps, `BUILD_EXIT=0`,
+14m00s, image `sudo-agent:p1-build-h4d` = `6708c8b61024`, context `factories/sudo-agent`
+itself at 1.015 GB (`glimors/` is 1.0 GB of that). Full record:
+`docs/hermes-v0.22.5-build-result.md` §10.
+
+Read back on this daemon for this addendum (read-only; nothing built, tagged or deployed):
+
+```
+$ docker image inspect sudo-agent:p1-build-h4d --format '{{.Id}} {{.Created}}'
+sha256:6708c8b610249f6a0967cb016c045e6103843bbd11f276aa56f6a02731fe23fc 2026-10-28T03:03:54-07:00
+$ docker image inspect sudo-agent:latest --format '{{.Id}} {{.Created}}'
+sha256:16d149ddf0f2d8f9fcbf6bd94447d6790104660e98f7f32c9b46b120bd1b4bca 2026-10-18T23:12:48-07:00
+$ docker image inspect hermes-agent:v0.22.5 --format '{{.Id}}'
+Error response from daemon: No such image: hermes-agent:v0.22.5
+$ md5sum factories/sudo-agent/Dockerfile factories/sudo-agent/bin/up.sh
+4e9b190e6ad7eb870e536c996f56db78  factories/sudo-agent/Dockerfile
+4caf72a9ba77aa0d1ce4d4882c046629  factories/sudo-agent/bin/up.sh
+```
+
+Two corrections to §5, both mine and both about claims I made rather than measured:
+
+1. **The `hermes-agent:v0.22.5` alias was never h4's.** §5 labelled it "alias h4 made by
+   hand to stay unblocked". h4 did not tag it and the tag does not exist. The label came
+   from reading a `docker images` listing, not from watching it appear, and it was wrong.
+   The build does not use it: on a daemon with no local alias, step 1 of h4's build
+   resolved `nousresearch/hermes-agent:v0.22.5@sha256:9c5561579f3f…` and pulled it.
+2. **No pre-tag step is needed.** The remedy §3 F1 proposed (`docker pull` + `docker tag`,
+   restated at the end of §5) applied only to the bare `FROM hermes-agent:v0.22.5` that
+   `a4e2483` deleted. The qualified line pulls on its own, and h4's clean-host build is
+   stronger evidence than my §5 one-step probe: nothing was hand-tagged and 20/20 steps
+   ran. A pre-tag workflow would have masked exactly the question F1 was about.
+
+One more stale figure from the hand-off: the Dockerfile md5 I quoted to h4
+(`bb744a733896336743aaa162ae91dad7`) is the file at `37b863b`, not the committed
+`a4e2483` bytes. Committed and on-disk are `4e9b190e6ad7eb870e536c996f56db78`, as
+listed above. The `up.sh` md5 I quoted, `4caf72a9ba77aa0d1ce4d4882c046629`, was right.
+
+Finding status after the build: **F2 still stands.** The image now builds from the
+committed Dockerfile on a clean host, but `up.sh`'s build-on-missing path still builds
+and imports `hermes-agent:latest`, so the deploy path as a whole does not reproduce the
+pinned base end to end. That remains a separate brief. **F3 still stands** and is
+untouched: `factories/sudo-agent/README.md:158` still names `patch_memory_review.py`
+(not my file — reported, not edited). **F4** (vendored `glimors/` copies) is unchanged
+and is why the build context is 1.0 GB.
+
+The fleet was not touched by any of this: `sudo-agent:latest` is still
+`16d149ddf0f2…` created 2026-10-18, and h4's `p1-build-h4d` tag is an unreferenced
+throwaway left on the daemon.
