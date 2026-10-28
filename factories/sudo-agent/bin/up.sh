@@ -565,7 +565,8 @@ fi
 echo "→ watch scripts digest: ${WATCH_SCRIPTS_SHA:0:12}"
 
 # ── Image content digest (rolls the pod when the IMAGE changes) ─────────────
-# The pod template pins `image: sudo-agent:latest` with imagePullPolicy:
+# The pod template pins `image: $AGENT_IMAGE` (default `sudo-agent:latest`)
+# with imagePullPolicy:
 # IfNotPresent, so a REBUILT image under the same tag does NOT roll the
 # Deployment on its own: kubectl apply sees the tag and the watch-scripts
 # digest both unchanged and reports "deployment ... unchanged", leaving the
@@ -726,8 +727,10 @@ if [[ -n "${GLIMOR_DIR:-}" ]]; then
 elif [[ -f "$SOUL_SRC" ]]; then
   SOUL_ABS="$(cd "$CONFIG_DIR" && pwd)/$NAME.SOUL.md"
   # Quoted heredoc: the initContainer text below is literal (no expansion here),
-  # and @SOUL_STOCK_MD5@ is substituted once so the guard and the comment above
-  # can never drift apart. The text is then injected into the manifest through
+  # and the @SOUL_STOCK_MD5@ / @AGENT_IMAGE@ placeholders are substituted once on
+  # the line after the heredoc (this heredoc is QUOTED, so a bare $AGENT_IMAGE in
+  # its body would survive as the literal text "$AGENT_IMAGE" in the manifest).
+  # The text is then injected into the manifest through
   # $SEED_INITCONTAINERS — a plain $VAR reference, which the heredoc expansion
   # guard allows. The inner script deliberately contains NO command substitution
   # and NO backtick (the hash test is md5sum piped into grep -q), so the guard's
@@ -736,7 +739,7 @@ elif [[ -f "$SOUL_SRC" ]]; then
   SEED_INITCONTAINERS="$(cat <<'SEEDSOUL'
       initContainers:
       - name: seed-soul
-        image: $AGENT_IMAGE
+        image: @AGENT_IMAGE@
         imagePullPolicy: IfNotPresent
         securityContext:
           runAsUser: 0
@@ -750,6 +753,7 @@ elif [[ -f "$SOUL_SRC" ]]; then
 SEEDSOUL
 )"
   SEED_INITCONTAINERS="${SEED_INITCONTAINERS//@SOUL_STOCK_MD5@/$SOUL_STOCK_MD5}"
+  SEED_INITCONTAINERS="${SEED_INITCONTAINERS//@AGENT_IMAGE@/$AGENT_IMAGE}"
   # Same style as the per-agent config volume: the repo file itself, mounted
   # read-only into the initContainer. Never written to.
   SEED_VOLUME="      - name: soul-seed
@@ -1260,6 +1264,14 @@ _manifest_check() {
              "claimName: $DEPLOY-data"; do
     grep -qF -- "$pat" "$YAML" || missing+=("$pat")
   done
+  # Every image: line must hold a real reference. A container image that still
+  # carries a literal `$` means a variable that never expanded — the seed-soul
+  # initContainer is built by a QUOTED heredoc, so a bare $AGENT_IMAGE there
+  # reaches the manifest verbatim (a previous revision did exactly that, and
+  # Kubernetes rejects it as an invalid image reference, so the pod never starts).
+  if grep -qE '^[[:space:]]*image:[[:space:]]*\$' "$YAML"; then
+    missing+=("an image: line with an unexpanded variable (literal \$)")
+  fi
   if (( ${#missing[@]} == 0 )); then
     return 0
   fi
@@ -1276,7 +1288,8 @@ _manifest_check || exit 1
 echo "→ YAML written: $YAML"
 
 # ── Import images into containerd ─────────────────────────────────────────────
-# The pod runs `sudo-agent:latest` with imagePullPolicy: IfNotPresent, so if the
+# The pod runs `$AGENT_IMAGE` (default `sudo-agent:latest`) with
+# imagePullPolicy: IfNotPresent, so if the
 # import silently fails, the pod keeps running whatever STALE copy containerd
 # already had — a deploy that lies about what it shipped. This repo has paid for
 # that trap once already (a hermes-agent:latest older than the queue work), so
