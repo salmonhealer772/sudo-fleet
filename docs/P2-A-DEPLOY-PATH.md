@@ -488,3 +488,159 @@ the build path) and the doc prose h5 owns.
    `Dockerfile:91`. The value is empty (`ENV SUDO_PASSWORD=""`), so it is not a leak,
    but a stranger's first build ends on a warning about secrets. Worth a look in a
    later pass; not worth touching a validated Dockerfile this phase.
+
+## Addendum — the deploy path now honours SUDO_AGENT_IMAGE
+
+Owner: `sudo-fleet-glm-h4` · Phase 2 · 2026-10-28 (UTC) · branch `main`
+Code under report: `factories/sudo-agent/bin/up.sh` (on `main` as `a6abd1e`, corrected by
+`70f207a`). This addendum is the verification for that change; no other file was touched.
+
+### A1. The defect
+
+The two halves of one build/deploy step disagreed. The **install** path honoured the
+override: `factories/sudo-agent/setup.sh:60` is
+`AGENT_IMAGE="${SUDO_AGENT_IMAGE:-sudo-agent:latest}"` and `setup.sh:63` is
+`docker build -t "$AGENT_IMAGE" …`. The **deploy** path did not: `bin/up.sh` hardcoded
+`sudo-agent:latest` in nine places, four of them `image:` lines in the generated manifest.
+So `SUDO_AGENT_IMAGE=sudo-agent:candidate bash factories/sudo-agent/setup.sh` built and
+tagged a candidate correctly, and the plain `bash factories/sudo-agent/bin/up.sh --<name>`
+that followed deployed **`:latest`**, not the candidate. The only way to ship the candidate
+was to re-point the shared tag that 59 live deployments reference — the one thing the
+override exists to avoid.
+
+### A2. The nine executable sites (pre-edit literal → post-edit variable)
+
+Pre-edit column is `git show a6abd1e^:factories/sudo-agent/bin/up.sh`, post-edit is `HEAD`.
+
+| # | Site | Pre-edit (`a6abd1e^`) | Post-edit (`HEAD`) | Why |
+|---|---|---|---|---|
+| 1 | resolution | *(absent)* | `:61` `AGENT_IMAGE="${SUDO_AGENT_IMAGE:-sudo-agent:latest}"` | one source of truth for every site below |
+| 2 | image-content digest | `:571` `docker image inspect sudo-agent:latest --format '{{.Id}}'` | `:578` `… inspect "$AGENT_IMAGE" …` | the digest pinned into the `sudo-agent/image-sha` annotation must be the digest of the image actually deployed |
+| 3 | that guard's error text | `:573`, `:575` quote the tag | `:580`, `:582` interpolate `$AGENT_IMAGE` | a failure message must name the image that was attempted, not a different one |
+| 4 | `seed-glimor` initContainer | `:705` `image: sudo-agent:latest` | `:712` `image: $AGENT_IMAGE` | manifest heredoc is unquoted → expands |
+| 5 | `seed-soul` initContainer | `:733` `image: sudo-agent:latest` | `:742` `image: @AGENT_IMAGE@`, substituted at `:756` | this heredoc is **quoted** (`<<'SEEDSOUL'`), so a bare `$AGENT_IMAGE` would reach the manifest literally; the placeholder is substituted once after |
+| 6 | agent container | `:922` `image: sudo-agent:latest` | `:932` `image: $AGENT_IMAGE` | the container the deploy exists to run |
+| 7 | `watch` sidecar | `:1026` `image: sudo-agent:latest` | `:1036` `image: $AGENT_IMAGE` | sidecar must run the same build as the agent |
+| 8 | `_assert_image_fresh` | `:1378` `local img="sudo-agent:latest"` | `:1397` `local img="$AGENT_IMAGE"` | freshness/digest check must inspect the deployed image |
+| 9 | `_import_image` | `:1426` `_import_image sudo-agent:latest` | `:1445` `_import_image "$AGENT_IMAGE"` | import into containerd what the pod will run |
+
+After the change, `grep -n 'sudo-agent:latest' factories/sudo-agent/bin/up.sh` returns
+exactly four lines, and all four are legitimate: `:57` and `:568` and `:1291` are comments
+that name the *default*, and `:61` **is** the default itself
+(`${SUDO_AGENT_IMAGE:-sudo-agent:latest}`). Zero occurrences remain in YAML template text
+or in a `docker`/`kubectl` argument — the stub logs in A3 show the argv each one actually
+receives.
+
+Site 5 also has a backstop for the whole class: `_manifest_check` (`:1248`–`:1285`) refuses
+to apply a generated manifest whose `image:` line still contains a literal `$`, so an
+unexpanded variable aborts the deploy instead of shipping a pod that can never start.
+
+### A3. The default is unchanged, byte for byte
+
+`SUDO_AGENT_IMAGE` is a *build* variable that `up.sh` also honours, not a required deploy
+parameter. With it unset, the deploy must behave exactly as before, and it does — measured,
+not asserted.
+
+Syntax:
+
+```
+$ bash -n factories/sudo-agent/bin/up.sh
+SYNTAX-OK
+```
+
+Default behaviour, proven byte-for-byte: the same copy, the same stubbed `docker`/
+`kubectl`/`k3s`, the same arguments, `SUDO_AGENT_IMAGE` unset in both runs — once with
+`up.sh` as at `HEAD`, once with `up.sh` as at `a6abd1e^` (the pre-override file). The
+generated manifest is the comparison, because that is the artifact the cluster receives:
+
+```
+$ sha256sum manifest-pre.yaml manifest-head.yaml
+8d4c8d8c2e155affe918930faf48a4f78a5217ec4a471c27148ffce89515c7a1  manifest-pre.yaml   # up.sh @ a6abd1e^
+8d4c8d8c2e155affe918930faf48a4f78a5217ec4a471c27148ffce89515c7a1  manifest-head.yaml  # up.sh @ HEAD
+$ diff -u manifest-pre.yaml manifest-head.yaml
+(empty)  -> BYTE-FOR-BYTE IDENTICAL
+```
+
+Image resolution, both branches, from the same harness (functions exercised against stub
+`docker`/`kubectl` that log their argv; the run stops at the image-digest check, before
+`_import_image` and long before `kubectl apply` — the stub logged `kubectl` argv exactly
+once, a read-only `get deploy`, and zero `apply`):
+
+```
+SUDO_AGENT_IMAGE unset
+  docker image inspect sudo-agent:latest --format {{.Id}}          <- argv seen by the stub
+  rendered manifest:  image: sudo-agent:latest        (:98, :202)
+
+SUDO_AGENT_IMAGE=sudo-agent:candidate-x
+  docker image inspect sudo-agent:candidate-x --format {{.Id}}     <- argv seen by the stub
+  rendered manifest:  image: sudo-agent:candidate-x    (:98, :202)
+```
+
+The fleet did not move. Read-only, same command before the work and after it:
+
+```
+kubectl get deploy --no-headers -o custom-columns=N:.metadata.name,I:.spec.template.spec.containers[0].image
+  | awk '{print $2}' | sort | uniq -c
+```
+
+```
+before                                     after
+      1 iji-vm:latest                            1 iji-vm:latest
+      5 node:22-bookworm                         5 node:22-bookworm
+      2 redis:7-alpine                           2 redis:7-alpine
+     59 sudo-agent:latest                       59 sudo-agent:latest
+      1 sudo-agent:p2a-h1                        1 sudo-agent:p2a-h1
+      1 sudo-gws:latest                          1 sudo-gws:latest
+     23 sudo-letta:latest                       23 sudo-letta:latest
+
+$ docker image inspect sudo-agent:latest --format '{{.Id}} {{.Created}}'
+sha256:16d149ddf0f2d8f9fcbf6bd94447d6790104660e98f7f32c9b46b120bd1b4bca 2026-10-18T23:12:48.943195417-07:00
+(identical before and after — 59 deployments, same image ID)
+```
+
+No image was built, tagged, retagged or imported; `sudo-agent:latest` was never a build
+target; nothing was deployed, restarted, scaled or applied. The harness ran against a copy
+of `factories/sudo-agent` under `/tmp`, with `redis-up.sh` (a live provisioner) stubbed to
+a no-op **in that copy only** so the harness could not reach the cluster.
+
+### A4. What is proven, and what is not
+
+**Proven, at script level:** the override reaches every one of the nine sites; with it
+unset the generated manifest is byte-identical to the pre-change script's; `bash -n` is
+clean; the fleet and the tag's image ID are unchanged.
+
+**Correcting the scope line I was briefed with.** This addendum was briefed to say the
+generated pod manifest "omits the container `image:` field", so that `:932` never reaches
+the cluster. That is not what the script does, and it is worth recording rather than
+copying forward: the manifest heredoc at `up.sh:834` is `cat > "$YAML" <<YAMLEOF` — an
+**unquoted** delimiter — so `$AGENT_IMAGE` is expanded at generation time, and the manifests
+rendered in A3 carry `image: sudo-agent:latest` and `image: sudo-agent:candidate-x` at both
+container sites. `_manifest_check` (`:1272`) exists precisely because any surviving literal
+`$` on an `image:` line is fatal. The live object agrees: the pod template of a running
+deployment reports `containers[].image: sudo-agent:latest` for both the agent and the watch
+container. So the field is present, expanded, and is what selects the *tag*. What the
+`sudo-agent/image-sha` pod-template annotation does is a different job: with
+`imagePullPolicy: IfNotPresent`, a rebuild under the **same** tag does not roll the pod, so
+the annotation is what makes an image-content change recreate it.
+
+**Not proven — end to end at the cluster level.** The override is verified at the *script*
+level only. No deploy was run against the live fleet: rendering a manifest is proven,
+`kubectl apply` of a candidate image onto a real agent is not, and doing that against a live
+deployment is out of scope this phase. The honest status is: script-level proof complete,
+cluster-level proof absent by design.
+
+### A5. Residual: `_ensure_image_built`
+
+Checked, and it is **not** a residual. `_ensure_image_built` (`:1349`) takes the image name
+as `$1` (`local img="$1"`) and builds `docker build -t "$img" -f "$REPO_DIR/Dockerfile"
+"$REPO_DIR"`; both callers pass the resolved variable — `_import_image` at `:1445` and
+`_assert_image_fresh` via `local img="$AGENT_IMAGE"` at `:1397`. It builds under
+`$AGENT_IMAGE`, never unconditionally under `sudo-agent:latest`. The A3 stub log confirms it:
+with the override set, the build-on-missing path would have run against
+`sudo-agent:candidate-x`, and no `sudo-agent:latest` appears in that run's argv at all.
+
+One consequence worth naming, not fixed: build-on-missing means a *mistyped* override
+silently turns a deploy into a full image build and then deploys the accidental tag, rather
+than failing on an unknown name. That behaviour is unchanged from before this work (it was
+already true of the `:latest` default) and changing it would alter default behaviour, so it
+is reported rather than implemented.
