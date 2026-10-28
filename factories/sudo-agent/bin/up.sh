@@ -35,6 +35,16 @@ if [[ "${NAME,,}" == "all" ]]; then
   echo "'--ALL' is reserved. Pick a different name." >&2; exit 1
 fi
 
+# jq is required: the operator-env preservation block below parses the live
+# Deployment through it, and this script runs WITHOUT `set -e`, so a missing jq
+# would silently yield an empty preserve-set and DROP operator-added env vars
+# (extra API keys, API-server settings) on the next roll. Fail here instead.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "✗ jq is required (up.sh parses the live Deployment's env with it)." >&2
+  echo "  Install:  sudo apt-get install -y jq   (or re-run setup.sh, which installs it)" >&2
+  exit 1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_FILE="$REPO_DIR/.env"
