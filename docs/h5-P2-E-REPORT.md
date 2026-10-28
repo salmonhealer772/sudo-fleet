@@ -196,9 +196,17 @@ live tag sudo-agent:latest: sha256:16d149dd… 2026-10-18T23:12:48Z  (untouched)
 ```
 
 That is the answer to this brief's highest-stakes question: the three-command
-install does not produce a second, different image. What I verified myself,
-independently, is that there is **one tag and one recipe** —
-`factories/sudo-agent/setup.sh:63` builds `sudo-agent:latest` from
+install does not produce a second, different image. h1's own P2-A report says the
+same in one line — "**Measured equal**: both paths, building one identical tree,
+exported the identical image manifest `sha256:b96404e8…`" — and adds what I could
+not see from the docs alone: `up.sh` no longer builds, tags or imports any
+`hermes-agent:latest`, and `bin/k8s-auto-up.sh` stopped re-importing it on every
+boot. (Their report was written as this audit closed; the copy I read is
+`phase2-out/h1/h1-P2-A-REPORT.md`, and the same content is what they add under
+`docs/` in this phase — if the filename differs, the claim does not.)
+
+What I verified myself, independently, is that there is **one tag and one
+recipe** — `factories/sudo-agent/setup.sh:63` builds `sudo-agent:latest` from
 `$SCRIPT_DIR/Dockerfile` with `$SCRIPT_DIR` as context, `bin/up.sh`'s
 `_ensure_image_built` (`:1320`) builds the same recipe, and root `setup.sh:453`
 calls that factory `setup.sh`. Two of the paths are the same build; h1's
@@ -391,8 +399,58 @@ text.
 
 ## 9. Push, and the proof
 
-The doc changes, this report and the index row were committed and pushed in one
-commit; the confirmation block (commit hash, `git ls-remote origin main`, and the
-link check re-run against a fresh clone of the pushed tree) is in the follow-up
-commit that touches only this file — the same pattern `docs/P2-C-MEMORY-CONTRACT.md`
-used, because a commit cannot contain its own hash.
+Committed as **`c7ead0d`** and pushed to `main`. Local HEAD and the remote
+agreement, read back after the push:
+
+```
+$ git rev-parse HEAD
+c7ead0d82c038db470fbdafa6559832801a41239
+$ git ls-remote origin main
+c7ead0d82c038db470fbdafa6559832801a41239        refs/heads/main
+$ git push origin main
+   5c5faa7..c7ead0d  main -> main
+```
+
+Then the check that matters — not "the push succeeded" but "the pushed tree is
+the one that passes":
+
+```
+$ git clone --depth 1 https://github.com/salmonhealer772/sudo-fleet.git /tmp/h5-fresh-clone
+$ cd /tmp/h5-fresh-clone && git rev-parse HEAD
+c7ead0d82c038db470fbdafa6559832801a41239
+$ python3 h5_links.py /tmp/h5-fresh-clone
+files scanned: 21   relative links checked: 35
+MISSING TARGETS: 0 — every relative link resolves
+$ ls deployments/
+README.md
+$ grep -n 'cd .. && sudo bash bin/talk.sh' README.md
+41:    cd .. && sudo bash bin/talk.sh --planner
+```
+
+So the clone a stranger gets is the clone measured here: 35 relative links, none
+broken; the docs index names every file in `docs/`; `deployments/` is empty as
+`ARCHITECTURE.md` §1 now says; and Command 3 carries its own `cd ..`.
+
+**What this commit does not contain, and who owns it:**
+
+- `factories/sudo-agent/bin/up.sh`, `factories/sudo-agent/setup.sh` and
+  `bin/k8s-auto-up.sh` were dirty in the working tree throughout (h1's P2-A). I
+  staged none of them. Every sentence I wrote about them was read from the tree
+  as it stood and is true of both the before and after of that diff, except the
+  detail in §4.2 which is h1's measurement, quoted as theirs.
+- `docs/P2-A-DEPLOY-PATH.md`, `docs/P2-B-SANDBOX-RECREATE.md` and
+  `docs/P2-D-RUNTIME-CHECKS.md` were not in `docs/` at this commit, so the index
+  does not name them (a row for a missing file is the defect this brief hunts).
+  The generator is idempotent — run
+  `python3 <this phase's work dir>/phase2-out/h5/h5_index.py` after they land, or
+  add three rows by hand in the same table.
+- This report's own index row was added by that generator, so `docs/README.md`
+  lists `h5-P2-E-REPORT.md` in the same commit as the file.
+
+**How close to the finish line: close, with one honest gap.** A stranger can
+clone this repository, read the root README and understand exactly what they are
+about to install, then follow three accurately described commands to two clean
+agents; the one thing that can still stop them is `jq` not being installed by
+Command 1 (§4.1), which is now written down rather than assumed. Closing that
+hole needs a one-line change in `setup.sh` — not another documentation pass.
+
