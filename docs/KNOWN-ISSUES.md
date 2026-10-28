@@ -306,3 +306,40 @@ burned. Recorded here so the exposure is not lost with the working session.
 
 Found by an engineer during the 2026-10-27 documentation pass, and confirmed by the lead against
 `origin/main`.
+
+### D9. `setup.sh` rebuilds and retags `sudo-agent:latest` on every run — MEDIUM — unresolved
+
+Finding: the agent-image build in `factories/sudo-agent/setup.sh` is unconditional. The base
+image is guarded — `if ! docker image inspect hermes-agent:latest` at `:51` decides whether to
+build it — but the sudo-agent build at `:63-64` is
+`docker build -t sudo-agent:latest -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"`, run on every
+invocation with no existence check.
+
+So the host's `sudo-agent:latest` is whatever tree ran the installer last — a stale clone, a
+scratch copy, a checkout of another branch. Pods already running keep the image they started
+with; the next pod to start gets the new one. Nothing fails, nothing prints a version, and the
+installer advertises itself as `re-runnable, idempotent` (repo-root `setup.sh:219`), which is
+exactly the operation that moves the tag.
+
+Command 1 inherits it: repo-root `setup.sh:453` pipes the key into `$AGENT_REPO/setup.sh`, so a
+bootstrap re-run has the same effect. `docs/P1-B-MEMORY-AND-IDENTITY.md:182-183` already notes
+the hazard — a plain scratch run of the seed branch retags the live image before the seed is
+ever reached — but recorded it only as a reason to stub `docker` first, never as a defect.
+
+Evidence: with a logging `docker` stub first on `PATH` where both `hermes-agent:latest` and
+`sudo-agent:latest` report present, one real run of `setup.sh` (absent `config.yaml`, `kubectl`
+stubbed to exit 1 so no cluster call is made) emitted exactly:
+`DOCKER_CALL: info` / `DOCKER_CALL: image inspect hermes-agent:latest` /
+`DOCKER_CALL: build -t sudo-agent:latest -f <tree>/Dockerfile <tree>`. The base build was
+skipped as designed; the agent build was not.
+
+Unresolved: yes. Two candidate fixes, neither chosen here: (a) mirror the base-image guard and
+skip the build when `docker image inspect sudo-agent:latest` succeeds — cheapest, but then a
+Dockerfile change can never be picked up without a manual `docker rmi`; (b) build to a
+content-addressed tag and have `bin/up.sh` deploy that tag, leaving `:latest` alone — no silent
+overwrite, but it touches the deploy path and the generated manifest. The choice is a
+maintainer decision, not a documentation one. Nothing was rebuilt, retagged or deployed while
+recording this.
+
+Found by sudo-fleet-glm-h1 on 2026-10-28 while qualifying the seed-branch proof at HEAD, using
+the stub-`PATH` harness approach recorded in `docs/P1-B-MEMORY-AND-IDENTITY.md:214-215`.
