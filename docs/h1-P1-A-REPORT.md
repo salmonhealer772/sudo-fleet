@@ -254,7 +254,7 @@ $ docker image inspect sudo-agent:latest -> ID sha256:16d149ddf0f2..., Created 2
 is the line-556 rationale comment, line 1402's loop lists only `$REPO_DIR/Dockerfile`,
 and line 1408 names no file.
 
-Two notes for the lead:
+Three notes for the lead:
 
 * h4's local alias tag `hermes-agent:v0.22.5` is not needed once this commit is in. I
   left it in place — h4's build was in flight, and removing a tag h4 created is h4's
@@ -262,3 +262,11 @@ Two notes for the lead:
 * F2 still stands and is now the remaining clean-host gap: `up.sh` still builds and
   imports `hermes-agent:latest` as the base whatever the Dockerfile's FROM says. That
   needs its own brief; this commit does not touch it.
+* Commit 983834f (the setup.sh comment fix) also carries two lines I did **not** author:
+  the uncommitted working-tree change `memory_char_limit: 100000 -> 40000`,
+  `user_char_limit: 50000 -> 20000` in setup.sh's embedded config heredoc — the two-line
+  fix h2 flagged in `docs/P1-B-MEMORY-AND-IDENTITY.md` (f). I ran
+  `git add factories/sudo-agent/setup.sh` for my comment edit without diffing that file
+  first, so the pending change went in with my commit. The bytes are correct (they match
+  `config.yaml` and F23/F24), so I did not revert them; the commit boundary is wrong, not
+  the content. Disclosed to the lead and to h2.
