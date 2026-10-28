@@ -216,17 +216,17 @@ No deployment was created, patched, scaled, restarted or deleted. No pod was exe
 
 ---
 
-## 7. Addendum — a verified hazard that attacks the isolation rule: `setup.sh` retags `sudo-agent:latest`
+## 7. Addendum — a verified hazard that attacks the isolation rule: `factories/sudo-agent/setup.sh` retags `sudo-agent:latest`
 
 Found while checking that my consistency numbers still held at HEAD. `setup.sh` builds the image under the **live** tag, unconditionally:
 
 ```
-# factories/sudo-agent/setup.sh:61-62
+# factories/sudo-agent/setup.sh:62-63
 echo "→ Building sudo-agent image..."
 _retry 3 "docker build sudo-agent" docker build -t sudo-agent:latest -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" \
 ```
 
-The inspect guard at `setup.sh:52` covers only the **base** (`hermes-agent:latest`); there is no guard on the sudo-agent build. So **any** run of `setup.sh` on this host — including a "just to check it builds" run — re-points the tag 60 running deployments reference. On this box that is precisely the accident P1-D exists to prevent, and it is one `bash setup.sh` away.
+The inspect guard at `factories/sudo-agent/setup.sh:51` covers only the **base** (`hermes-agent:latest`); there is no guard on the sudo-agent build. So **any** run of `setup.sh` on this host — including a "just to check it builds" run — re-points the tag 60 running deployments reference. On this box that is precisely the accident P1-D exists to prevent, and it is one `bash setup.sh` away.
 
 Two practical consequences for the lead:
 1. **Nobody should validate the factory by running `setup.sh`.** P1-D's throwaway-tag build is the safe proof and it is now recorded here.
