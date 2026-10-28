@@ -407,7 +407,8 @@ Three commits, in order, on `main` in the shared checkout:
 |---|---|
 | `c7ead0d` | this audit's doc changes + the report (13 files edited, 1 added) |
 | `5cb39db` | h1's P2-A (deploy path). It landed in the same checkout between my commit and my confirmation; not mine, and I staged none of its files. |
-| `fe13f90` | this section, plus the index row for `P2-A-DEPLOY-PATH.md` once that file existed |
+| `fe13f90` | the push confirmation, plus the index row for `P2-A-DEPLOY-PATH.md` once that file existed |
+| `2b75fec` | the report re-closed against the tree P2-A landed in (this report cites `docs/P2-A-DEPLOY-PATH.md` directly) |
 
 The push, read back:
 
@@ -440,9 +441,22 @@ So the clone a stranger gets is the clone measured here: 35 relative links, none
 broken; the docs index names every file in `docs/`; `deployments/` is empty as
 `ARCHITECTURE.md` §1 now says; and Command 3 carries its own `cd ..`.
 
+Re-run at the tip that includes h1's P2-A (`2b75fec`, the commit before the one
+carrying this paragraph) — one more document, one more link, still nothing
+missing:
+
+```
+$ git clone --depth 1 https://github.com/salmonhealer772/sudo-fleet.git /tmp/h5-final-clone
+$ cd /tmp/h5-final-clone && git rev-parse HEAD
+2b75fec18e7c4608ebfc63341f2e35811f8b1c97
+$ python3 h5_links.py /tmp/h5-final-clone
+files scanned: 22   relative links checked: 36
+MISSING TARGETS: 0 — every relative link resolves
+```
+
 This paragraph is the only thing the commit that carries it changes — a commit
-cannot contain its own hash, so the file's own commit is `fe13f90`'s child and
-`git log --oneline -5` shows the chain.
+cannot contain its own hash, so the file's own commit is `2b75fec`'s child and
+`git log --oneline -6` shows the chain.
 
 **What my commits do not contain, and who owns it:**
 
