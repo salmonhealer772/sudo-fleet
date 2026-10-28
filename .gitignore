@@ -26,3 +26,7 @@ deployments/*
 factories/sudo-agent/config/*.SOUL.md
 factories/sudo-letta/.env
 factories/sudo-agent/.env
+
+# Instance daily logs (/tmp/oct<N>/<name>/logs/) are operator records of ONE fleet.
+# They name real agents and deployment counts; they never belong in a public repo.
+logs/

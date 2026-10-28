@@ -16,7 +16,8 @@ set -euo pipefail
 #
 # Everything this script creates lives INSIDE the single `sudo-fleet/` folder
 # (the repo root = FLEET_HOME). No siblings, nothing outside it.
-# Prompted here (EXACTLY three fields, written to FLEET_HOME/.env, chmod 600):
+# Prompted here (three fields for a DeepSeek endpoint, written to FLEET_HOME/.env, chmod 600;
+# a custom LLM_BASE_URL adds ONE more prompt, LLM_MODEL, at the endpoint step below):
 #     LLM_API_KEY=...          # ONE LLM API key used by BOTH agents (secret)
 #     LLM_BASE_URL=...         # LLM API URL (defaults to https://api.deepseek.com/v1 if blank)
 #     TAVILY_API_KEY=...       # letta search mods (secret, optional)

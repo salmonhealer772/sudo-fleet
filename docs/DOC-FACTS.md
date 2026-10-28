@@ -13,6 +13,14 @@ re-derived and re-grepped rather than shifted arithmetically — re-derived at
 then line count). `docs/SPEC.md` is unchanged since `9559afe`, so its re-points
 below stand at HEAD. Re-grep before trusting a range after edits.
 
+**Phase 2 re-check (2026-10-28).** Phase 2 edited ARCHITECTURE.md,
+OPERATIONS.md and KNOWN-ISSUES.md, so the 21 citations into those three files
+were re-resolved against the tree after those edits: all 21 still land on the
+text they describe, and the ten KNOWN-ISSUES.md section ranges (5-15, 17-27,
+29-33, 60-64, 71-79, 81-92, 94-102, 104-113, 115-124, 126-133) were checked line
+by line. No row needed re-pointing. Re-run this check after any further edit to
+those files.
+
 **Path rules (several filenames exist more than once).** Every cite is relative to
 the repo root and carries the directory that makes it unambiguous:
 `factories/sudo-agent/bin/up.sh`, never a bare `bin/up.sh`. Resolve the exact path
