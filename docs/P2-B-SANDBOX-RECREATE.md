@@ -424,3 +424,106 @@ was recreated by applying a new pod template.
   agents, because `up.sh` seeds the per-agent file once and then leaves it alone.
 - `SUDO_AGENT_IMAGE` now exists on the deploy path, so a candidate image can be canaried on one agent
   without touching the shared tag.
+
+---
+
+## 12. Independent re-verification (the second h2 conversation, read-only)
+
+A second conversation of this same agent — `local-54aa75…`, the one that ran the memory archive at
+19:33:03Z (§6.2) — finished its own pass over brief B *after* the recreate had landed. This section is
+its independent measurement, taken between **19:45Z and 19:52Z**. It wrote nothing to the cluster:
+every command below is a `kubectl get`, an `exec` that only reads (`cat`, `md5sum`, `grep`), or a
+read-only SQLite open (`file:…?mode=ro`). The point is the same one §8 makes — the numbers that matter
+here were measured twice, by two hands, on the same live pod.
+
+| Re-measured | Value | Verdict |
+|---|---|---|
+| Deployment image, both containers | `sudo-agent:p2a-h1` | PASS |
+| Pod | `2/2 Running`, `ready=true` on both, **restarts 0** | PASS |
+| Container `imageID` | `sha256:2003be5c…`, `repoTags [docker.io/library/sudo-agent:p2a-h1]` | PASS |
+| Pod-template annotation `sudo-agent/image-sha` | `sha256:ebc56f72e84a…` — **h1's `P2A-DONE.txt` IMAGE ID, character for character** | PASS |
+| `hermes --version` in the pod | `Hermes Agent v0.22.5 (2026.9.24) · upstream bf0203a7` | PASS |
+| Patch marker (space form) / `background_review.py` | `0` / `1349` lines | PASS |
+| `find / -name patch_memory_review.py` | `0` hits | PASS |
+| `state.db` | `78,569,472` bytes, `schema_version` 32, `integrity_check` **ok** | PASS |
+| `session_search` in the pod | `mode discover`, hit dated **September 07, 2026** | PASS |
+| `/opt/data/config.yaml` in the pod | `memory_char_limit: 40000` / `user_char_limit: 20000` | PASS |
+| `skills/` / `.comm-seeded` | 18 / present, still `2026-09-30` | PASS |
+| `memories/MEMORY.md` | 115 bytes, one entry, mtime 19:41Z | PASS |
+
+### 12.1 The past survived — and the store has since grown, which is not a regression
+
+Re-run after the recreate, the raw counts read **413 sessions / 6,356 messages**, not the 411 / 6,344
+of the baseline. That difference is *new work*, not lost work, and it is worth proving rather than
+assuming, because a later reader (or h4) comparing totals against §3 will see the number move:
+
+```
+$ python3 -c '…sqlite3 read-only…'          # inside the pod
+sessions_older_24h       411
+sessions_last_24h          2
+messages_in_old_sessions 6344
+messages_in_new_sessions   12
+total_sessions            413
+total_messages           6356
+```
+
+Every one of the 411 pre-upgrade sessions and all 6,344 of their messages are still present and still
+attached to each other; the two extra sessions are post-recreate turns — `Save sandbox recreation
+memory` (19:41Z, the §6.1 turn) and one diagnostic turn at 19:45Z.
+
+**The right reading is the opposite of "the store changed": a store that only ever holds its old
+counts is a store whose writer is dead.** Here the old rows survived *and* the new binary appended to
+the same file. The baseline to check against is the pair (411 older sessions, 6,344 messages in
+them) — not the total.
+
+### 12.2 SOUL: everything outside the managed block is byte-identical
+
+§6 reports that `SOUL.md` grew from 7,891 to 9,559 bytes with all additions inside the FLEET-COMM
+block. That claim is checkable without the pre-upgrade file, because the block is delimited and the
+pre-upgrade snippet still exists in git:
+
+```
+# 1. the file as it is on the PVC now
+$ kubectl exec … -- cat /opt/data/SOUL.md > SOUL-after.md
+$ md5sum SOUL-after.md
+62e1be7a40585e729c2704b8c19ef77c  SOUL-after.md          # 9,559 bytes
+
+# 2. take the text between the markers, put the pre-upgrade snippet back, re-hash
+$ git show afef43e^:factories/sudo-agent/comm/PERSONA-SNIPPET.md   > snippet-old.md
+  block = lines between <!-- FLEET-COMM-AWARENESS-BEGIN --> (54) and END (79)
+  reconstructed = lines[:54] + snippet-old.md + lines[79:]
+$ md5(reconstructed)
+721754026f924d2079a37f0d323c6d22
+
+# 3. and that is exactly the md5 the same pod's SOUL.md had BEFORE the recreate
+721754026f924d2079a37f0d323c6d22   (captured at 19:35Z, on the old pod)
+```
+
+Identical. **Every byte of the agent's own persona outside the markers is unchanged by the upgrade**;
+the block between them is the only part that moved, and it is the part the entrypoint is supposed to
+own.
+
+### 12.3 The block on the PVC is the CURRENT text, not a stale copy
+
+h4's check 3A asks whether the instruction that landed is the text the repo ships today. The block's
+own digest answers it:
+
+```
+$ block = lines 55..78 of SOUL-after.md      # between the markers, 24 lines, 4,165 chars
+$ sha256(block)          7c1420eb7393c86b13d0f985d37bf30787c90b1ec32ce4b814f5d415d817b9b7
+$ git show HEAD:factories/sudo-agent/comm/PERSONA-SNIPPET.md | sha256sum
+                         7c1420eb7393c86b13d0f985d37bf30787c90b1ec32ce4b814f5d415d817b9b7
+```
+
+Equal, so the delivered block **is** the committed snippet — including `## Your memory` (line 66, one
+occurrence). This is also the answer to the question h3 asked
+of this brief directly: after the recreate, `/opt/data/SOUL.md` on the sandbox PVC carries
+`## Your memory` *between* the FLEET-COMM-AWARENESS markers. Grepped, not hand-edited — the block is
+replaced on every boot, so a hand-edit would have been erased by the very next restart.
+
+### 12.4 What this section does not change
+
+Nothing in §1–§11 is corrected by the re-measurement; every headline claim reproduced. The one number
+that will drift for anyone re-reading this later is §12.1's session/message total, and it should: the
+agent is alive and writing. `/tmp/p2-selfcopy` was already gone when this pass started, and this pass
+created no copy of its own.
