@@ -38,31 +38,31 @@ _retry() {
   return 1
 }
 
-# Build the two images if they are absent. Order matters: sudo-agent used to be
-# `FROM hermes-agent:latest`, so the base was built first. Its FROM is now the
-# pinned `nousresearch/hermes-agent:v0.22.5`, which docker pulls itself, but the
-# local base below is still built and imported by up.sh. The sudo-agent
-# Dockerfile then (a) symlinks the base's off-PATH uv onto /usr/local/bin so
-# its `uv pip install` steps resolve, and (b) bakes the comm tools into
-# /opt/comm-tools/ at the IMAGE level (never shadowed by the /opt/data PVC —
-# that PVC only receives the comm skills + persona on first boot, see
-# mcp_entrypoint.sh). Each build retries transient network failures; if one
-# still fails after retries, abort — a missing image is fatal downstream.
-if ! docker image inspect hermes-agent:latest &>/dev/null; then
-  echo "→ Building base Hermes Agent image (3-5 min)..."
-  TMP_DIR=$(mktemp -d) || { echo "Failed to create temp dir"; exit 1; }
-  _retry 3 "git clone hermes-agent" git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$TMP_DIR" \
-    || { echo "Git clone failed. Check internet."; exit 1; }
-  _retry 3 "docker build hermes-agent" docker build -t hermes-agent:latest "$TMP_DIR" \
-    || { echo "Docker build failed."; exit 1; }
-  rm -rf "$TMP_DIR"
-  echo "✓ Base image built"
-fi
+# Build the sudo-agent image. There is NO separate base-image step: the
+# Dockerfile's FROM is the qualified, pinned `nousresearch/hermes-agent:v0.22.5`,
+# which docker pulls by itself during this build. A prefetch step used to sit
+# here that cloned upstream's default branch and built `hermes-agent:latest` by
+# hand — a SECOND, UNPINNED base with nothing left to use it, i.e. exactly the
+# silent drift the pin exists to prevent, plus a 3-5 minute build of an image no
+# pod runs. One build path, one pin: the Dockerfile's.
+# The sudo-agent Dockerfile (a) symlinks the base's off-PATH uv onto
+# /usr/local/bin so its `uv pip install` steps resolve, and (b) bakes the comm
+# tools into /opt/comm-tools/ at the IMAGE level (never shadowed by the /opt/data
+# PVC — that PVC only receives the comm skills + persona on first boot, see
+# mcp_entrypoint.sh). The build retries transient network failures; if it still
+# fails after retries, abort — a missing image is fatal downstream.
 
-echo "→ Building sudo-agent image..."
-_retry 3 "docker build sudo-agent" docker build -t sudo-agent:latest -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" \
+# The tag is overridable ONLY so the build can be verified without re-pointing
+# `sudo-agent:latest` on a host that already runs agents against it (they run it
+# with imagePullPolicy: IfNotPresent, so a re-pointed tag silently changes what
+# the NEXT pod recreation runs, days later, untested). The default is what
+# bin/up.sh expects and what every documented install produces.
+AGENT_IMAGE="${SUDO_AGENT_IMAGE:-sudo-agent:latest}"
+
+echo "→ Building sudo-agent image ($AGENT_IMAGE)..."
+_retry 3 "docker build $AGENT_IMAGE" docker build -t "$AGENT_IMAGE" -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR" \
   || { echo "Sudo-agent build failed."; exit 1; }
-echo "✓ sudo-agent image built"
+echo "✓ $AGENT_IMAGE image built"
 
 # --- Prompt for DeepSeek API key (env-first: never prompt if a key is available) ---
 ENV_FILE="$SCRIPT_DIR/.env"

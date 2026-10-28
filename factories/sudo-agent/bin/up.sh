@@ -553,8 +553,9 @@ echo "→ watch scripts digest: ${WATCH_SCRIPTS_SHA:0:12}"
 # IfNotPresent, so a REBUILT image under the same tag does NOT roll the
 # Deployment on its own: kubectl apply sees the tag and the watch-scripts
 # digest both unchanged and reports "deployment ... unchanged", leaving the
-# running pod on the OLD image. An image-only fix (e.g. the old patch_memory_review.py
-# change) would silently never reach the pod. Pin the docker image's
+# running pod on the OLD image. An image-only fix (e.g. the base bump, or a
+# change to the tools baked under /opt/comm-tools) would silently never reach
+# the pod. Pin the docker image's
 # content-addressable ID as a pod-template annotation so kubectl apply
 # recreates the pod exactly when the image content changes.
 IMAGE_SHA="$(docker image inspect sudo-agent:latest --format '{{.Id}}' 2>/dev/null)"
@@ -1302,29 +1303,25 @@ _import_once() {
 # used to hard-fail ("nothing to import. Build it first: bash setup.sh") and
 # leave the operator to go re-run a setup step mid-deploy. Build the image HERE
 # instead, and fail ONLY if the build itself fails.
-_build_hermes_base() {
-  local tmp
-  tmp="$(mktemp -d)" || return 1
-  _retry 3 "git clone hermes-agent" git clone --depth 1 https://github.com/NousResearch/hermes-agent.git "$tmp" \
-    || { rm -rf "$tmp"; return 1; }
-  _retry 3 "docker build hermes-agent" docker build -t hermes-agent:latest "$tmp" \
-    || { rm -rf "$tmp"; return 1; }
-  rm -rf "$tmp"
-  return 0
-}
+#
+# THERE IS NO SEPARATE BASE BUILD, and it must not come back. The sudo-agent
+# Dockerfile's FROM is the qualified, pinned `nousresearch/hermes-agent:v<ver>`
+# reference, which docker PULLS BY ITSELF during the build below (verified with
+# `docker manifest inspect` on that reference: a real multi-arch manifest list,
+# so no local tag is required first). The old local `hermes-agent:latest` tag
+# only ever worked because the Dockerfile said a bare `FROM hermes-agent:latest`;
+# keeping the clone+build here manufactured a SECOND base — unpinned, tracking
+# upstream's default branch — so the deploy path could drift off the pin without
+# the Dockerfile changing at all. One build path, one pin: the Dockerfile's.
 
-# _ensure_image_built IMG — build IMG when it is missing. hermes-agent:latest is
-# the sudo-agent BASE image, cloned + built exactly as setup.sh does it; every
-# other image builds from THIS factory's Dockerfile into the repo as context.
+# _ensure_image_built IMG — build IMG from THIS factory's Dockerfile (the repo
+# is the build context) when it is missing. The pinned base is pulled by that
+# build; nothing is built or tagged on the side.
 _ensure_image_built() {
   local img="$1"
   docker image inspect "$img" >/dev/null 2>&1 && return 0
   echo "→ docker image $img is missing locally — building it now..." >&2
-  if [[ "$img" == "hermes-agent:latest" ]]; then
-    _build_hermes_base || return 1
-  else
-    _retry 3 "docker build $img" docker build -t "$img" -f "$REPO_DIR/Dockerfile" "$REPO_DIR" || return 1
-  fi
+  _retry 3 "docker build $img" docker build -t "$img" -f "$REPO_DIR/Dockerfile" "$REPO_DIR" || return 1
   docker image inspect "$img" >/dev/null 2>&1
 }
 
@@ -1411,7 +1408,11 @@ _assert_image_fresh() {
 
 echo "→ Importing images..."
 _assert_image_fresh
-_import_image hermes-agent:latest
+# Only the image the pods RUN is imported. A local `hermes-agent:latest` import
+# used to sit here to serve the old bare FROM; with the pin qualified the base is
+# pulled by the build and no pod ever references it, so importing it was 4.5 GB
+# of containerd churn (and a build of upstream main on any host missing the tag)
+# for an image nothing runs.
 _import_image sudo-agent:latest
 
 # ── Apply ──

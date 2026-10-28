@@ -90,7 +90,11 @@ mkdir -p "$LOG_DIR" 2>/dev/null || true
     docker save "$img" | k3s ctr image import - \
       || docker save "$img" | ctr -n k8s.io image import -
   }
-  for _img in hermes-agent:latest sudo-agent:latest sudo-letta:latest; do
+  # Only images pods actually RUN. A local `hermes-agent:latest` used to be in
+  # this list to serve the factory's old bare `FROM hermes-agent:latest`; the
+  # pin is qualified now, so no deployment references it and re-importing it (or
+  # warning that it is missing, every boot, forever) is noise at best.
+  for _img in sudo-agent:latest sudo-letta:latest; do
     if _image_present "$_img"; then
       ok "$_img already in containerd"
       continue
