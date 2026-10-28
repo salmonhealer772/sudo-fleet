@@ -510,3 +510,8 @@ factories/sudo-agent/setup.sh:228:  user_char_limit: 20000
 `setup.sh:227-228` is untouched by `afef43e`, so the "both tracked sources agree" row in
 `hermes-v0.22.5-build-result.md` §5 still holds at the numbers' second home. Nothing in this addendum touches a
 code file: the change is four documents plus this paragraph.
+
+One thing this addendum deliberately leaves alone: `docs/DOC-FACTS.md` is an evidence appendix measured
+against a 2026-10-27 snapshot copy, and its own header says to re-grep ranges after edits. Eleven of its
+rows cite `docs/SPEC.md` or `ARCHITECTURE.md` line ranges that have moved since — re-pointing them is a
+pass over that appendix's evidence, not a knock-on from brief C.
