@@ -110,7 +110,7 @@ These turn the passive sidecar plumbing into an *active* agent capability:
 
 ## The actual NEW work (the glue, not the pieces)
 
-1. Repo layout uniting the two factory trees (`factories/sudo-letta` + `factories/sudo-agent`) + kube + LiteLLM under one root with one `setup.sh`.
+1. Repo layout uniting the two factory trees (`factories/sudo-letta` + `factories/sudo-agent`) + kube + LiteLLM under one root with one repo-root `setup.sh` that drives both factories.
 2. `setup.sh` idempotency + portability (no Mac `/mnt/mac`, no fabean-only paths; detect bare-Linux and bootstrap k3s + the stack).
 3. The **save/pull system** (glimors) as a complete, printable, self-updating identity package in the host VM directory — and as a **general spec any agent can conform to** (factory or brought-in). A full save captures **PVC + manifests + secret refs**, and is **triggered live by agent use** (via the `-watch` tail), with a **fleet glimor snapshot** for disaster-recovery (`save all` → all PVCs + all manifests off-box).
 4. LiteLLM + the `-mcp`/`-watch` sidecars as first-class factory defaults (emitted by `setup.sh`, not post-deploy `letta install`) — AND as the documented **plug-in contract** an external agent must satisfy to join the fleet.
