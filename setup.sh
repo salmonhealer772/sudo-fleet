@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # sudo-fleet/setup.sh — Command 1 of 2 (bootstrap ONLY).
-# Bootstraps a bare Linux box: docker + k3s (single node), prompts for the API
+# Bootstraps a bare Linux box: docker + k3s (single node) + jq, prompts for the API
 # keys FIRST (writes them to sudo-fleet/.env), uses the two factory trees
 # vendored at factories/ inside this folder, and builds both factory images
 # non-interactively.
@@ -321,8 +321,29 @@ else
 fi
 ok "API keys validated + exported"
 
-# --- 2. Docker ------------------------------------------------------------------
-step "2/5 Bootstrap: Docker"
+# --- 2. Docker + jq -------------------------------------------------------------
+step "2/5 Bootstrap: Docker + jq"
+# jq is a HOST prerequisite for the next two commands, not a build tool:
+# bin/talk.sh (Command 3) and bin/verify-change.sh parse `kubectl ... -o json`
+# through it, and the factory up.sh reads the live Deployment's env through it.
+# A stock Ubuntu ships no jq, so Command 3 used to die 50 lines in with
+# "jq: command not found". Install it here, in the bootstrap that promises a
+# bare box becomes usable.
+_bootstrap_jq() {
+  command -v apt-get >/dev/null 2>&1 || return 1
+  $SUDO apt-get update -qq && $SUDO apt-get install -y -qq jq
+}
+if command -v jq >/dev/null 2>&1; then
+  ok "jq present ($(jq --version 2>/dev/null))"
+else
+  echo "→ installing jq (needed by talk.sh / verify-change.sh / up.sh)..."
+  if _retry 3 "jq install (apt)" _bootstrap_jq; then
+    ok "jq installed ($(jq --version 2>/dev/null))"
+  fi
+fi
+# Hard stop, not a warning: both remaining commands parse JSON with jq, so
+# "bootstrap complete" with no jq would just move the failure to Command 3.
+command -v jq >/dev/null 2>&1 || die "jq is required by Command 2/3 and could not be installed (no apt-get, or the install failed). Install it with your package manager (sudo apt-get install -y jq), then re-run setup.sh."
 _bootstrap_docker() {
   curl -fsSL https://get.docker.com | $SUDO sh
 }
@@ -500,7 +521,7 @@ if _detect_wsl2; then
 fi
 
 echo ""
-ok "Bootstrap complete (docker + k3s + repos + images)."
+ok "Bootstrap complete (docker + k3s + jq + repos + images)."
 echo ""
-echo "Next — bring up the cluster and stand up Marc + Caesar:"
+echo "Next — bring up the cluster and stand up the starter pair (planner + engineer):"
 echo "    cd $FLEET_HOME/bin && bash k8s-up.sh"

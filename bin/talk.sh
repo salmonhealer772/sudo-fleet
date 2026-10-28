@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# jq is a hard host prerequisite: every `kubectl ... -o json` read below (find
+# the deployment, list agents, read containers/namespace, pick the pod) is
+# parsed through it. Check it FIRST, so a machine without jq fails with the fix
+# instead of "jq: command not found" 50 lines into the tty check.
+if ! command -v jq >/dev/null 2>&1; then
+  echo "✗ jq is required (talk.sh parses kubectl JSON with it)." >&2
+  echo "  Install:  sudo apt-get install -y jq   (or re-run setup.sh, which installs it)" >&2
+  exit 1
+fi
+
 # bin/talk.sh — Talk to any sudo agent (sudo-agent/hermes OR sudo-letta)
 # v3 of talk-ALL.sh: v2's letta input fixes + question menus take typing
 # without first arrowing down to "Type something."
