@@ -3,6 +3,23 @@
 Phase 2, brief E (documentation). Date 2026-10-28. Author: h5, one of the five
 engineers on the sudo-fleet-glm team.
 
+> **Post-push correction, 2026-10-28 — the `jq` findings below are historical.**
+> Two commits landed after this report was pushed and make its central code gap
+> false at HEAD. **`4918ca2`** ("fix(bootstrap): install jq and drop instance
+> names from Command 1") adds step `2/5 Bootstrap: Docker + jq` to `setup.sh`,
+> which installs `jq` on apt boxes and hard-stops with the install line when it
+> cannot. **`898b6bc`** ("fix(up.sh): fail fast when jq is missing instead of
+> dropping operator env") adds the matching guard to
+> `factories/sudo-agent/bin/up.sh`, so a `jq`-less host aborts the deploy instead
+> of silently emptying the operator-env preserve-set.
+>
+> Read every "`setup.sh` does not install `jq`" sentence below as what was true
+> when this pass measured it (before `4918ca2`); the transcripts in §6.5 are left
+> verbatim for that reason, with the current counts beside them. The doc clauses
+> this report added were already right and needed no further edit:
+> `README.md:12-17` and `docs/OPERATIONS.md:12-16` state the prerequisite and
+> that `setup.sh` installs it on apt boxes.
+
 **What this brief did NOT do:** nothing was built, tagged, deployed, restarted,
 scaled or exec'd. No `kubectl`. The danger in this phase is a build re-pointing
 `sudo-agent:latest`, which ~60 live deployments pin with
@@ -25,17 +42,20 @@ one `docker run` of a stock `ubuntu:24.04` to measure what a clean box has.
   Command 1 and Command 2 accurately (bootstrap vs deploy, `sudo-planner` /
   `sudo-engineer`, empty brains by default), and Command 3 accurately —
   **including the host prerequisite nobody had written down, `jq`, which
-  `talk.sh` requires and `setup.sh` does not install.** With `jq` present the
-  sequence is coherent end to end; without it the third command fails on a stock
-  box. That is now stated in the README instead of hidden. The separate question
-  — does the install path build the same image the deploy path runs — was
-  measured by h1 as **identical** (53 identical layer digests, §4.2).
+  `talk.sh` requires and `setup.sh` did not install when this pass ran** (fixed
+  after this report shipped, in `4918ca2` — see the banner at the top). With `jq`
+  present the sequence is coherent end to end; without it the third command fails
+  on a stock box. That is now stated in the README instead of hidden. The
+  separate question — does the install path build the same image the deploy path
+  runs — was measured by h1 as **identical** (53 identical layer digests, §4.2).
 - **Verdict: a stranger can now follow the docs to a running pair, and cannot
   yet do it on a bare box without one extra install.** Clone → bootstrap →
   deploy is described correctly and the pages that said "this cannot work" are
-  gone. The remaining blockers are code, not prose: `jq` is not installed by
-  Command 1 (§4.1), and Command 2's own closing advice (`bash bin/k8s-down.sh`)
-  is wrong from the directory Command 2 leaves you in (§4.3).
+  gone. Of the two code blockers this pass named, one has since been closed in
+  code: `jq` **is** installed by Command 1 as of `4918ca2` (§4.1), so the extra
+  install line is belt-and-braces rather than load-bearing. The other still
+  stands: Command 2's own closing advice (`bash bin/k8s-down.sh`) is wrong from
+  the directory Command 2 leaves you in (§4.3).
 
 ---
 
@@ -104,7 +124,7 @@ session at this checkout; the outputs are in §6.
 | # | Said | Now | Verified by |
 |---|---|---|---|
 | 22 | §2.1 "those directories do not exist … `k8s-up.sh` fails loudly at the seed check on a fresh clone … repeats unattended" | the pair needs no identity package; a seed that *is* named and bad aborts that factory's `up.sh`; the boot unit's output is worth reading | `k8s-up.sh:37-41`; `ls deployments/` |
-| 23 | §1 prerequisites: "systemd, curl, git and root or sudo" | adds `jq`, with why (talk.sh + verify-change.sh) and that Command 1 does not install it | §4.1 |
+| 23 | §1 prerequisites: "systemd, curl, git and root or sudo" | adds `jq`, with why (talk.sh + verify-change.sh) — and, as the tree stood then, that Command 1 did not install it (it has since: `4918ca2`) | §4.1 |
 | 24 | D1 "HIGH — unresolved … NOT fixed here" | RESOLVED in code `07d5d77`, with the evidence and the note that the residue was documentation, corrected here | `git log --oneline -S _seed_for -- bin/k8s-up.sh` |
 | 25 | `COMPONENTS.md`: Command 2 "Deploys the starter pair …" | names `sudo-planner`/`sudo-engineer`, the Paperclip step, and "seed absent by default" | `k8s-up.sh` steps 3–5 |
 
@@ -153,14 +173,26 @@ sudo apt-get install -y jq          # prerequisite, not a command: talk.sh needs
 **The prerequisite gap.** `bin/talk.sh` pipes `kubectl … -o json` through `jq`
 at lines 52, 56, 59, 60, 225, 226, 232, 262 under `set -euo pipefail`, so a
 missing `jq` kills it at line 52 (`jq: command not found`) before any prompt.
-`bin/verify-change.sh` has 47 `jq` calls. Nothing installs it — measured in §6.5.
-The README now says so in prose and as a copy-pasteable line.
+`bin/verify-change.sh` has 47 `jq` calls. Nothing installed it — measured in §6.5
+against the tree as it stood then. The README now says so in prose and as a
+copy-pasteable line.
 
-**This is a code gap, not a prose gap.** The one-line fix belongs in Command 1
-(`apt-get install -y jq`). I reported it to h1, who owns `setup.sh` this phase
-(message `msg-0166914c4e22`); `setup.sh` was uncommitted in the tree while I
-worked, so I could not see their final decision. If they add it, the README line
-becomes belt-and-braces rather than load-bearing — it does not become wrong.
+**This was a code gap, not a prose gap — and it is closed in code now.** The fix
+belonged in Command 1 (`apt-get install -y jq`); h1, who owns `setup.sh` this
+phase, made it after this pass reported it (message `msg-0166914c4e22`):
+
+- `4918ca2` adds step `2/5 Bootstrap: Docker + jq` — `command -v jq` at
+  `setup.sh:336`, apt install in `_bootstrap_jq` (`:332-335`), and a **hard stop**
+  at `:346` with the manual install line, so a box that cannot get `jq` fails in
+  Command 1 instead of 50 lines into Command 3. `grep -c jq setup.sh` is 17 at
+  HEAD, against 0 when §6.5 was measured.
+- `898b6bc` adds the matching guard to the deploy path (`up.sh:38-46`, +10 lines,
+  nothing else in that commit), because `up.sh` runs without `set -e` and a
+  missing `jq` there emptied the operator-env preserve-set and dropped operator
+  variables on the next roll.
+
+The README line is now belt-and-braces rather than load-bearing — it does not
+become wrong.
 
 (Stock `ubuntu:24.04` also has no `curl` and no `git`, which Commands 1 and 2
 both assume. Both READMEs now list them.)
@@ -295,7 +327,12 @@ $ grep -n '_ask "' setup.sh
 270:  _WS_KEY="$(_ask "Tavily API key (optional):")"
 ```
 
-### 6.5 The jq prerequisite
+### 6.5 The jq prerequisite — measured before `4918ca2`, closed in code since
+
+The counts below are what the tree said when this pass ran; they are kept
+verbatim because they are the evidence for the finding. At HEAD, after `4918ca2`,
+`grep -c 'jq' setup.sh` is **17** and the install lives in step `2/5`
+(`setup.sh:324-346`), so the first and third lines below no longer describe HEAD.
 
 ```
 $ grep -c 'jq' setup.sh
@@ -360,15 +397,18 @@ MISSING TARGETS: 0 — every relative link resolves
 
 Read as: clone → setup → deploy → talk, on a machine that is not this one.
 
-1. **`jq` is required and nobody says so.** Command 3 dies at `talk.sh:52` on a
-   stock Ubuntu. *Docs fixed; code gap reported to h1.*
+1. **`jq` was required and nobody said so.** Command 3 died at `talk.sh:52` on a
+   stock Ubuntu. *Docs fixed; code gap closed after this pass by `4918ca2`
+   (`setup.sh` step 2 installs it and dies with the install line if it cannot).*
 2. **Command 3's `cd`.** Command 2 is `cd bin && …`; Command 1 is run from the
    repo root; the old Command 3 said "run it from the repo root" while sitting
    after a command that leaves you in `bin/`. *Fixed (`cd .. &&`).*
 3. **Command 2's own closing advice contradicts its own cwd** —
-   `bash bin/k8s-down.sh` printed while you are in `bin/`. *Not fixed (script).*
-4. **Command 1's closing line says "stand up Marc + Caesar"** — this fleet's
-   agents, not the repo's defaults. *Not fixed (`setup.sh`, h1's file); reported.*
+   `bash bin/k8s-down.sh` printed while you are in `bin/`. *Not fixed (script);
+   still true at HEAD (`k8s-up.sh:268`).*
+4. **Command 1's closing line said "stand up Marc + Caesar"** — this fleet's
+   agents, not the repo's defaults. *Fixed by h1 in `4918ca2`: setup.sh now ends
+   "stand up the starter pair (planner + engineer)".*
 5. **The reader could not tell what the pair would be called.** "a Letta planner
    and a Hermes engineer" never said `sudo-planner` / `sudo-engineer`, which is
    exactly what Command 3 needs as `--planner`. *Fixed.*
@@ -394,8 +434,8 @@ Read as: clone → setup → deploy → talk, on a machine that is not this one.
     counts — harmless to a stranger, wrong for the repo. *Named, not fixed.*
 
 Items 1–8 would stop a careful stranger; 9–13 would make them distrust the
-document. In *code*, 1, 3 and 4 remain open; everything else is closed in the
-text.
+document. `4918ca2` closed items 1 and 4 in code after this pass; item 3 is still
+open in the script; everything else is closed in the text.
 
 ---
 
@@ -468,12 +508,14 @@ cannot contain its own hash, so the file's own commit is `2b75fec`'s child and
   `docs/` at `fe13f90`, so the index does not name them — see §7 for what to run
   when they land.
 
-**How close to the finish line: close, with one honest gap.** A stranger can
-clone this repository, read the root README and understand exactly what they are
-about to install, then follow three accurately described commands to two clean
-agents; the one thing that can still stop them is `jq` not being installed by
-Command 1 (§4.1), which is now written down rather than assumed. Closing that
-hole needs a one-line change in `setup.sh` — not another documentation pass.
+**How close to the finish line: close, with one honest gap — since halved.** A
+stranger can clone this repository, read the root README and understand exactly
+what they are about to install, then follow three accurately described commands
+to two clean agents. The one thing that could still stop them was `jq` not being
+installed by Command 1 (§4.1); that is now written down *and* installed by
+Command 1 itself (`4918ca2`), so it is no longer a hole. What remains is prose
+this pass flagged and could not reach — Command 2's own closing line
+(`k8s-up.sh:268`, §4.3).
 
 ## Addendum — brief C's knock-ons (folded in after the first push)
 
