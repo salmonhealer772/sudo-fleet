@@ -9,7 +9,10 @@
 # Bump this line on purpose; do not go back to :latest.
 # v0.22.5 is a multi-arch manifest (linux/amd64 + linux/arm64) and this node is
 # arm64, so the plain tag is the right one — never an arch-suffixed tag.
-FROM hermes-agent:v0.22.5
+# The repository is spelled out in full: a bare `hermes-agent:v0.22.5` resolves
+# to docker.io/library/hermes-agent, which does not exist, so a build dies at
+# step 1 unless someone has hand-made a local tag. Only this reference pulls.
+FROM nousresearch/hermes-agent:v0.22.5
 
 # The modern hermes-agent base ships uv under /opt/hermes/tools/uv-<ver>-linux-x64/
 # (NOT on PATH). Expose it so the `uv pip install` steps below can resolve it.

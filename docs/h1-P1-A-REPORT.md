@@ -3,8 +3,11 @@
 Agent: sudo-fleet-glm-h1
 Brief: P1-A (Dockerfile, patch_memory_review.py, the up.sh references)
 Date: 2026-10-28 (UTC)
-Commit pushed: **37b863b** — `pin base to v0.22.5 and remove the memory patch`
-Status: **DONE** — pinned, patch gone from every functional reference, line-556 rationale intact, up.sh parses, pushed to origin/main, fleet untouched.
+Commits pushed: **37b863b** — `pin base to v0.22.5 and remove the memory patch`; then
+`fix(factory): qualify the pinned base image` (correction after h4's build — §5).
+Status: **DONE** — pinned to the fully qualified `nousresearch/hermes-agent:v0.22.5`,
+patch gone from every functional reference, line-556 rationale intact, up.sh parses,
+the base reference builds (probe in §5), pushed to origin/main, fleet untouched.
 
 Working copies of what I produced:
 `/tmp/oct27/hermes-upgrade-research/phase1-out/h1/{Dockerfile,up.sh}` plus this report.
@@ -23,8 +26,14 @@ Committed into the repo at `factories/sudo-agent/{Dockerfile,bin/up.sh}` and `do
 # Bump this line on purpose; do not go back to :latest.
 # v0.22.5 is a multi-arch manifest (linux/amd64 + linux/arm64) and this node is
 # arm64, so the plain tag is the right one — never an arch-suffixed tag.
-FROM hermes-agent:v0.22.5
+# The repository is spelled out in full: a bare `hermes-agent:v0.22.5` resolves
+# to docker.io/library/hermes-agent, which does not exist, so a build dies at
+# step 1 unless someone has hand-made a local tag. Only this reference pulls.
+FROM nousresearch/hermes-agent:v0.22.5
 ```
+
+The first delivered version carried the brief's bare `hermes-agent:v0.22.5` and
+failed to build; §5 records the correction and why only the qualified form resolves.
 
 Registry check done from this pod (not taken on faith):
 
@@ -107,7 +116,7 @@ No hit in `Dockerfile`, none in any functional up.sh line. The `README.md:158` h
 Hashes of what is now in the repo (identical to the staged copies):
 
 ```
-bb744a733896336743aaa162ae91dad7  factories/sudo-agent/Dockerfile
+4e9b190e6ad7eb870e536c996f56db78  factories/sudo-agent/Dockerfile
 4caf72a9ba77aa0d1ce4d4882c046629  factories/sudo-agent/bin/up.sh
 ```
 
@@ -122,7 +131,7 @@ hermes-agent:latest ID=sha256:e215c3268860...  Created=2026-10-18T23:11:14-07:00
 
 ## 3. Findings for the lead (things I did not fix, and why)
 
-**F1 — The brief's bare tag cannot be resolved from a registry; the repo needs a pre-tag before h4 can build.**
+**F1 — RESOLVED in §5: the brief's bare tag cannot be resolved from a registry; the line now uses the F27 reference.**
 The brief says `FROM hermes-agent:v0.22.5`; `00-FACTS.md` F27 records the resolved reference as `nousresearch/hermes-agent:v0.22.5`. I followed the brief (docs contradicting the brief → do the brief, report the disagreement), but the two are not equivalent operationally: with a bare name, docker looks for `docker.io/library/hermes-agent:v0.22.5`, which does not exist, so the build fails with a pull error rather than a Dockerfile error. Before building, the base must exist locally:
 
 ```
@@ -130,7 +139,9 @@ docker pull nousresearch/hermes-agent:v0.22.5
 docker tag  nousresearch/hermes-agent:v0.22.5 hermes-agent:v0.22.5
 ```
 
-I have messaged h4 with exactly this (msg id `msg-b36e1dc1526d`, inbox). **Decision for you:** either accept the pre-tag step as part of the factory workflow, or change the line to the fully qualified `FROM nousresearch/hermes-agent:v0.22.5`, which pulls on its own and is what F27 actually verified. I did not make that change myself because the brief named the exact target line.
+I have messaged h4 with exactly this (msg id `msg-b36e1dc1526d`, inbox). **Decision for you:** either accept the pre-tag step as part of the factory workflow, or change the line to the fully qualified `FROM nousresearch/hermes-agent:v0.22.5`, which pulls on its own and is what F27 actually verified. I first followed the brief literally and escalated this instead of editing the target
+line; after h4's build failed at step 1 (and F27 independently records the qualified
+reference) I changed it — see §5.
 
 **F2 — up.sh's build-on-missing path still builds `hermes-agent:latest` from git HEAD, so the committed repo cannot reproduce the pinned base end to end.**
 `_build_hermes_base` (up.sh ~1302–1314) does `git clone --depth 1` + `docker build -t hermes-agent:latest`, and `_ensure_image_built` special-cases `hermes-agent:latest`; `_import_image hermes-agent:latest` still imports that tag. That is the same unpinned-drift mechanism this brief removes from the Dockerfile, just moved into the deploy script. Fixing it means changing what up.sh builds and imports — a behaviour change well outside "fix the three patch mentions" — so I left it. It needs its own brief.
@@ -152,7 +163,7 @@ Stale doc line, not a functional reference, and not in my brief's file list, so 
 
 | requirement | evidence |
 |---|---|
-| Dockerfile pinned to v0.22.5 | `12:FROM hermes-agent:v0.22.5` |
+| Dockerfile pinned to v0.22.5 | `15:FROM nousresearch/hermes-agent:v0.22.5` (F27 reference) |
 | comment explains the pin | Dockerfile lines 6–11 |
 | patch file deleted | `ls` → No such file; commit stat shows `delete mode 100644` |
 | Dockerfile no longer copies/runs it | grep of Dockerfile for `patch_memory_review` → no hits |
@@ -163,3 +174,86 @@ Stale doc line, not a functional reference, and not in my brief's file list, so 
 | up.sh parses | `bash -n` exit 0 |
 | pushed to GitHub | `git ls-remote origin main` = `37b863b...` |
 | live fleet untouched | no build/tag/kubectl/exec; `sudo-agent:latest` still the 2026-10-18 image |
+
+---
+
+## 5. Correction, 2026-10-28 — the FROM line is now fully qualified (resolves F1)
+
+h4 built the delivered `phase1-out/h1/Dockerfile` and it failed at step 1:
+
+```
+Step 1/20 : FROM hermes-agent:v0.22.5
+pull access denied for hermes-agent, repository does not exist or may require docker login
+BUILD_EXIT=1
+```
+
+I re-verified the cause on the same daemon rather than taking it on h4's word:
+
+```
+$ docker manifest inspect hermes-agent:v0.22.5
+denied: requested access to the resource is denied
+unauthorized: authentication required        <- docker.io/library/hermes-agent: no such repo
+
+$ docker manifest inspect nousresearch/hermes-agent:v0.22.5
+"mediaType": "application/vnd.docker.distribution.manifest.list.v2+json"
+  2 platforms: linux/amd64, linux/arm64
+
+$ curl -s -o /dev/null -w '%{http_code}' https://hub.docker.com/v2/repositories/nousresearch/hermes-agent/tags/v0.22.5
+200
+
+$ docker images | grep hermes-agent
+hermes-agent:latest                e215c3268860   <- LOCAL tag, built by up.sh _build_hermes_base
+hermes-agent:v0.22.5               9c5561579f3f   <- alias h4 made by hand to stay unblocked
+nousresearch/hermes-agent:v0.22.5  9c5561579f3f
+```
+
+Nothing in the factory ever creates a local `hermes-agent:v0.22.5` (`up.sh` only
+special-cases `hermes-agent:latest`), so the bare pin could never resolve on a clean
+host. That is F1 above, now proven by a real build instead of predicted, and
+`00-FACTS.md` F27 records the resolved reference as `nousresearch/hermes-agent:v0.22.5`
+(F28: amd64 + arm64).
+
+Why I changed it: in the first pass I followed the brief literally and escalated
+rather than editing the target line (§3 F1). The contradiction is now settled by a
+failing build, not by opinion — the literal brief line cannot produce the artifact the
+brief asks for, and F27, written by the lead after the brief, names the reference that
+does. The line now uses F27's reference.
+
+Changed in both places; the staged copy and the repo are byte-identical
+(md5 `4e9b190e6ad7eb870e536c996f56db78`):
+
+```
+-FROM hermes-agent:v0.22.5
++# The repository is spelled out in full: a bare `hermes-agent:v0.22.5` resolves
++# to docker.io/library/hermes-agent, which does not exist, so a build dies at
++# step 1 unless someone has hand-made a local tag. Only this reference pulls.
++FROM nousresearch/hermes-agent:v0.22.5
+```
+
+Proof of the fixed line — a real one-step build, not a config read:
+
+```
+$ docker build -t h1-fromprobe:throwaway <dir whose Dockerfile is FROM nousresearch/hermes-agent:v0.22.5>
+#5 naming to docker.io/library/h1-fromprobe:throwaway done
+#5 DONE 0.3s                                  <- step 1 resolved and built
+$ docker rmi h1-fromprobe:throwaway           <- probe tag removed afterwards
+
+$ grep -n '^FROM' factories/sudo-agent/Dockerfile
+15:FROM nousresearch/hermes-agent:v0.22.5
+$ diff -q phase1-out/h1/Dockerfile factories/sudo-agent/Dockerfile   -> identical
+$ bash -n factories/sudo-agent/bin/up.sh                             -> OK (untouched by this fix)
+$ docker image inspect sudo-agent:latest -> ID sha256:16d149ddf0f2..., Created 2026-10-18 (fleet image unchanged)
+```
+
+`up.sh` is unaffected by this correction: the only `patch_memory_review` hit left in it
+is the line-556 rationale comment, line 1402's loop lists only `$REPO_DIR/Dockerfile`,
+and line 1408 names no file.
+
+Two notes for the lead:
+
+* h4's local alias tag `hermes-agent:v0.22.5` is not needed once this commit is in. I
+  left it in place — h4's build was in flight, and removing a tag h4 created is h4's
+  call, not mine.
+* F2 still stands and is now the remaining clean-host gap: `up.sh` still builds and
+  imports `hermes-agent:latest` as the base whatever the Dockerfile's FROM says. That
+  needs its own brief; this commit does not touch it.
