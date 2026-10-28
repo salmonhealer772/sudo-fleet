@@ -53,6 +53,12 @@ CONFIG_DIR="$REPO_DIR/config"
 DEPLOY="sudo-$NAME"
 YAML="$YAML_DIR/$NAME.yaml"
 PER_AGENT_CONFIG="$CONFIG_DIR/$NAME.yaml"
+# The image this deploy runs and imports. Defaults to the historical
+# `sudo-agent:latest`, which is what every live deployment references; the
+# override exists so a throwaway build (e.g. a pre-release candidate) can be
+# deployed, or a deploy verified, WITHOUT re-pointing the tag that a fleet of
+# running agents shares. Same default, same behaviour when unset.
+AGENT_IMAGE="${SUDO_AGENT_IMAGE:-sudo-agent:latest}"
 # Repo-owned SOUL identity for this agent (OPTIONAL). When this file exists,
 # up.sh seeds it into the PVC through an initContainer (see the seed block below)
 # so an engineer's identity is reproducible from the repo instead of existing
@@ -568,11 +574,11 @@ echo "→ watch scripts digest: ${WATCH_SCRIPTS_SHA:0:12}"
 # the pod. Pin the docker image's
 # content-addressable ID as a pod-template annotation so kubectl apply
 # recreates the pod exactly when the image content changes.
-IMAGE_SHA="$(docker image inspect sudo-agent:latest --format '{{.Id}}' 2>/dev/null)"
+IMAGE_SHA="$(docker image inspect "$AGENT_IMAGE" --format '{{.Id}}' 2>/dev/null)"
 if [[ -z "$IMAGE_SHA" ]]; then
-  echo "✗ could not read the sudo-agent:latest image ID — refusing to deploy an" >&2
+  echo "✗ could not read the $AGENT_IMAGE image ID — refusing to deploy an" >&2
   echo "  unversioned image (an image-only change would silently never roll)." >&2
-  echo "  Build it first:  bash setup.sh   (or: docker build -t sudo-agent:latest -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
+  echo "  Build it first:  bash setup.sh   (or: docker build -t $AGENT_IMAGE -f \"$REPO_DIR/Dockerfile\" \"$REPO_DIR\")" >&2
   exit 1
 fi
 echo "→ sudo-agent image digest: ${IMAGE_SHA:0:12}"
@@ -702,7 +708,7 @@ if [[ -n "${GLIMOR_DIR:-}" ]]; then
   GLIMOR_ABS="$(cd "$GLIMOR_DIR" && pwd)"
   SEED_INITCONTAINERS="      initContainers:
       - name: seed-glimor
-        image: sudo-agent:latest
+        image: $AGENT_IMAGE
         imagePullPolicy: IfNotPresent
         securityContext:
           runAsUser: 0
@@ -730,7 +736,7 @@ elif [[ -f "$SOUL_SRC" ]]; then
   SEED_INITCONTAINERS="$(cat <<'SEEDSOUL'
       initContainers:
       - name: seed-soul
-        image: sudo-agent:latest
+        image: $AGENT_IMAGE
         imagePullPolicy: IfNotPresent
         securityContext:
           runAsUser: 0
@@ -919,7 +925,7 @@ $DNS_POLICY
 $SEED_INITCONTAINERS
       containers:
       - name: sudo-agent
-        image: sudo-agent:latest
+        image: $AGENT_IMAGE
         imagePullPolicy: IfNotPresent
         args: ["gateway", "run"]
         securityContext:
@@ -1023,7 +1029,7 @@ $SKILLS_VOLUME_MOUNTS        # ── Self-repair probes: restart on crash/hang 
       # CMD); no docker socket; runs as uid 10000 so the watch dir on the
       # PVC is owned by the agent uid.
       - name: watch
-        image: sudo-agent:latest
+        image: $AGENT_IMAGE
         imagePullPolicy: IfNotPresent
         command: ["python3", "/opt/watch-sidecar/watch_sidecar.py"]
         securityContext:
@@ -1375,7 +1381,7 @@ _image_digest() {
 }
 
 _assert_image_fresh() {
-  local img="sudo-agent:latest" want got
+  local img="$AGENT_IMAGE" want got
   if ! docker image inspect "$img" >/dev/null 2>&1; then
     # Build-on-missing (see _ensure_image_built): a deploy must not dead-end on
     # an absent image. Only a BUILD failure is fatal here.
@@ -1423,7 +1429,7 @@ _assert_image_fresh
 # pulled by the build and no pod ever references it, so importing it was 4.5 GB
 # of containerd churn (and a build of upstream main on any host missing the tag)
 # for an image nothing runs.
-_import_image sudo-agent:latest
+_import_image "$AGENT_IMAGE"
 
 # ── Apply ──
 # --validate=false lets the generated manifest through even when the local
