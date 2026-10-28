@@ -5,28 +5,44 @@ next maintainer can tell which sentences are load-bearing and which have gone
 stale. This is the documentation equivalent of a test suite.
 
 Checked against a read-only working copy of the repo tree at
-`/tmp/oct26/sudo-fleet-documentation/src/repo`, which is tree `1894b0b` (2026-10-27): its
-`docs/SPEC.md` and `git show 1894b0b:docs/SPEC.md` are the same file (`dbce5422…`).
-`60dc842` — the commit that created this appendix — rewrote `SPEC.md` at the same time,
-so ranges that were read off the handed-over copy drifted on arrival. Every range here
-was therefore re-derived and re-grepped at `9559afe`, not shifted arithmetically. Paths in
-the "verified where" column are relative to this repo's root; re-grep before trusting a
-range after edits.
+`/tmp/oct26/sudo-fleet-documentation/src/repo`, which is commit `1894b0b`
+(2026-10-27) byte-for-byte: its `docs/SPEC.md` and `git show 1894b0b:docs/SPEC.md`
+are the same file, both `md5 dbce5422b010ad3b523a945bb30b23f7`. Every range was
+re-derived and re-grepped rather than shifted arithmetically — re-derived at
+`9559afe`, then every cite re-resolved against the tree at `dc065db` (exact path,
+then line count). `docs/SPEC.md` is unchanged since `9559afe`, so its re-points
+below stand at HEAD. Re-grep before trusting a range after edits.
 
-**Path rules (several filenames exist more than once).** `setup.sh` unqualified in a row
-whose claim is Command-1 behaviour means the **repo-root** script, and those rows say
-`(repo root)` beside the cite; `factories/sudo-agent/setup.sh` is a different, 283-line
-first-run script and is never meant. `up.sh` exists three times in the tree, so factory
-scripts are always cited in full (`factories/sudo-agent/bin/up.sh`,
-`factories/sudo-letta/bin/up.sh`), as are the factory modules (`bin/api_server_ports.py`,
-`comm/tools/comm_gate.py`, `comm/tools/list_siblings.py`, `comm/README.md`,
-`mods/list-siblings/mods/gate.mjs`).
+**Path rules (several filenames exist more than once).** Every cite is relative to
+the repo root and carries the directory that makes it unambiguous:
+`factories/sudo-agent/bin/up.sh`, never a bare `bin/up.sh`. Resolve the exact path
+from the root first; a cite that still does not resolve from the root lives under
+`factories/sudo-agent/` — `comm/README.md` is
+`factories/sudo-agent/comm/README.md`. The factory modules are never cited bare:
+they are `factories/sudo-agent/bin/api_server_ports.py`,
+`factories/sudo-agent/comm/tools/comm_gate.py` and
+`factories/sudo-agent/comm/tools/list_siblings.py`. `up.sh` exists four times and
+`gate.mjs` six times, so both are always cited in full. `README.md` exists 18 times:
+a bare `README.md` is the repo-root one, and a factory README is always qualified.
+`setup.sh` unqualified in a row whose claim is Command-1 behaviour means the
+**repo-root** script, and every such row says `(repo root)` beside the cite; the
+other two are first-run factory scripts, `factories/sudo-agent/setup.sh` and
+`factories/sudo-letta/setup.sh`, and are never meant.
+
+**SPEC re-points.** `60dc842` — the commit that created this appendix — rewrote
+`docs/SPEC.md` in the same commit, so every SPEC range measured off the copy was
+stale the moment it was committed. SPEC cites are written `snapshot line → live
+line`: `docs/SPEC.md:108` → `:121` means the claim was measured at `:108` in
+`1894b0b` and `:121` is the line that carries it at HEAD. Every row with an arrow
+is marked SNAPSHOT-ONLY, and so is any cite whose source exists only in the
+snapshot, such as the `docs/MARC_CAESAR_STATUS.md` receipt deleted in `07d5d77`.
 
 **Status vocabulary** — VERIFIED (seen in the cited file at the cited lines, as
 stated) · STALE (doc says X, code says Y; corrected value in the row) · INFERRED
 (not stated anywhere, concluded from adjacent evidence — the weakest status) ·
 UNVERIFIED (could not be checked from the material handed over) · ABSENT (the file
-or the claim's source is not in the tree)
+or the claim's source is not in the tree) · SNAPSHOT-ONLY (resolves at `1894b0b`,
+not at the rewrite; the re-pointed line is in this row)
 
 **Missing inputs (read this first).** Three items named in the commissioning brief
 were not present in the material: `FACTS.md` (nowhere under the handed-over tree,
@@ -77,7 +93,7 @@ resource. That single fact drives all of the derivation below.
 | A guard refuses to deploy a config that resolves to the built-in default 8642 or to a duplicate `api_server` port | `factories/sudo-agent/bin/up.sh:537-545`; `factories/sudo-agent/bin/api_server_ports.py:80` | VERIFIED |
 | Offline fallback Redis port is `40000 + (MCP_PORT*7) % 20000` = 40000..59999, injective over the MCP range | `factories/sudo-agent/DESIGN.md:252-256`; `factories/sudo-agent/bin/api_server_ports.py:73` | VERIFIED |
 | Each Service exposes the stable client port 8000 and forwards to the per-agent port | `factories/sudo-letta/bin/up.sh:494-526`; `factories/sudo-agent/bin/up.sh:1163-1186` | VERIFIED |
-| The deterministic port scheme is `8642 + cksum(name) % 5000` | `docs/SPEC.md:37` | **STALE** — and the doc now flags its own figure: `SPEC.md:37` quotes `8642 + cksum(name)%5000` and calls it stale, pointing at `ARCHITECTURE.md` for the shipped formulas. Corrected value: `8000 + cksum(name) % 22000`, range 8000..29999 (`factories/sudo-letta/bin/up.sh:57`). 8642 is now a *forbidden* value, not a base (`factories/sudo-agent/bin/api_server_ports.py:80`; guard at `factories/sudo-agent/bin/up.sh:543`) |
+| The deterministic port scheme is `8642 + cksum(name) % 5000` | `docs/SPEC.md:26` → `:37` | **STALE** · SNAPSHOT-ONLY — and the doc now flags its own figure: `docs/SPEC.md:37` quotes `8642 + cksum(name)%5000` and calls it stale, pointing at `ARCHITECTURE.md` for the shipped formulas. Corrected value: `8000 + cksum(name) % 22000`, range 8000..29999 (`factories/sudo-letta/bin/up.sh:57`). 8642 is now a *forbidden* value, not a base (`factories/sudo-agent/bin/api_server_ports.py:80`; guard at `factories/sudo-agent/bin/up.sh:543`) |
 | `docs/PAPERCLIP.md` describes the same window as `8000 + hash % 22000` = 8000..29999 | `docs/PAPERCLIP.md:99-107` | VERIFIED — agrees with the code; the stale statement is confined to SPEC.md |
 
 ## 3. Agent spec
@@ -91,7 +107,7 @@ resource. That single fact drives all of the derivation below.
 | The watch sidecar runs the same image with an explicit `command`, mounts no docker socket, and has no privileged securityContext | `factories/sudo-letta/bin/up.sh:419-431`; `factories/sudo-letta/DESIGN.md:89` | VERIFIED |
 | Hermes watch sidecar explicitly sets `runAsUser: 10000` and `runAsNonRoot: true` | `factories/sudo-agent/bin/up.sh:1040-1041` | VERIFIED |
 | Letta watch sidecar sets no securityContext at all and therefore runs as the image's own user | `factories/sudo-letta/bin/up.sh:419-431` (no securityContext key present) | INFERRED — the numeric uid is not stated in the files read |
-| Doc claim that the watch sidecar runs as uid 10000 and does *not* carry the docker gid | `docs/KNOWN-ISSUES.md:60-64` | VERIFIED for Hermes only (`sudo-agent/bin/up.sh:1019`); it is stated as a residual papercut, not a defect |
+| Doc claim that the watch sidecar runs as uid 10000 and does *not* carry the docker gid | `docs/KNOWN-ISSUES.md:60-64` | VERIFIED for Hermes only (`factories/sudo-agent/bin/up.sh:1019`); it is stated as a residual papercut, not a defect |
 | Three probes on the agent container: `startupProbe`, `readinessProbe`, `livenessProbe`, all `tcpSocket` on the MCP port | `factories/sudo-letta/bin/up.sh:401-418`; `factories/sudo-agent/bin/up.sh:1013-1025` | VERIFIED |
 | Three probes on the watch container: all `httpGet /healthz` on the watch port | `factories/sudo-letta/bin/up.sh:440-456`; `factories/sudo-agent/bin/up.sh:1066-1080` | VERIFIED |
 | PVC is `<deploy>-data`, 10Gi, ReadWriteOnce | `factories/sudo-letta/bin/up.sh:335-346` | VERIFIED |
@@ -115,7 +131,7 @@ resource. That single fact drives all of the derivation below.
 | Hermes requeues items abandoned in `:inflight` by a crash, preserving order, at-least-once | `factories/sudo-agent/bin/mcp_server.py:248-259` | VERIFIED |
 | Letta's drain worker has no atomic claim: it lists, picks, runs, then `LREM`s afterwards — the item stays visible as pending while it runs | `factories/sudo-letta/bin/mcp_server.py:227-251` (removal after execution at ~247) | VERIFIED — asymmetry is real; do not document "the claim is atomic" as a fleet-wide property |
 | Ordering rule implemented identically on both sides: first message first, then drain that sender fully, then the most-recent other sender, FIFO within a sender | `factories/sudo-letta/bin/mcp_server.py:190-208`; `factories/sudo-agent/bin/mcp_server.py:190-208` | VERIFIED |
-| The same four-part ordering rule is stated verbatim in the design docs | `factories/sudo-agent/DESIGN.md:246-250`; `factories/sudo-letta/DESIGN.md:140-145`; `docs/SPEC.md:213-219` | VERIFIED |
+| The same four-part ordering rule is stated verbatim in the design docs | `factories/sudo-agent/DESIGN.md:246-250`; `factories/sudo-letta/DESIGN.md:140-145`; `docs/SPEC.md:198-204` → `:213-219` | VERIFIED · SNAPSHOT-ONLY |
 | Exactly one drain worker per pod feeds the agent one prompt at a time | `factories/sudo-agent/bin/mcp_server.py:278-304`; `factories/sudo-letta/bin/mcp_server.py:227-251` | VERIFIED |
 | Results are kept in Redis with a 7-day TTL for inbox-mode pickup | `factories/sudo-letta/bin/mcp_server.py:211-224`; `factories/sudo-agent/bin/mcp_server.py:262-275` | VERIFIED |
 | Hermes is stateless per invocation (`hermes -z`), so there is no conversation resume on that side | `factories/sudo-agent/DESIGN.md:198`; `factories/sudo-agent/README.md:120-121` | VERIFIED |
@@ -127,7 +143,7 @@ resource. That single fact drives all of the derivation below.
 
 | CLAIM | VERIFIED WHERE | STATUS |
 |---|---|---|
-| Exactly three comm tools ship: `list-siblings`, `message-agent`, `check-agent` | `factories/sudo-agent/comm/README.md:21-28`; `docs/SPEC.md:121` | VERIFIED |
+| Exactly three comm tools ship: `list-siblings`, `message-agent`, `check-agent` | `factories/sudo-agent/comm/README.md:21-28`; `docs/SPEC.md:108` → `:121` | VERIFIED · SNAPSHOT-ONLY |
 | Hermes gate is a CLI prelude that exits 69 (`EX_UNAVAILABLE`) with `BLOCKED: load the <skill> skill first, then retry.` before building any transport | `factories/sudo-agent/comm/tools/comm_gate.py:44-46`, `90-104` | VERIFIED |
 | Hermes gate state is `<HERMES_HOME>/comm-gate/state.json` keyed by `HERMES_SESSION_ID`, and is fail-open when that variable is unset | `factories/sudo-agent/comm/tools/comm_gate.py:20-35`, `61` | VERIFIED |
 | Letta gate is an in-memory Map keyed by conversation id, with the same BLOCKED contract | `factories/sudo-letta/mods/list-siblings/mods/gate.mjs:6-14`, `18-19`, `36-37`, `74` | VERIFIED |
@@ -135,26 +151,26 @@ resource. That single fact drives all of the derivation below.
 | The host bridge is `docker run --rm --privileged --pid=host --net=host -v /:/host <image> nsenter -t 1 -m -u -i -n -p -- env KUBECONFIG=<path> <argv>` | `factories/sudo-agent/comm/tools/real_transport.py:13-15`, `152-167` | VERIFIED |
 | The roster comes from `kubectl get services -n default` executed on the host through that bridge | `factories/sudo-agent/comm/tools/list_siblings.py:15`, `104` | VERIFIED |
 | The roster is not fleet- or project-scoped: the command filters by namespace only, so any Service in `default` is a candidate sibling | `factories/sudo-agent/comm/tools/list_siblings.py:104` (no selector, label or fleet filter) | VERIFIED for the command; INFERRED that every `sudo-*` Service in the namespace appears |
-| `message-agent` reaches a sibling through its `-mcp` surface; `check-agent` reads the sibling's `-watch` trail | `factories/sudo-agent/comm/README.md:24-27`; `docs/SPEC.md:145-150` | VERIFIED |
+| `message-agent` reaches a sibling through its `-mcp` surface; `check-agent` reads the sibling's `-watch` trail | `factories/sudo-agent/comm/README.md:24-27`; `docs/SPEC.md:148-160` → `:145-150` | VERIFIED · SNAPSHOT-ONLY — the table at `:145-150` still names the pre-merge pair (`check-what-agent-is-doing`, `check-agent-logs`); `:121` records the merge into `check-agent` |
 | Known gap: the gate is per-conversation, so compaction can leave a tool callable after its skill text has left context | `docs/KNOWN-ISSUES.md:5-15` | VERIFIED (recorded defect) |
 | Known gap: on Hermes the comm tools are plain CLIs, so a prompt naming the tool hits "does not exist" instead of the gate's BLOCKED | `docs/KNOWN-ISSUES.md:17-27` | VERIFIED (recorded defect) |
-| Per-agent scoping of the mesh is a stated *future* direction, not an as-built property | `docs/NEXT.md:45-49`, `75-79`; `docs/SPEC.md:16-23` | VERIFIED |
+| Per-agent scoping of the mesh is a stated *future* direction, not an as-built property | `docs/NEXT.md:45-49`, `75-79`; `docs/SPEC.md:5-12` → `:16-23` | VERIFIED · SNAPSHOT-ONLY |
 
 ## 6. Identity
 
 | CLAIM | VERIFIED WHERE | STATUS |
 |---|---|---|
-| Letta loads only **git-committed** memory; an untracked MemFS is silently ignored and the agent wakes blank | `docs/ARCHITECTURE.md:73-78`; `docs/OPERATIONS.md:271-278` | VERIFIED — the original receipt, `docs/MARC_CAESAR_STATUS.md:9-12`, was deleted in `07d5d77` (instance identity out of the repo); the claim is restated in full in ARCHITECTURE |
+| Letta loads only **git-committed** memory; an untracked MemFS is silently ignored and the agent wakes blank | `docs/ARCHITECTURE.md:73-78`; `docs/OPERATIONS.md:271-278` | VERIFIED · SNAPSHOT-ONLY — the original receipt, `docs/MARC_CAESAR_STATUS.md:9-12`, was deleted in `07d5d77` (instance identity out of the repo); the claim is restated in full in ARCHITECTURE |
 | The Letta seed path is `git init` + `git add -A` + `git commit` before the agent starts | `docs/ARCHITECTURE.md:264-268`; `factories/sudo-letta/bin/mcp_entrypoint.sh:58-59` | VERIFIED |
-| A committed glimor must stay `.git`-free or the outer repo records it as a gitlink | — | **ABSENT** — the rule was carried only by `docs/MARC_CAESAR_STATUS.md:51-52`, deleted in `07d5d77`; no current doc restates the gitlink constraint |
-| Hermes identity lives at `/opt/data/SOUL.md`, with the shared snippet baked into the image at `/opt/comm/PERSONA-SNIPPET.md` | `factories/sudo-agent/bin/mcp_entrypoint.sh:95`; `docs/SPEC.md:196` | VERIFIED |
-| Letta identity lives at `<memfs>/system/persona.md`, with the snippet persisted to `/home/node/.letta/fleet-comm-snippet.md` by `up.sh` | `factories/sudo-letta/bin/mcp_entrypoint.sh:50-57`; `docs/SPEC.md:197` | VERIFIED |
-| The fleet-awareness block sits between fixed BEGIN/END markers and is replaced in place on every boot, inserting if absent | `factories/sudo-agent/bin/mcp_entrypoint.sh:80-81`; `factories/sudo-letta/bin/mcp_entrypoint.sh:35-36`; `docs/SPEC.md:194-199` | VERIFIED |
-| Nothing outside the markers is touched | `docs/SPEC.md:199`; `factories/sudo-agent/bin/mcp_entrypoint.sh:87-92` (awk replace-in-place) | VERIFIED |
-| Skills are seeded on the FIRST boot only (the agent may edit them); the persona block is re-applied every boot | `factories/sudo-agent/comm/README.md:44-47`; `docs/SPEC.md:199` | VERIFIED |
+| A committed glimor must stay `.git`-free or the outer repo records it as a gitlink | — | **ABSENT** · SNAPSHOT-ONLY — the rule was carried only by `docs/MARC_CAESAR_STATUS.md:51-52`, deleted in `07d5d77`; no current doc restates the gitlink constraint |
+| Hermes identity lives at `/opt/data/SOUL.md`, with the shared snippet baked into the image at `/opt/comm/PERSONA-SNIPPET.md` | `factories/sudo-agent/bin/mcp_entrypoint.sh:95`; `docs/SPEC.md:183` → `:196` | VERIFIED · SNAPSHOT-ONLY |
+| Letta identity lives at `<memfs>/system/persona.md`, with the snippet persisted to `/home/node/.letta/fleet-comm-snippet.md` by `up.sh` | `factories/sudo-letta/bin/mcp_entrypoint.sh:50-57`; `docs/SPEC.md:184` → `:197` | VERIFIED · SNAPSHOT-ONLY |
+| The fleet-awareness block sits between fixed BEGIN/END markers and is replaced in place on every boot, inserting if absent | `factories/sudo-agent/bin/mcp_entrypoint.sh:80-81`; `factories/sudo-letta/bin/mcp_entrypoint.sh:35-36`; `docs/SPEC.md:181-186` → `:194-199` | VERIFIED · SNAPSHOT-ONLY |
+| Nothing outside the markers is touched | `docs/SPEC.md:186` → `:199`; `factories/sudo-agent/bin/mcp_entrypoint.sh:87-92` (awk replace-in-place) | VERIFIED · SNAPSHOT-ONLY |
+| Skills are seeded on the FIRST boot only (the agent may edit them); the persona block is re-applied every boot | `factories/sudo-agent/comm/README.md:44-47`; `docs/SPEC.md:186` → `:199` | VERIFIED · SNAPSHOT-ONLY |
 | On a fresh no-glimor pod `SOUL.md` does not exist yet, so a background watcher applies the block when the gateway creates it | `factories/sudo-agent/bin/mcp_entrypoint.sh:129-148` | VERIFIED |
 | Identity seeding is skip-once: the initContainer skips via a `.glimor-seeded` marker on restart | `docs/ARCHITECTURE.md:48`, `:268` | VERIFIED |
-| Both identity files matter — `human.md` carries the counterpart pointer, so renaming only `persona.md` regresses the live answer | `docs/ARCHITECTURE.md:36`, `:59-60` | INFERRED — `human.md` is named as part of the identity shape, but the counterpart-pointer consequence is no longer stated in the tree (its receipt, `MARC_CAESAR_STATUS.md:53-54`, was deleted in `07d5d77`) |
+| Both identity files matter — `human.md` carries the counterpart pointer, so renaming only `persona.md` regresses the live answer | `docs/ARCHITECTURE.md:36`, `:59-60` | INFERRED · SNAPSHOT-ONLY — `human.md` is named as part of the identity shape, but the counterpart-pointer consequence is no longer stated in the tree (its receipt, `docs/MARC_CAESAR_STATUS.md:53-54`, was deleted in `07d5d77`) |
 
 ## 7. Secrets
 
@@ -171,7 +187,7 @@ Variable names only; no values appear in this appendix.
 | `SUDO_PASSWORD` is a literal value written into the Deployment env, not a `secretKeyRef` | `factories/sudo-agent/bin/up.sh:965-966` | VERIFIED — worth keeping visible in the docs: the only credential not behind a Secret on that side |
 | The agent shell password is generated as 16 random alphanumerics on first deploy and persisted to the factory env file | `factories/sudo-agent/bin/up.sh:418-427` | VERIFIED |
 | `setup.sh` refuses to proceed if the supplied key equals a hardcoded known trial key | `setup.sh:175-196` (repo root) | VERIFIED — value deliberately not reproduced here |
-| The repo is public, so committed glimors are scrubbed of secrets, hostnames and personal names | `README.md:164-173`; `SOURCE-OF-TRUTH.md:48-50` | VERIFIED — the public-repo warning in README plus the scrubbing rule in SOURCE-OF-TRUTH (the original `MARC_CAESAR_STATUS.md:26-29` receipt was deleted in `07d5d77`) |
+| The repo is public, so committed glimors are scrubbed of secrets, hostnames and personal names | `README.md:164-173`; `SOURCE-OF-TRUTH.md:48-50` | VERIFIED · SNAPSHOT-ONLY — the public-repo warning in README plus the scrubbing rule in SOURCE-OF-TRUTH (the original `docs/MARC_CAESAR_STATUS.md:26-29` receipt was deleted in `07d5d77`) |
 | The fleet `.env` and each factory's `.env` / `deployments/` are gitignored, so generated manifests and keys stay untracked | `.gitignore:1`, `:23-28` | VERIFIED |
 | The repo-root `.gitignore` exists and covers the fleet `.env` | `.gitignore:1` | VERIFIED — the root `.gitignore` is tracked at the tip and line 1 is `.env`; the earlier ABSENT verdict described the handed-over copy (see the merge note in OPEN) |
 
@@ -218,5 +234,5 @@ Stated as open, not guessed.
 | Whether the Paperclip 10s heartbeat floor (PC-2) is still 10s in the running image | `docs/KNOWN-ISSUES.md:81-92` | UNVERIFIED — requires a live cluster read, out of scope for a documentation intake |
 | Whether the remote control-plane findings (PC-1, PC-4) still hold | `docs/KNOWN-ISSUES.md:71-79`, `104-113` | UNVERIFIED — their host was unreachable when the findings were written |
 | The live cluster's actual port assignments for any named agent | derivations only: `factories/sudo-letta/bin/up.sh:57`, `63`; `factories/sudo-agent/bin/api_server_ports.py:85-89` | UNVERIFIED — no cluster read performed; the formulas are verified, the deployed values are not |
-| The count of agents/PVCs in the fleet (~94 agents cited, 42 PVCs cited during a backup) | `docs/SPEC.md:233-235`; `docs/IMPROVEMENTS.md:84`; `factories/sudo-agent/bin/api_server_ports.py:31` | UNVERIFIED — historical point-in-time figures, not re-measured |
+| The count of agents/PVCs in the fleet (~94 agents cited, 42 PVCs cited during a backup) | `docs/SPEC.md:218-220` → `:233-235`; `docs/IMPROVEMENTS.md:84`; `factories/sudo-agent/bin/api_server_ports.py:31` | UNVERIFIED · SNAPSHOT-ONLY — historical point-in-time figures, not re-measured; the two numbers come from IMPROVEMENTS (`:84`, 42 PVCs) and `api_server_ports.py` (`:31`, ~94 agents), and SPEC's Session log section no longer names a tracked log file |
 | Which of the four web-search provider keys an agent actually has configured | `factories/sudo-letta/bin/up.sh:122-126` | UNVERIFIED — runtime state, deliberately never logged |
