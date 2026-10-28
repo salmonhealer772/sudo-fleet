@@ -35,7 +35,7 @@ Feature: Summarize an agent's status into a short colloquial line
     And the result is a string
 
   Scenario: A single next action has no semicolon separator
-    Given a status_input with agent "marc", phase "ready", and
+    Given a status_input with agent "planner", phase "ready", and
       next_actions ["restart the pod"]
     When I call summarize with that status_input
     Then the result contains "restart the pod"

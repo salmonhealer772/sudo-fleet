@@ -7,13 +7,13 @@ Interface: tests/comm_tools.py (`Fleet`, `message_agent`, `queue_status`), pinne
            by tests/test_message_agent.py
 
 Usage
-    python3 tools/message_agent.py caesar "say hi"                    # inbox (default): enqueue, get an id
-    python3 tools/message_agent.py marc "do a long task"              # same: fire-and-forget
-    python3 tools/message_agent.py marc "hi" --mode direct            # opt-in: wait for the full reply
-    python3 tools/message_agent.py marc "hi" --new-chat --source me   # fresh convo, tagged
-    python3 tools/message_agent.py caesar "hi" --json                 # structured reply
-    python3 tools/message_agent.py marc --queue                       # read the recipient's inbox
-    python3 tools/message_agent.py caesar "say hi" --show-command     # the live reach
+    python3 tools/message_agent.py engineer "say hi"                    # inbox (default): enqueue, get an id
+    python3 tools/message_agent.py planner "do a long task"              # same: fire-and-forget
+    python3 tools/message_agent.py planner "hi" --mode direct            # opt-in: wait for the full reply
+    python3 tools/message_agent.py planner "hi" --new-chat --source me   # fresh convo, tagged
+    python3 tools/message_agent.py engineer "hi" --json                 # structured reply
+    python3 tools/message_agent.py planner --queue                       # read the recipient's inbox
+    python3 tools/message_agent.py engineer "say hi" --show-command     # the live reach
 
 The tool reaches the sibling's ``-mcp`` service (``http://sudo-<name>-mcp:8000/mcp``),
 performs the MCP handshake (``initialize``), and calls the sibling's prompt tool --
@@ -152,7 +152,7 @@ def main(argv=None, fleet_factory=None):
         epilog="Requires the message-agent skill to be loaded this session "
                "(load it with skill_view first); the tool is blocked otherwise.")
     parser.add_argument("sibling",
-                        help="sibling agent name (bare), e.g. caesar or marc")
+                        help="sibling agent name (bare), e.g. engineer or planner")
     parser.add_argument("prompt", nargs="?", default=None,
                         help="the message text to send (omit with --queue)")
     parser.add_argument("--mode", choices=("direct", "inbox"), default="inbox",

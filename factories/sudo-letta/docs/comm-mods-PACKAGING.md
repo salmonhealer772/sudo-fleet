@@ -1,6 +1,6 @@
 # Comm-tool mod packaging (list-siblings / message-agent / check-agent)
 
-The three comm tools ship to `sudo-letta` (Letta/Marc) agents as **Letta Code mod
+The three comm tools ship to `sudo-letta` (Letta/the planner) agents as **Letta Code mod
 packages**, exactly like `@letta-ai/web-search`. This file is the packaging
 spec: the package shape, the install-source forms `letta install` accepts, and
 why the local `./path` form is the one `up.sh` pins.

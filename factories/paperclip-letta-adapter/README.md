@@ -37,7 +37,7 @@ Agent config (`agentConfig` object):
 ```jsonc
 {
   "agentId": "agent-local-...",   // --agent <id>
-  "agentName": "Marc",            // optional display name
+  "agentName": "the planner",            // optional display name
   "lettaPath": "letta",           // CLI on PATH (absolute path recommended)
   "home": "/home/node",           // HOME for the child (local backend + agents live here)
   "backend": "local",

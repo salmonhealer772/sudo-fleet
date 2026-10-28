@@ -4,7 +4,7 @@ set -uo pipefail
 # bin/fix-model-settings.sh — re-apply a glimor's declared model_settings
 # (context_window_limit / max_tokens) onto a LIVE sudo-letta agent record.
 #
-# WHY THIS EXISTS (the "fix B" that broke Marc):
+# WHY THIS EXISTS (the "fix B" that broke the planner):
 #   `letta model set <handle>` — run by bin/up.sh on EVERY deploy — applies the
 #   CLI's CATALOG DEFAULT for the model. For a BYOK `openai-compatible` endpoint
 #   the catalog has no entry, so it falls back to context_window_limit=128000.
@@ -17,7 +17,7 @@ set -uo pipefail
 #   glimor's declared values here.
 #
 # SAFE BY DESIGN: additive + idempotent; it never edits up.sh, and it is only
-# run for an agent you name (never implicitly for marc/caesar).
+# run for an agent you name (never implicitly for planner/engineer).
 #
 # Usage:
 #   bash bin/fix-model-settings.sh --name <agent> [--from-glimor <dir>]

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
 outer-loop.py - "outer loop" auto-prompt wrapper around the sudo-letta prompt
-primitive (letta-p.py) for the Marc agent (deployment sudo-marc) on the
+primitive (letta-p.py) for a planner agent (deployment sudo-planner) on the
 sudo-fleet VM.
 
 WHAT IT DOES
 ------------
-Runs Marc once. The moment that run exits, it immediately runs Marc AGAIN with a
+Runs the planner once. The moment that run exits, it immediately runs the planner AGAIN with a
 re-injection prompt that (a) restates the fixed OUTER GOAL, (b) states the
 current iteration number, (c) summarizes the most recent completions, and
-(d) tells Marc to continue toward the goal WITHOUT repeating completed steps.
+(d) tells the planner to continue toward the goal WITHOUT repeating completed steps.
 
 This is NOT a fixed cron interval: each new run fires as soon as the previous
 run ends.
@@ -23,7 +23,7 @@ The prompt plumbing is NOT re-implemented here: we shell out to the existing,
 already-verified primitive, feeding the prompt on stdin (avoids all shell-arg
 quoting problems):
 
-    cd <this script's dir> && python3 letta-p.py --marc      # resume same chat
+    cd <this script's dir> && python3 letta-p.py --planner      # resume same chat
 
 This is a plain host-side process. It does not touch the kube cluster itself.
 
@@ -37,7 +37,7 @@ SAFETY RAILS (it is an autonomous loop)
   * --max-consecutive-failures abort after N back-to-back failures (default 3)
                               so a broken cluster is not hammered.
   * exclusive flock           a second outer-loop cannot start on the same log.
-  * every reply appended      to /logs/marc-outer-loop/marc-outer-loop.log
+  * every reply appended      to /logs/planner-outer-loop/planner-outer-loop.log
                               (fleet log rule: all logs live under /logs/).
   * SIGINT/SIGTERM            clean stop; the log is flushed and closed.
 
@@ -53,7 +53,7 @@ USAGE
     # long-running, goal from the environment
     OUTER_GOAL="keep improving the docs" nohup python3 outer-loop.py --max-iterations 100 &
 
-    # see the prompts without calling Marc
+    # see the prompts without calling the planner
     python3 outer-loop.py --goal "..." --max-iterations 3 --dry-run
 
 systemd (do NOT enable until you actually mean to run it):
@@ -76,14 +76,14 @@ from datetime import datetime, timezone
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-DEFAULT_AGENT = "marc"
+DEFAULT_AGENT = "planner"
 DEFAULT_MAX_ITERATIONS = 100
-DEFAULT_PER_RUN_TIMEOUT = 1800      # 30 min per Marc run
+DEFAULT_PER_RUN_TIMEOUT = 1800      # 30 min per the planner run
 DEFAULT_RECENT = 5                  # how many past completions to re-inject
 DEFAULT_SLEEP = 2.0                 # small inter-iteration guard gap
 DEFAULT_MAX_FAILURES = 3            # consecutive failures before aborting
-LOG_DIR = "/logs/marc-outer-loop"
-LOG_FILE = os.path.join(LOG_DIR, "marc-outer-loop.log")
+LOG_DIR = "/logs/planner-outer-loop"
+LOG_FILE = os.path.join(LOG_DIR, "planner-outer-loop.log")
 LOCK_FILE = os.path.join(LOG_DIR, ".outer-loop.lock")
 DEFAULT_GOAL = (
     "Continue your assigned work, make concrete progress, and do not idle. "
@@ -173,7 +173,7 @@ def _handle_signal(signum, _frame):
 
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Outer-loop auto-prompt wrapper around letta-p.py (Marc).",
+        description="Outer-loop auto-prompt wrapper around letta-p.py (the planner).",
     )
     ap.add_argument("--goal", default=os.environ.get("OUTER_GOAL") or DEFAULT_GOAL,
                     help="the fixed outer goal to keep driving the agent toward "

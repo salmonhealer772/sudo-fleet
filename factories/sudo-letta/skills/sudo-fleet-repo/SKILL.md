@@ -30,7 +30,7 @@ The one repo this team develops. Load this before planning any change.
 ├── .env                         # gitignored secrets
 ├── bin/                         # k8s-up.sh, k8s-down.sh, talk-ALL*.sh, verify-change.sh, hooks/pre-commit
 ├── docs/                        # SPEC.md, NEXT.md, comm-mods-PACKAGING.md, ...
-├── deployments/                 # COMMITTED glimors (Marc, Caesar, ...) — public!
+├── deployments/                 # COMMITTED glimors (the planner, the engineer, ...) — public!
 ├── factories/
 │   ├── sudo-letta/              # Letta planner factory
 │   │   ├── bin/up.sh            # deploy a planner; --name, --from-glimor
