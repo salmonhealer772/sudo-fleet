@@ -676,3 +676,30 @@ the partition holds even for a one-character correction.
   and `exec` running `cat`, `wc`, `md5sum`, `grep`, `ls` — nothing written to any pod, PVC,
   config, deployment or image. The two files used for the hashing were written to the host's
   `/tmp` and removed afterwards.
+
+### 12.7 Push
+
+| item | value |
+|---|---|
+| commit carrying this section | **`7c584b85a8e7a19b9ff7973ae86b665164eb3c7b`** |
+| subject | `docs(P2-C): record STEP 7 - the block lands on a recreated agent, measured` |
+| parent / ref update | `366fd16..7c584b8  main -> main` |
+| `git ls-remote origin main` | `7c584b85a8e7a19b9ff7973ae86b665164eb3c7b\trefs/heads/main` |
+| `git rev-parse HEAD` | `7c584b85a8e7a19b9ff7973ae86b665164eb3c7b` |
+| branch state after push | `git rev-list --left-right --count origin/main...HEAD` → `0  0` |
+| staged | `M docs/P2-C-MEMORY-CONTRACT.md` — one file; the ~20 pre-existing untracked files were not staged |
+
+Read back **from the remote ref**, not the working tree:
+
+```
+$ git show origin/main:docs/P2-C-MEMORY-CONTRACT.md | grep -c '^## 12. The delivery half'
+1
+$ git show origin/main:docs/P2-C-MEMORY-CONTRACT.md | wc -c
+42404
+$ git ls-tree origin/main docs/P2-C-MEMORY-CONTRACT.md
+100644 blob 8a8e3dc6b38ba6033373fb40ec524da3ee640bb2    docs/P2-C-MEMORY-CONTRACT.md
+```
+
+This footer is a third commit (`docs(P2-C): confirm the STEP 7 record with the pushed
+hash`), for the same reason as §11's: a section cannot contain the hash of the commit that
+first carries it. Everything above describes `7c584b8`.
