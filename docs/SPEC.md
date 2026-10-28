@@ -198,6 +198,8 @@ The persona layer above ships as a **factory-managed block**, not a first-boot a
 
 Each boot replaces the content between the markers (or inserts the block if absent), so an agent can never permanently lose or stale its fleet awareness, and a rebuilt image ships a fresh snippet on the next restart. Nothing outside the markers is touched. Skills are separate: seeded on FIRST boot only, because the agent may edit them and a re-seed would clobber.
 
+The snippet carries a second section. `## Fleet communication` is the awareness text above; `## Your memory` is the agent-facing memory contract added in Phase 2 — what earns a place in the store, one entry as one fact of roughly 100–300 characters, an operator correction as the highest-value save, and a save refused on a full store as urgent rather than silent. It rides the same factory-managed block on every boot, and the file is shared, so Letta agents get it too. The YAML `memory:` block sets the budget; the snippet carries the instruction (`P2-C-MEMORY-CONTRACT.md`).
+
 ### The router default — how agents are born able to talk
 
 In **sudo-fleet**, the router pair (psnvc + forge) **bakes these into every spawned agent as a spawn-time default**: the 3 tools + 3 skills + persona block are part of what `up.sh`/spawn gives an agent, NOT a post-hoc per-agent bolting. A new agent comes out of the spawner already able to message/check any sibling. This is what "native" means — the fleet, as a whole, talks.

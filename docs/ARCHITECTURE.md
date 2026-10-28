@@ -278,8 +278,13 @@ agent is never overwritten. Comm skills are seeded once behind `/opt/data/.comm-
 
 **The fleet-comm block.** Both kinds carry the shared comm awareness as a factory-managed block bounded by `<!--
 FLEET-COMM-AWARENESS-BEGIN -->` and `<!-- FLEET-COMM-AWARENESS-END -->`. One source,
-`factories/sudo-agent/comm/PERSONA-SNIPPET.md`, byte-identical for both factories. Every boot the harness
-replaces everything **between** the markers in place, or appends the block when either marker is missing, and
+`factories/sudo-agent/comm/PERSONA-SNIPPET.md`, byte-identical for both factories. The file carries two
+sections: `## Fleet communication` (the sibling tools above and the load-skill-first rule) and `## Your memory`,
+the agent-facing memory contract added in Phase 2 — what is worth keeping, one entry is one fact of roughly
+100–300 characters, an operator correction as the highest-value save, and a save refused on a full store as
+urgent rather than silent. Because both factories apply this one file, Letta agents receive that section on
+their next deploy exactly as Hermes agents do. Every boot the harness replaces everything **between** the
+markers in place, or appends the block when either marker is missing, and
 touches nothing outside them — so hand-written content after `END` survives every redeploy, while anything put
 *inside* the block is overwritten. On Hermes this runs in `mcp_entrypoint.sh` against `/opt/data/SOUL.md`. On
 Letta, `up.sh` copies the snippet into the pod, persists it there so a plain restart can re-apply it, writes the

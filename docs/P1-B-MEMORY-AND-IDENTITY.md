@@ -296,6 +296,11 @@ factories/sudo-agent/setup.sh:227:  memory_char_limit: 40000
 factories/sudo-agent/setup.sh:228:  user_char_limit: 20000
 ```
 
+The `config.yaml` line numbers above are as of `983834f`. `afef43e` (Phase 2, brief C) added the
+pointer comment above the block, moving it down six lines: the same grep today reports
+`config.yaml:56` / `:57`, and the `100000/50000` mention at `:40` (see above) has not moved. The values
+are unchanged.
+
 Four hits, all `40000`/`20000`: template and seed agree. A whole-tree grep adds only this report and
 `docs/h1-P1-A-REPORT.md`, both quoting the old pair in prose — `git grep -l "memory_char_limit:
 100000" -- .` matches exactly those two files — so no tracked file still *sets* it. The per-agent
@@ -478,7 +483,7 @@ Three clarifications for whoever reads this next:
   `factories/sudo-agent/bin/up.sh:95-99` copies `config.yaml` to `config/<name>.yaml` only when that file
   does not already exist (`CONFIG_SEEDED=0` at `:95`, `cp` at `:97`, `fi` at `:99`), under the comment
   "then leave it alone so each agent's config can diverge (config isolation)".
-  `factories/sudo-agent/config.yaml:50-51` already reads 40000/20000, so every agent
+  `factories/sudo-agent/config.yaml:56-57` already reads 40000/20000 (`:50-51` before `afef43e` moved it), so every agent
   created after the fix seeds the new pair and only agents that predate it carry 100000/50000. Re-measured
   at `c0d44f5`: 66 yaml files, 66 with `memory_char_limit: 100000`, 0 with `40000`.
 - **Changing the 66 is a live-fleet decision for the operator — deferred, not a repo defect.** Nothing in
