@@ -207,6 +207,54 @@ Ten lines, and it parses — `yaml.safe_load` returns `memory_char_limit: 40000`
 `100000`/`50000`, so the check discriminates instead of always passing. Nothing in the scratch directory
 was committed.
 
+**Re-proved end to end on the real script, second pass.** The extraction above proves the heredoc; this
+pass runs `setup.sh` *itself* from a tracked-only copy of `origin/main`, so the guard, the heredoc and the
+convergence that follows it all execute in the order a real first run hits them. `docker` and `kubectl`
+stubs go first on `PATH` so the unconditional `docker build` at `setup.sh:63` cannot retag the live
+`sudo-agent:latest`; `DEEPSEEK_API_KEY` is supplied so nothing prompts; stdin is closed.
+
+```
+$ git archive origin/main | tar -x -C /tmp/oct28/p1b-setup-seed/repo
+$ cd /tmp/oct28/p1b-setup-seed/repo/factories/sudo-agent && rm -f config.yaml .env
+$ PATH=/tmp/oct28/p1b-setup-seed/bin:$PATH DEEPSEEK_API_KEY=sk-proof-not-a-real-key \
+    timeout 120 bash setup.sh </dev/null; echo RUN1_RC=$?
+RUN1_RC=0
+
+$ awk '/^memory:/{f=1} f&&/^[a-z_]+:/&&!/^memory:/{f=0} f' config.yaml
+memory:
+  memory_char_limit: 40000
+  user_char_limit: 20000
+  memory_enabled: true
+  user_profile_enabled: true
+  write_approval: false
+  nudge_interval: 1
+
+$ grep -c 'memory_char_limit: 40000' config.yaml ; grep -c '100000' config.yaml
+1
+0
+$ grep -c 'user_char_limit: 20000' config.yaml ; grep -c '50000' config.yaml
+1
+0
+```
+
+`yaml.safe_load` parses the result. The file that survives is 14 lines / 319 bytes — the ten seed lines
+plus the `model` / `base_url` / `provider` keys the convergence block adds after the seed — so quote the
+`memory:` block above rather than a whole-file byte count.
+
+**The guard, executed rather than argued.** Append a sentinel to the generated `config.yaml` and re-run
+the identical command: the file comes back byte-identical, so `! -f` is false, the heredoc does not run,
+and an existing file is never rewritten.
+
+```
+before: md5=ebf224a0e877abd746e4ed418bfce441 lines=15
+RUN2_RC=0
+after : md5=ebf224a0e877abd746e4ed418bfce441 lines=15
+sentinel still present: 1
+```
+
+The same seed block lifted from `a4e2483` emits `memory_char_limit: 100000` / `user_char_limit: 50000`,
+so a green run here is a real signal rather than a check that cannot fail.
+
 **The hazard, stated accurately.** The branch fires only when `$CONFIG_FILE` is already absent.
 `config.yaml` is tracked, so a clone has it, the guard is false, and the seed is dead code on a healthy
 checkout — the numbers in it change nothing for anyone who has the template. It matters only if the
