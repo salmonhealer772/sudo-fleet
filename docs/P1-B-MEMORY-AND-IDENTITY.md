@@ -345,11 +345,23 @@ $ git show 983834f^:factories/sudo-agent/setup.sh | grep -n "char_limit"   # 225
 $ grep -n "char_limit" factories/sudo-agent/setup.sh                       # 227/228,  40000/20000
 ```
 
-And the name is checkable too: this repo tracks **two** `setup.sh` files plus
-`factories/sudo-letta/bin/up.sh`. The seed lives only in `factories/sudo-agent/setup.sh`; a bare
-`grep char_limit setup.sh` at the repo root returns nothing, because the tracked repo-root `setup.sh`
-(506 lines, the one that advertises "re-runnable, idempotent" and shell-outs to the factory script) has
-no memory block at all.
+And the name is checkable too: this repo tracks **three** `setup.sh` files — repo-root `setup.sh`
+(506 lines), `factories/sudo-agent/setup.sh` (283 lines), `factories/sudo-letta/setup.sh` (215 lines) —
+plus **two** `bin/up.sh` files, `factories/sudo-agent/bin/up.sh` and `factories/sudo-letta/bin/up.sh`.
+The seed lives only in `factories/sudo-agent/setup.sh`; there is no memory seed in the repo-root
+`setup.sh` — a bare `grep char_limit setup.sh` at the repo root returns nothing, because that tracked
+script (the one that advertises "re-runnable, idempotent" and shell-outs to the factory script) has no
+memory block at all. The 66-config claim further down is about the *sudo-agent* `bin/up.sh`, not the
+letta one. Count files rather than trust a prose count; `git ls-tree` at HEAD returns five:
+
+```
+$ git ls-tree -r --name-only HEAD | grep -E '(^|/)setup\.sh$|(^|/)bin/up\.sh$'
+factories/sudo-agent/bin/up.sh
+factories/sudo-agent/setup.sh
+factories/sudo-letta/bin/up.sh
+factories/sudo-letta/setup.sh
+setup.sh
+```
 
 I verified the *current* tree instead of the earlier report. `factories/sudo-agent/setup.sh` is md5
 `4fe4cd4a8a3214733169ffe2fc40a72b` and the tracked tree no longer holds a live occurrence of the pair:
@@ -372,8 +384,8 @@ Running `factories/sudo-agent/setup.sh` naively in a scratch copy is **not safe*
 guard at `:51` covers only the BASE image — so a plain scratch run retags the live image, and with a
 reachable cluster the script then runs `bin/redis-up.sh` against the shared queue Redis. That is filed as
 **D9** in `docs/KNOWN-ISSUES.md` and is still unresolved, because the fix is a maintainer choice: mirror
-the guard, or build a content-addressed tag and have `bin/up.sh` deploy that. Stub both tools on `PATH`
-first, and run a tracked-only copy whose sha256 you have actually checked:
+the guard, or build a content-addressed tag and have `factories/sudo-agent/bin/up.sh` deploy that. Stub
+both tools on `PATH` first, and run a tracked-only copy whose sha256 you have actually checked:
 
 ```
 $ cd /opt/0-0/sudo-fleet && git archive HEAD | tar -x -C /tmp/h2-correction/repo
@@ -436,15 +448,17 @@ boots on the old budget, and the entry-size instruction has no effect on it.
 
 Three clarifications for whoever reads this next:
 
-- **Cite `factories/sudo-agent/setup.sh`, not `setup.sh`.** This repo tracks two files with that name:
-  the repo-root `setup.sh` (506 lines) and `factories/sudo-agent/setup.sh` (283 lines). Only the second
-  one carries the memory seed — `:227` `memory_char_limit: 40000`, `:228` `user_char_limit: 20000`. A
+- **Cite `factories/sudo-agent/setup.sh`, not `setup.sh`.** This repo tracks three files with that name:
+  the repo-root `setup.sh` (506 lines), `factories/sudo-agent/setup.sh` (283 lines) and
+  `factories/sudo-letta/setup.sh` (215 lines). Only the sudo-agent one carries the memory seed —
+  `:227` `memory_char_limit: 40000`, `:228` `user_char_limit: 20000`. A
   `grep char_limit setup.sh` at the repo root returns nothing, which reads exactly like the fix never
   landed; that misreading happened live during review of this document, not hypothetically.
 - **The 66 files are seeded once and frozen on purpose, not stale by accident.**
-  `factories/sudo-agent/bin/up.sh:95-98` copies `config.yaml` to `config/<name>.yaml` only when that file
-  does not already exist, under the comment "then leave it alone so each agent's config can diverge
-  (config isolation)". `factories/sudo-agent/config.yaml:50-51` already reads 40000/20000, so every agent
+  `factories/sudo-agent/bin/up.sh:95-99` copies `config.yaml` to `config/<name>.yaml` only when that file
+  does not already exist (`CONFIG_SEEDED=0` at `:95`, `cp` at `:97`, `fi` at `:99`), under the comment
+  "then leave it alone so each agent's config can diverge (config isolation)".
+  `factories/sudo-agent/config.yaml:50-51` already reads 40000/20000, so every agent
   created after the fix seeds the new pair and only agents that predate it carry 100000/50000. Re-measured
   at `c0d44f5`: 66 yaml files, 66 with `memory_char_limit: 100000`, 0 with `40000`.
 - **Changing the 66 is a live-fleet decision for the operator — deferred, not a repo defect.** Nothing in
