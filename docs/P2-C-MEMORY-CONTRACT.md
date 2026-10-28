@@ -519,10 +519,35 @@ checkout or the research directory on the host.
 | not staged | the ~18 pre-existing untracked files in the checkout, and the two files another engineer has modified (`setup.sh`, `bin/up.sh`) |
 | HEAD after push | recorded in the footer commit that follows this one — see "PUSHED AS" below |
 
-### PUSHED AS
+### PUSHED AS — confirmed, not attempted
 
-See the footer of this document: the confirmation commit (`docs(P2-C): confirm the push`) is a
-separate, later commit on `main` that carries `git ls-remote origin main` next to this
-commit's hash. The report has to exist before the commit that contains it can be pushed —
-the same two-step the Phase 1 reports used, and it means the hash in the footer is the one to
-trust.
+| item | value |
+|---|---|
+| code + report commit (this document) | **`afef43e21ac594eeddbecc96a62b4a16d0d1637c`** |
+| commit subject | `seed the memory contract into every agent's persona` |
+| ref update | `1ebbed3..afef43e  main -> main` |
+| `git ls-remote origin main` | `afef43e21ac594eeddbecc96a62b4a16d0d1637c\trefs/heads/main` |
+| `git rev-parse HEAD` | `afef43e21ac594eeddbecc96a62b4a16d0d1637c` |
+| branch state after push | `git rev-list --left-right --count origin/main...HEAD` → `0  0` |
+| `git diff --cached --name-status` before commit | `A docs/P2-C-MEMORY-CONTRACT.md`, `M comm/PERSONA-SNIPPET.md`, `M comm/README.md`, `M config.yaml` — exactly four, nothing swept in |
+| left uncommitted on purpose | another engineer's in-progress work (`setup.sh`, `bin/up.sh`), the documentation pass's `docs/` + `README.md` edits, and the ~18 pre-existing untracked files |
+
+Read back **from the remote ref**, not from the working tree (`git show origin/main:<path>`
+after `git fetch`):
+
+```
+PERSONA-SNIPPET.md  '## Your memory' occurrences: 1
+PERSONA-SNIPPET.md  lines: 24
+config.yaml         40000/20000:   memory_char_limit: 40000   user_char_limit: 20000
+comm/README.md      new section: 1
+docs report         bytes: 34284
+
+100644 blob 787a411c1352084e8a6690bfcfbea80d125173e2    docs/P2-C-MEMORY-CONTRACT.md
+100644 blob 956e9101aef9017809ac342d190b3ed014d83af4    factories/sudo-agent/comm/PERSONA-SNIPPET.md
+100644 blob 1ff51a2f5056a477c284922a8b70053fa4820202    factories/sudo-agent/comm/README.md
+100644 blob 6b2a3a4c84f38b18c949dbee6099cee127425eae    factories/sudo-agent/config.yaml
+```
+
+This footer is a second, later commit (`docs(P2-C): confirm the push`) on `main`: a report
+cannot contain the hash of the commit that first carries it. Everything above describes
+`afef43e`, which is the commit that changes behaviour; the footer commit only edits this file.
