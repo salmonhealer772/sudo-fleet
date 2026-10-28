@@ -187,11 +187,18 @@ all. `bash -n` clean. It is committed with this report (see §9), and `docs/P2-A
 `SUDO_AGENT_IMAGE` claim is now true of the deploy path as well as the installer.
 
 ⚠ **Split authorship, disclosed:** the worktree `up.sh` also carried a **jq guard** written by h1
-(added before 19:36:11Z, present in my pre-deploy snapshot, not in `HEAD`). I did **not** write it and
-I did not stage it: my commit was built from `HEAD` plus my hunk only, via
-`git show HEAD:path | patch | git hash-object -w | git update-index --cacheinfo`, precisely so h1's
-uncommitted work could not be swept into my commit. h1's guard is still in the worktree, untouched,
-for h1 to commit.
+(added before 19:36:11Z, present in my pre-deploy snapshot, not in `HEAD` *at that moment*). I did
+**not** write it and I did not stage it: my commit was built from `HEAD` plus my hunk only, via
+`git show HEAD:path | patch | git hash-object -w | git update-index --cacheinfo`, precisely so work
+sitting in the shared worktree could not be swept into my commit.
+
+**Correction — that guard is not dangling.** It landed as **`898b6bc`** ("fix(up.sh): fail fast when
+jq is missing instead of dropping operator env", 10 insertions at `up.sh:38-46`), committed by the
+operator at **19:40:27Z**, and is an ancestor of `HEAD`. Verified on the pushed tree:
+`git show HEAD:factories/sudo-agent/bin/up.sh | grep -n jq` → `38,39,42,43,44` for the guard itself (the
+remaining hits, `600` and `604`, are `jq` calls that predate it). The "not in `HEAD`" phrase above is
+true only of my 19:36:11Z pre-deploy snapshot; it is not a statement about the repository now, and
+nothing of h1's is left uncommitted.
 
 ### 5.2 The command, verbatim
 
@@ -326,8 +333,11 @@ matters, because the skill route would *not* have worked:
    measured myself after the fact. **This is a fleet-level hazard worth fixing**: one pod, one brief,
    two hands, and a `git` checkout shared by five engineers is one `git add` away from a commit that
    contains someone else's work.
-3. **h1 was still editing `up.sh` while I deployed** (its jq guard, §5.1). Handled by the snapshot. The
-   guard was still uncommitted when I finished; it is h1's to commit.
+3. **h1 was still editing `up.sh` while I deployed** (its jq guard, §5.1). Handled by the snapshot —
+   the deploy read a frozen copy, so a concurrent edit could not change a running script mid-run. The
+   guard was uncommitted at snapshot time and landed as `898b6bc` at **19:40:27Z**, *before* this
+   report was committed; the "for h1 to commit" line that stood here was stale when written (§5.1 has
+   the correction). Nothing is left uncommitted in the worktree.
 4. **`up.sh` also re-synced the shared `openrouter-api-key` Secret** from the fleet `.env` (its
    documented, idempotent behaviour). Its `creationTimestamp` is 2026-10-02, i.e. not created by me; I
    did not snapshot its resourceVersion beforehand, so I cannot prove the value was unchanged — only
