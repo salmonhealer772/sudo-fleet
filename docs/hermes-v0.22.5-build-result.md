@@ -381,3 +381,82 @@ Probe, the four homes and all raw outputs: `/tmp/oct27/hermes-upgrade-research/p
 ### 9.7 Effect on the Phase 1 verdict
 
 None — no code or config file changed for this addendum, and the nine checks in §2 stand. The build made for the check (`sudo-agent:p1-build-h4c` = `b0c1a2dab2ce`, 20/20 steps) was deleted after measuring. `sudo-agent:latest` is still `sha256:16d149ddf0f2…`, Created `2026-10-18T23:12:48-07:00`; 60 deployments still reference it. Nothing was deployed, restarted or exec'd.
+
+---
+
+## 10. Addendum, 2026-10-28T09:49:58Z → 10:03:54Z (HEAD `01e4d79`) — build from the FACTORY TREE, the production context path
+
+h1's P1-A hand-off asked for the build to run against the factory tree instead of a copied `buildctx`, because the Dockerfile's `COPY bin/ comm/ meta-data/` are relative to the factory root, and warned that `FROM hermes-agent:v0.22.5` was bare and would need a hand-made alias first. The hand-off was written against the **pre-`a4e2483` bytes**:
+
+| claim in the hand-off | measured now |
+|---|---|
+| Dockerfile md5 `bb744a733896336743aaa162ae91dad7` | `4e9b190e6ad7eb870e536c996f56db78` — that `bb744a73…` is the file at `37b863b`; h1's own `a4e2483` replaced it |
+| `FROM hermes-agent:v0.22.5` (bare) | `FROM nousresearch/hermes-agent:v0.22.5` (`Dockerfile:15`) |
+| `up.sh` md5 `4caf72a9ba77aa0d1ce4d4882c046629` | matches (`factories/sudo-agent/bin/up.sh`) |
+| pre-tag `hermes-agent:v0.22.5` "or the build fails" | not needed, and it would have hidden F1: the alias is absent and the qualified reference resolves from step 1 |
+
+```
+$ docker image inspect hermes-agent:v0.22.5
+Error response from daemon: No such image: hermes-agent:v0.22.5   <- no hand-made alias
+$ docker image inspect nousresearch/hermes-agent:v0.22.5 --format '{{.Id}} {{.Architecture}}'
+sha256:9c5561579f3ffdf333401797094ac3a743738d6c25d40f4331c7bf77b694238d arm64
+```
+
+Context is the tracked factory directory itself, **1.015 GB** (`glimors/` alone is 1.0 GB and untracked) — the same context `setup.sh:63` sends (`docker build -f "$SCRIPT_DIR/Dockerfile" "$SCRIPT_DIR"`). The CLI here runs in a pod while the checkout lives on the host, so the tree is streamed as a tar from the host mount; the Dockerfile is at the context root, so the result is the same build `setup.sh` performs:
+
+```
+$ docker run --rm -v /:/host alpine:latest sh -c 'cd /host/opt/0-0/sudo-fleet/factories/sudo-agent && tar -cf - --exclude=./.env .' \
+    | docker build -t sudo-agent:p1-build-h4d -
+Sending build context to Docker daemon  1.015GB
+...
+Step 20/20 : LABEL sudo-agent="true" description="Hermes Agent with sudo + native memory"
+ ---> 6708c8b61024
+Successfully built 6708c8b61024
+Successfully tagged sudo-agent:p1-build-h4d
+BUILD_EXIT=0
+```
+
+Only `.env` (untracked, root-only, and named by no Dockerfile line — the file's only `ENV` is `SUDO_PASSWORD`) is filtered out of the stream; no path the Dockerfile COPYs is excluded.
+
+Build: **20/20 steps, exit 0**, 14 min 0 s wall, image `sudo-agent:p1-build-h4d` = `sha256:6708c8b61024…`, 4.45 GB. The daemon has the legacy builder only (no buildx: `--progress` is rejected, `unknown flag`), and with a 1 GB context every `COPY` re-extracts the whole tar — that is where most of the 14 minutes go, not the `uv pip install` steps.
+
+Measured inside that image (`--entrypoint /bin/sh`, throwaway tag, no volumes):
+
+| measure | result |
+|---|---|
+| `hermes --version` | `v0.22.5 (2026.9.24)` · upstream `bf0203a7` · Python 3.14.9 · install method `docker` |
+| `importlib.metadata` | fastmcp **4.0.9**, redis **8.1.0**, ddgs **9.16.1** |
+| `grep -c "PROGRAMMATIC AUTO-SAVE" agent/background_review.py` | **0** |
+| `find / -name patch_memory_review.py` | **0 hits** |
+| `/etc/sudoers.d/hermes` | `hermes ALL=(ALL) NOPASSWD:ALL`; `sudo -n id -u` → `0` as root **and** as `hermes` |
+| `/etc/fuse.conf` | `user_allow_other` at line 18 |
+| `redis-server --version` | `8.0.2` |
+| `uv` | `/usr/local/bin/uv` → `/opt/hermes/tools/uv-0.13.5-linux-arm64` (arm64 spelling; the find-symlink step still lands) |
+| comm layer | `/opt/comm-tools/` (8 files), `/opt/comm-skills/` (8 skill dirs), `/opt/comm/PERSONA-SNIPPET.md` |
+| persona / MCP layer | `/opt/meta-data/SOUL-BINDING.md`, `/opt/hermes-mcp/` (3 files, `hermes:hermes`) |
+| `image-provenance.json` | `nousresearch/hermes-agent`, revision `bf0203a7…`, `deployment_kind: image` |
+| `ENTRYPOINT` / `CMD` / label | `["/opt/hermes-mcp/mcp_entrypoint.sh"]` / `null` / `sudo-agent=true` |
+
+Byte parity with the factory tree — this is what proves the context was the tree and not a copy:
+
+```
+comm_tools.py        b4d5c6fc8d7a521fba79851d744df9ae   (image = host file)
+mcp_entrypoint.sh    908a93c01200c49f3f8ff58b300b938a   (image = host file)
+```
+
+One observation, not a defect: `/opt/comm-tools/__pycache__` ships because a `__pycache__` sits in `comm/tools/` in the checkout. The production path (`setup.sh:63`) copies the same directory, so this predates P1 — recorded here, not changed.
+
+Live fleet untouched:
+
+```
+sudo-agent:latest   sha256:16d149ddf0f2d8f9fcbf6bd94447d6790104660e98f7f32c9b46b120bd1b4bca
+                    Created 2026-10-18T23:12:48-07:00   (unchanged)
+k3s                103 deployments; 153 container images are exactly sudo-agent:latest
+                   (the 306 "occurrences" measured before and after is the same string
+                    counted in the JSON, not the container count — §9.7's "60 deployments"
+                    is a stale snapshot and should not be quoted)
+```
+
+No deployment created/patched/imported, no pod restarted or exec'd, `sudo-agent:latest` never tagged. `sudo-agent:p1-build-h4d` is left on the daemon (unreferenced throwaway tag) for inspection — `docker rmi sudo-agent:p1-build-h4d` when it is no longer wanted.
+
+**Verdict:** the factory builds a working v0.22.5 sudo-agent from its own tree, with no hand-made base alias and no local patch step. F1 stays closed on the production build path.
