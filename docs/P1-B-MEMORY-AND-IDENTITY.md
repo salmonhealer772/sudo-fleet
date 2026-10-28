@@ -157,41 +157,81 @@ route is a shared skills/mod seed (the same mechanism that seeds their skills), 
    an **existing PVC** keeps its old SOUL and will not receive this section. New section reaches an
    agent only on a fresh volume, or when its `SOUL.md` is removed as part of Phase 2's recreation.
 
-## A second place still carrying the old numbers — needs an owner
+## The seed heredoc that carried the old numbers — closed in `983834f`
 
-`git grep` across tracked files after my commit:
+**What it was.** `setup.sh` does not only read the config, it can recreate it. `setup.sh:69` sets
+`CONFIG_FILE="$SCRIPT_DIR/config.yaml"`; at `setup.sh:219` a guard `if [[ ! -f "$CONFIG_FILE" ]]` seeds
+that file from a `cat > "$CONFIG_FILE" << 'CONFIGEOF'` heredoc, and the `memory:` pair inside it still
+read `100000` / `50000` — the template I had just lowered and the seed that could recreate it
+disagreed. `setup.sh` was in nobody's owned paths in P1-B, which is why this is a follow-up and not part
+of `13784dc`.
+
+**Closed.** The heredoc now reads `memory_char_limit: 40000` and `user_char_limit: 20000` — the
+template's pair, two integers, no reformatting and no other edit in the file — as of commit
+**`983834f59a3454e1a155ed79efbc004c23383d90`**. In that tree the pair sits at `setup.sh:227-228`, the
+guard at `setup.sh:219`, the heredoc body `setup.sh:222-233`. That is h1's commit ("docs(factory):
+setup.sh comment no longer claims the base is FROM hermes-agent:latest"), not a separate one of mine:
+h1 edited a comment in the same file and ran `git add factories/sudo-agent/setup.sh` without diffing it
+first, so h2's uncommitted working-tree change rode in with the comment edit. h1 caught that on review,
+kept the bytes (they match `config.yaml`) and disclosed it in `761100a`. The content on `origin/main` is
+right; only the commit boundary is not the one this follow-up drew, and it is recorded here so that
+nobody later reads `983834f` as an h1 memory decision.
+
+**Evidence: the branch was executed, not quoted.** Running `setup.sh` itself in a scratch copy is not
+safe — `setup.sh:63-64` runs `docker build -t sudo-agent:latest` unconditionally, before it ever
+reaches the seed, so a plain scratch run retags the live image. So the guard and heredoc were extracted
+verbatim (`sed -n '219,234p' factories/sudo-agent/setup.sh`, verified byte-identical to the file) into a
+driver in `/tmp/oct28/h2-seed-proof/`, outside the repo, with `CONFIG_FILE` pointed at a path that did
+not exist:
 
 ```
-$ git grep -n "memory_char_limit\|user_char_limit" -- .
+BEFORE: absent -> guard TRUE  (<- ! -f)
+AFTER : exists -> the heredoc created it
+
+$ cat /tmp/oct28/h2-seed-proof/run1/config.yaml
+terminal:
+  backend: "local"
+  sudo_password_env: "SUDO_PASSWORD"
+memory:
+  memory_char_limit: 40000
+  user_char_limit: 20000
+  memory_enabled: true
+  user_profile_enabled: true
+  write_approval: false
+  nudge_interval: 1
+```
+
+Ten lines, and it parses — `yaml.safe_load` returns `memory_char_limit: 40000`,
+`user_char_limit: 20000`, `memory_enabled: True`, `user_profile_enabled: True`,
+`write_approval: False`, `nudge_interval: 1`. The same extraction from parent `a4e2483` emits
+`100000`/`50000`, so the check discriminates instead of always passing. Nothing in the scratch directory
+was committed.
+
+**The hazard, stated accurately.** The branch fires only when `$CONFIG_FILE` is already absent.
+`config.yaml` is tracked, so a clone has it, the guard is false, and the seed is dead code on a healthy
+checkout — the numbers in it change nothing for anyone who has the template. It matters only if the
+file is gone: the tracked `config.yaml` is deleted or moved (partial or filtered clone, a manual `rm`, a
+refactor that renames the template), or `setup.sh` runs from a copy of the directory that never had it.
+Then `setup.sh` silently recreates the file — and before this fix it would have recreated it with
+`100000`/`50000` and undone P1-B with nothing in the history to show it, so it would have read as though
+the template had never been fixed. That is the whole hazard; it was worth two integers.
+
+**`git grep` after the fix** (tracked files):
+
+```
+$ git grep -n "memory_char_limit\|user_char_limit" -- factories/
 factories/sudo-agent/config.yaml:50:  memory_char_limit: 40000
 factories/sudo-agent/config.yaml:51:  user_char_limit: 20000
-factories/sudo-agent/setup.sh:225:  memory_char_limit: 100000
-factories/sudo-agent/setup.sh:226:  user_char_limit: 50000
-(+ the same strings inside docs/P1-B-MEMORY-AND-IDENTITY.md, which is this report)
+factories/sudo-agent/setup.sh:227:  memory_char_limit: 40000
+factories/sudo-agent/setup.sh:228:  user_char_limit: 20000
 ```
 
-`setup.sh:67` sets `CONFIG_FILE="$SCRIPT_DIR/config.yaml"` and `setup.sh:217` writes that file from a
-heredoc **only when it does not exist**. Because `config.yaml` is tracked, a normal clone has it and
-the branch never fires — so this is a landmine, not a live bug: delete or move the template and
-`setup.sh` recreates it with 100000/50000 and my change is silently gone. It is the same class of
-flaw as the one this brief exists to fix, and it is a two-line change:
+Four hits, all `40000`/`20000`: template and seed agree. A whole-tree grep adds only this report and
+`docs/h1-P1-A-REPORT.md`, both quoting the old pair in prose — `git grep -l "memory_char_limit:
+100000" -- .` matches exactly those two files — so no tracked file still *sets* it. The per-agent
+configs `git grep` cannot see (`config/` is untracked) are the part still open; they are counted in the
+addendum below.
 
-```diff
---- a/factories/sudo-agent/setup.sh
-+++ b/factories/sudo-agent/setup.sh
-@@ -222,8 +222,8 @@
- memory:
--  memory_char_limit: 100000
--  user_char_limit: 50000
-+  memory_char_limit: 40000
-+  user_char_limit: 20000
-   memory_enabled: true
-```
-
-**I did not make it.** `setup.sh` is not in P1-B's owned paths (the plan gives h1 the Dockerfile,
-the patch and `up.sh`; nobody holds `setup.sh`), and the file-partition rule is explicit that
-touching an unowned file means going back to the planner. So it goes back to you: either fold those
-two lines into the final commit, or hand them to h1. Flagged to h1 as well.
 
 ## (f) Commit
 
@@ -238,7 +278,8 @@ of a re-filed inbox, and a full store stops hiding corrections the operator alre
 
 ## Addendum (h2, at `761100a`) — the `setup.sh` item is closed, the live fleet is not
 
-The section above ends with "I did not make it" about `setup.sh:225-226`. That is now history: the two
+That section used to end with "I did not make it" about `setup.sh:225-226`; it no longer does — the
+heading above is now a closed record — and the change itself is history: the two
 integers were swept into **`983834f`** ("docs(factory): setup.sh comment no longer claims the base is
 `FROM hermes-agent:latest`", author `sudo-fleet-glm-h1`) while h1 was qualifying the pinned base image
 in the same file, and **`761100a`** discloses the sweep in `docs/h1-P1-A-REPORT.md:266-267`. Ordering:
@@ -285,9 +326,9 @@ discriminates rather than always passing.
 
 ### Still open: 66 instance configs, none of them moved
 
-The tracked half of P1-B is done; the running fleet is untouched. `bin/up.sh:1068-1071` hostPath-mounts
-`config/<name>.yaml` into each pod as `/opt/data/config.yaml`, and every one of those files still carries
-the old pair. Measured at `761100a`:
+The tracked half of P1-B is done; the running fleet is untouched. Each agent's `config/<name>.yaml` is
+what its pod reads as `/opt/data/config.yaml`, and every one of those files still carries the old
+pair. Measured at `761100a`:
 
 ```
 $ cd factories/sudo-agent/config && ls *.yaml | wc -l                                       66
@@ -298,6 +339,12 @@ $ kubectl exec sudo-sudo-fleet-glm-h1-64496fccbf-n594t -c sudo-agent -- \
   (same on sudo-sudo-fleet-glm-h2 and -h3)
 ```
 
+The three `kubectl exec` readings above are the observation of the session that wrote this addendum, not
+mine. The mount path could not be re-verified from a tracked file: sudo-agent's `up.sh` is not in this
+checkout's tracked tree — only in gitignored instance snapshots under
+`factories/sudo-agent/glimors/`, where `up.sh:409` mounts `config/<name>.yaml` at
+`/opt/data/config.yaml`.
+
 `config/` is gitignored instance material and rewriting 66 running agents' configs is a fleet change,
-so it is a dispatch, not a repo edit. Until it happens every running Hermes agent still boots on the
-old budget, and the entry-size instruction has no effect on them.
+so it is a dispatch, not a repo edit. Until it happens, an agent whose pod reads its per-agent config
+boots on the old budget, and the entry-size instruction has no effect on it.
