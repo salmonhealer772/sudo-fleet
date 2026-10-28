@@ -11,7 +11,8 @@ build, and a mesh that lets them talk.
 
 Three commands after one prerequisite: a Linux box (or WSL2 distro, or Lima VM)
 with systemd, `curl`, `git` and `sudo`, plus `jq` — the third command parses
-`kubectl` output with it, and `setup.sh` does not install it:
+`kubectl` output with it. `setup.sh` installs `jq` on apt boxes; on any other
+distribution its step 2 (Bootstrap: Docker + jq) stops with the line below:
 
     sudo apt-get install -y jq      # or your distribution's equivalent
 

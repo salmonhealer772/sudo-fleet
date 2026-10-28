@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # sudo-fleet/down.sh — thin pointer. The real teardown now lives in
-# bin/k8s-down.sh (stop Marc + Caesar, preserve PVCs by default;
+# bin/k8s-down.sh (stop the starter pair, preserve PVCs by default;
 # --purge deletes PVCs, --teardown-k3s uninstalls k3s). Kept so the old
 # `bash down.sh` muscle memory still works.
 

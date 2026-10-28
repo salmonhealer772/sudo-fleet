@@ -10,9 +10,10 @@ call needs `export KUBECONFIG=/etc/rancher/k3s/k3s.yaml`.
 ## 1. Prerequisites and what the bootstrap writes outside the repo folder
 
 A bare Linux box (or WSL2 distro, or Lima VM) with systemd, curl, git, `jq` and root or sudo — no docker,
-no k3s. `jq` is a real prerequisite, not a nicety: `bin/talk.sh` (
-§3.1) and `bin/verify-change.sh` parse `kubectl` output with it, and Command 1
-does not install it. Command 1 is `git clone <repo-url> && cd sudo-fleet && bash setup.sh`: it prompts
+no k3s. `jq` is a real prerequisite, not a nicety: `bin/talk.sh` (§3.1) hard-requires it, and
+`bin/verify-change.sh` parses `kubectl` output with it but warns and degrades to grep/unknown without it.
+On apt boxes Command 1 installs it (step 2, "Bootstrap: Docker + jq"); on a non-apt box step 2 stops with
+the manual install line, so install `jq` first. Command 1 is `git clone <repo-url> && cd sudo-fleet && bash setup.sh`: it prompts
 for one LLM API key, an LLM base URL (blank means the provider default) and an optional web-search key;
 writes `.env` at the repo root with mode 600; derives the rest; installs docker and k3s; builds both
 factory images; installs the boot unit. It deploys no agent.
