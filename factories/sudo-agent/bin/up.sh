@@ -599,7 +599,13 @@ echo "→ sudo-agent image digest: ${IMAGE_SHA:0:12}"
 #     (the old behaviour) instead of aborting the roll.
 #   * Values are re-emitted through jq tojson, i.e. as YAML double-quoted
 #     scalars, so a value like `true` stays the string "true".
-TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","LLM_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","PERSONA_NAME","REDIS_URL"]'
+# Every name the manifest below emits. If a name is emitted by the template AND
+# present on the live Deployment, the preserve step must NOT carry it forward:
+# it would appear twice in the same container's env list, and the second copy
+# (the preserved, stale one) wins - a stale port and a literal key instead of a
+# secretRef. That is a latent tripwire on every redeploy of an agent that
+# already carries these, so the list below must stay in step with the heredoc.
+TEMPLATE_ENV_NAMES='["DEEPSEEK_API_KEY","LLM_API_KEY","SUDO_PASSWORD","HERMES_YOLO_MODE","MCP_PORT","AGENT_NAME","PERSONA_NAME","REDIS_URL","API_SERVER_KEY","API_SERVER_HOST","API_SERVER_PORT"]'
 EXTRA_ENV="$(kubectl get deploy "$DEPLOY" -o json 2>/dev/null \
   | jq -r --argjson known "$TEMPLATE_ENV_NAMES" '
       .spec.template.spec.containers[]
