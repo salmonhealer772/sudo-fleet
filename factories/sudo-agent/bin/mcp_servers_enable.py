@@ -13,7 +13,7 @@ MCP surface with no manual step, and an already-deployed agent is upgraded on
 its next roll.
 
 The four servers (each "key|url", idempotent):
-  google_workspace  -> http://192.0.2.15:27462/mcp   (sudo-gws on lima)
+  google_workspace  -> http://192.168.5.15:27462/mcp   (sudo-gws on lima)
   regulations       -> http://regulations-mcp.dockets.svc.cluster.local:8080/mcp  (dockets ns)
   statutes          -> http://statutes-mcp.dockets.svc.cluster.local:8080/mcp     (dockets ns)
   spicy-regs        -> http://spicy-regs-mcp.dockets.svc.cluster.local:8080/mcp   (dockets ns)
@@ -41,7 +41,7 @@ import sys
 # factories/sudo-gws/manifests/service.yaml; the regulations/statutes addresses
 # with the dockets-namespace deployments (and their Letta mods / skills).
 SERVERS = [
-    ("google_workspace", "http://192.0.2.15:27462/mcp"),
+    ("google_workspace", "http://192.168.5.15:27462/mcp"),
     ("regulations", "http://regulations-mcp.dockets.svc.cluster.local:8080/mcp"),
     ("statutes", "http://statutes-mcp.dockets.svc.cluster.local:8080/mcp"),
     ("spicy-regs", "http://spicy-regs-mcp.dockets.svc.cluster.local:8080/mcp"),
