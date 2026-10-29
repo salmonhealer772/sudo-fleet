@@ -5,7 +5,7 @@
 # k3s/containerd, create the OAuth secret, apply the PVC/Service/Deployment,
 # and wait for /health. The service is then reachable at:
 #   - ClusterIP  sudo-gws-mcp:8000  (agents, via the fleet -mcp convention)
-#   - host LAN   http://192.0.2.15:27462/mcp  (baked fleet address)
+#   - host LAN   http://192.168.5.15:27462/mcp  (baked fleet address)
 #
 # OAuth client creds come from the ENV (never committed): GWS_CLIENT_ID and
 # GWS_CLIENT_SECRET. If unset, the secret is created with empty values so the

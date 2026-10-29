@@ -93,6 +93,6 @@ curl -fsSL -o oauth-consent.py \
 Google only accepts `http://` redirect URIs for loopback hosts. The consent
 browser runs on your Mac, so the redirect URI is a loopback address ON THE MAC
 (`127.0.0.1:8747`). The helper script catches that redirect locally and hands
-the one-time code to the pod over the LAN (`192.0.2.15:27462`). There is no
+the one-time code to the pod over the LAN (`192.168.5.15:27462`). There is no
 reverse tunnel and no log scraping — the pod does the token exchange itself
 because it already holds the client secret and the PKCE verifier.

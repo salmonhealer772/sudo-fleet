@@ -61,6 +61,6 @@ operator (do not open it yourself, and do not retry in a loop) and stop.
 
 - **Tools missing**: confirm `mcp_servers.google_workspace` is present in
   `/opt/data/config.yaml` and that the pod can reach
-  `http://192.0.2.15:27462/health`. Restart the agent if you just added it.
+  `http://192.168.5.15:27462/health`. Restart the agent if you just added it.
 - **Connection refused**: the `sudo-gws` service is down — bring it up with
   `bash /opt/0-0/sudo-fleet/factories/sudo-gws/kube-scripts/up.sh` on the host.

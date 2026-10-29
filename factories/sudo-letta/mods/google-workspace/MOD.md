@@ -28,7 +28,7 @@ never registered.
 ## How it reaches the service
 
 The tools open an MCP streamable-HTTP session against the fleet-shared
-service at the baked deterministic address `http://192.0.2.15:27462/mcp`
+service at the baked deterministic address `http://192.168.5.15:27462/mcp`
 (`27462 = 8000 + cksum("gws") % 22000`, the fleet MCP_PORT convention):
 
     initialize -> notifications/initialized -> tools/list -> tools/call

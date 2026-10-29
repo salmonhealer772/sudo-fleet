@@ -38,8 +38,8 @@ bash factories/sudo-gws/kube-scripts/down.sh
 | What | Address |
 |---|---|
 | MCP (ClusterIP, fleet `-mcp` convention) | `http://sudo-gws-mcp:8000/mcp` |
-| MCP (host LAN, baked fleet address) | `http://192.0.2.15:27462/mcp` |
-| Health | `http://192.0.2.15:27462/health` |
+| MCP (host LAN, baked fleet address) | `http://192.168.5.15:27462/mcp` |
+| Health | `http://192.168.5.15:27462/health` |
 | OAuth redirect URI (register in Google) | `http://127.0.0.1:8747/oauth2callback` |
 
 Port `27462 = 8000 + cksum("gws") % 22000` — the same per-agent `MCP_PORT`

@@ -26,7 +26,7 @@ const SKILL_NAME = "google-workspace";
 // Same address the Hermes side's mcp_servers config points at, and what the
 // souls bake for inter-agent HTTP. If the node IP ever changes, update here,
 // in factories/sudo-agent/config.yaml, and in the sudo-gws README together.
-const GWS_URL = "http://192.0.2.15:27462/mcp";
+const GWS_URL = "http://192.168.5.15:27462/mcp";
 
 /**
  * One MCP JSON-RPC round trip over streamable HTTP. Returns the (possibly
