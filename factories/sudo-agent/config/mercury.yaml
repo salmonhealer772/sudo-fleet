@@ -1,0 +1,45 @@
+model:
+  default: deepseek-v4-pro
+  provider: deepseek
+terminal:
+  backend: local
+  sudo_password_env: SUDO_PASSWORD
+memory:
+  memory_char_limit: 40000
+  user_char_limit: 20000
+  memory_enabled: true
+  user_profile_enabled: true
+  write_approval: false
+  nudge_interval: 1
+onboarding:
+  seen:
+    busy_input_prompt: true
+    tool_progress_prompt: true
+display:
+  skin: mercury
+
+plugins:
+  enabled:
+    - sudo-comm-gate
+    - sudo-watch-stream
+  stream_reasoning_deltas: true
+_config_version: 51
+
+platforms:
+  api_server:
+    port: 64961
+    enabled: true
+
+mcp_servers:
+  gmail:
+    url: "http://192.168.5.15:24659/mcp"
+  microsoft_graph:
+    url: "http://192.168.5.15:12420/mcp"
+  google_workspace:
+    url: "http://192.168.5.15:27462/mcp"
+  regulations:
+    url: "http://regulations-mcp.dockets.svc.cluster.local:8080/mcp"
+  statutes:
+    url: "http://statutes-mcp.dockets.svc.cluster.local:8080/mcp"
+  spicy-regs:
+    url: "http://spicy-regs-mcp.dockets.svc.cluster.local:8080/mcp"
