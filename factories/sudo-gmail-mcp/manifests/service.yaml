@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sudo-gmail-mcp
+  namespace: default
+  labels:
+    app: sudo-gmail-mcp
+    kind: gmail-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app: sudo-gmail-mcp
+    kind: gmail-mcp
+  ports:
+    # Stable service port 8000 -> the pod's deterministic hostNetwork port
+    # (24659 = 8000 + cksum("gmail") % 22000, the fleet's per-agent MCP_PORT
+    # convention). Agents reach it as ClusterIP:8000.
+    - name: mcp
+      port: 8000
+      targetPort: 24659
+      protocol: TCP

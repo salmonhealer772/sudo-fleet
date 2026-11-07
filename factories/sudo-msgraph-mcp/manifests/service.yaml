@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: sudo-msgraph-mcp
+  namespace: default
+  labels:
+    app: sudo-msgraph-mcp
+    kind: msgraph-mcp
+spec:
+  type: ClusterIP
+  selector:
+    app: sudo-msgraph-mcp
+    kind: msgraph-mcp
+  ports:
+    - name: mcp
+      port: 8000
+      targetPort: 12420
+      protocol: TCP

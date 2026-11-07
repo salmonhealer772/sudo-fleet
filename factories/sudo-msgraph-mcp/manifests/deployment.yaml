@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sudo-msgraph-mcp
+  namespace: default
+  labels:
+    app: sudo-msgraph-mcp
+    kind: msgraph-mcp
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sudo-msgraph-mcp
+      kind: msgraph-mcp
+  template:
+    metadata:
+      labels:
+        app: sudo-msgraph-mcp
+        kind: msgraph-mcp
+    spec:
+      hostNetwork: true
+      dnsPolicy: Default
+      containers:
+        - name: msgraph-mcp
+          image: sudo-msgraph-mcp:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: mcp
+              containerPort: 12420
+              protocol: TCP
+          env:
+            # ── Entra ID device-code client (operator-created app registration) ──
+            - name: MICROSOFT_MCP_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: sudo-msgraph-oauth
+                  key: client-id
+            # ── Tenant (Northeastern) + the default account ───────────────────
+            - name: MICROSOFT_MCP_TENANT_ID
+              value: "a8eec281-aaa3-4dae-ac9b-9a398b9215e7"
+            # ── Listen port ──────────────────────────────────────────────────
+            - name: MCP_PORT
+              value: "12420"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: 12420
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket:
+              port: 12420
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: sudo-msgraph-mcp-data

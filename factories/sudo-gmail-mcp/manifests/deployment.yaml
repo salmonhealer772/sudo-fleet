@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sudo-gmail-mcp
+  namespace: default
+  labels:
+    app: sudo-gmail-mcp
+    kind: gmail-mcp
+spec:
+  # Recreate, not RollingUpdate: hostNetwork + a fixed port (24659) means a
+  # rolling update would try to bind the same node port from two pods at once.
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sudo-gmail-mcp
+      kind: gmail-mcp
+  template:
+    metadata:
+      labels:
+        app: sudo-gmail-mcp
+        kind: gmail-mcp
+    spec:
+      hostNetwork: true
+      dnsPolicy: Default
+      containers:
+        - name: gmail-mcp
+          image: sudo-gmail-mcp:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--transport"
+            - "streamable-http"
+            - "--single-user"
+            - "--tools"
+            - "gmail"
+          ports:
+            - name: mcp
+              containerPort: 24659
+              protocol: TCP
+          env:
+            # ── Google OAuth client (operator-created; reused from sudo-gws) ──
+            - name: GOOGLE_OAUTH_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: sudo-gws-oauth
+                  key: client-id
+            - name: GOOGLE_OAUTH_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sudo-gws-oauth
+                  key: client-secret
+            # ── Default single-user identity (multi-account is still supported ──
+            #    by passing a different `user_google_email` per tool call; this
+            #    only sets the fallback used when the agent omits it).
+            - name: USER_GOOGLE_EMAIL
+              value: "aidanmcohen@gmail.com"
+            # ── OAuth redirect (loopback on the operator's Mac) ──────────────
+            - name: GOOGLE_OAUTH_REDIRECT_URI
+              value: "http://127.0.0.1:8747/oauth2callback"
+            - name: OAUTHLIB_INSECURE_TRANSPORT
+              value: "1"
+            - name: WORKSPACE_MCP_BASE_URI
+              value: "http://127.0.0.1:8747"
+            - name: OAUTH_ALLOWED_ORIGINS
+              value: "http://127.0.0.1:8747"
+            # ── Listen port + credential store ──────────────────────────────
+            - name: WORKSPACE_MCP_HOST
+              value: "0.0.0.0"
+            - name: WORKSPACE_MCP_PORT
+              value: "24659"
+            - name: WORKSPACE_MCP_CREDENTIALS_DIR
+              value: "/data"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 24659
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 24659
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: sudo-gmail-mcp-data

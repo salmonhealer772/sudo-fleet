@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sudo-gmail-mcp-data
+  namespace: default
+  labels:
+    app: sudo-gmail-mcp
+    kind: gmail-mcp
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
