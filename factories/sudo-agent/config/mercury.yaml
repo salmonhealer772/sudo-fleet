@@ -31,10 +31,8 @@ platforms:
     enabled: true
 
 mcp_servers:
-  gmail:
-    url: "http://192.168.5.15:24659/mcp"
-  microsoft_graph:
-    url: "http://192.168.5.15:12420/mcp"
+  mail:
+    url: "http://192.168.5.15:29543/mcp"
   google_workspace:
     url: "http://192.168.5.15:27462/mcp"
   regulations:

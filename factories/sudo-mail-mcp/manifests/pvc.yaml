@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sudo-mail-mcp-data
+  namespace: default
+  labels:
+    app: sudo-mail-mcp
+    kind: mail-mcp
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

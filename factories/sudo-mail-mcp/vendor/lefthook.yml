@@ -1,0 +1,51 @@
+# ==============================================================================
+# Lefthook Git Hooks Configuration
+# ==============================================================================
+# Docs: https://lefthook.dev/configuration/
+#
+# Install hooks: pnpm lefthook install
+# ==============================================================================
+
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: '*.{ts,tsx,js,jsx,json,jsonc}'
+      exclude: '*lock*'
+      run: npx biome check --write {staged_files}
+      stage_fixed: true
+    typecheck:
+      # tsconfig.test.json covers src + tests + __integration__ (the plain
+      # tsconfig excludes integration).
+      run: npx tsc --noEmit -p tsconfig.test.json
+    actionlint:
+      glob: '.github/workflows/*.{yml,yaml}'
+      run: actionlint {staged_files}
+
+commit-msg:
+  commands:
+    conventional-commit:
+      run: |
+        cog verify --file {1} 2>/dev/null || {
+          echo ""
+          echo "❌ Invalid commit message format"
+          echo ""
+          echo "Expected: <type>(<scope>): <description>"
+          echo "Example:  feat(imap): add thread reconstruction"
+          echo ""
+          echo "Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+          echo ""
+          exit 1
+        }
+
+pre-push:
+  parallel: true
+  commands:
+    test:
+      run: pnpm test
+    check:
+      run: pnpm check
+    knip:
+      # Dead-code / unused-dependency guard. Fails only on high-signal findings
+      # (unused files, deps, binaries); export-level findings are warnings.
+      run: pnpm knip

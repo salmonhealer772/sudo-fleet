@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sudo-mail-mcp
+  namespace: default
+  labels:
+    app: sudo-mail-mcp
+    kind: mail-mcp
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sudo-mail-mcp
+      kind: mail-mcp
+  template:
+    metadata:
+      labels:
+        app: sudo-mail-mcp
+        kind: mail-mcp
+    spec:
+      hostNetwork: true
+      dnsPolicy: Default
+      containers:
+        - name: mail-mcp
+          image: sudo-mail-mcp:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "http"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "29543"
+            - "--insecure"
+            - "--allowed-hosts"
+            - "*"
+          ports:
+            - name: mcp
+              containerPort: 29543
+              protocol: TCP
+          env:
+            - name: XDG_CONFIG_HOME
+              value: "/etc"
+            - name: XDG_CACHE_HOME
+              value: "/data/cache"
+            - name: XDG_STATE_HOME
+              value: "/data/state"
+            - name: XDG_DATA_HOME
+              value: "/data/share"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/email-mcp
+              readOnly: true
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            tcpSocket:
+              port: 29543
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            tcpSocket:
+              port: 29543
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          secret:
+            secretName: sudo-mail-mcp-config
+            defaultMode: 256
+        - name: data
+          persistentVolumeClaim:
+            claimName: sudo-mail-mcp-data

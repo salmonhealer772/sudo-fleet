@@ -1,0 +1,153 @@
+import type { AppServices } from '../app.js';
+import type { AppConfig } from '../types/index.js';
+import registerAllTools from './register.js';
+
+// Mock ALL tool registration imports
+vi.mock('./accounts.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./analytics.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./attachments.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./bulk.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./calendar.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./contacts.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./drafts.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./emails.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./folders.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./health.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./label.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./locate.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./mailboxes.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./manage.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./scheduler.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./send.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./templates.tool.js', () => ({
+  registerTemplateReadTools: vi.fn(),
+  registerTemplateWriteTools: vi.fn(),
+}));
+vi.mock('./thread.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./verification.tool.js', () => ({ default: vi.fn() }));
+vi.mock('./watcher.tool.js', () => ({ default: vi.fn() }));
+
+import registerAccountsTools from './accounts.tool.js';
+import registerBulkTools from './bulk.tool.js';
+import registerDraftTools from './drafts.tool.js';
+import registerEmailsTools from './emails.tool.js';
+import registerFolderTools from './folders.tool.js';
+import registerLabelTools from './label.tool.js';
+import registerManageTools from './manage.tool.js';
+import registerSchedulerTools from './scheduler.tool.js';
+import registerSendTools from './send.tool.js';
+import { registerTemplateWriteTools } from './templates.tool.js';
+import registerVerificationTools from './verification.tool.js';
+
+function createConfig(readOnly: boolean): AppConfig {
+  return {
+    settings: {
+      send: { maxAttachmentMb: 25, saveToSent: false },
+      attachments: { autoDownload: true },
+      attachmentDownload: { allowedExtensions: ['pdf'], maxBytes: 25 * 1024 * 1024 },
+      scheduler: { sentRetentionDays: 90 },
+      rateLimit: 10,
+      readOnly,
+      server: { host: '127.0.0.1', port: 8080, path: '/mcp', token: '', allowedHosts: [] },
+      verification: {
+        enabled: true,
+        autoCopy: true,
+        confirmCopy: false,
+        notify: true,
+        copyLinks: true,
+        linkAction: 'open' as const,
+        clearAfterSeconds: 60,
+        maxAgeMinutes: 10,
+        accounts: [],
+        senderAllowlist: [],
+        senderDenylist: [],
+      },
+      cache: {
+        enabled: true,
+        mailboxes: ['INBOX'],
+        windowDays: 0,
+        bodyMessages: 500,
+        maxSizeMb: 500,
+        syncInterval: 300,
+      },
+      watcher: { enabled: false, folders: ['INBOX'], idleTimeout: 1740 },
+      hooks: {
+        onNewEmail: 'notify',
+        preset: 'priority-focus',
+        autoLabel: false,
+        autoFlag: false,
+        batchDelay: 5,
+        rules: [],
+        alerts: {
+          desktop: false,
+          sound: false,
+          urgencyThreshold: 'high',
+          webhookUrl: '',
+          webhookEvents: ['urgent', 'high'],
+        },
+      },
+    },
+    accounts: [],
+  };
+}
+
+function createServices(readOnly: boolean): AppServices {
+  return {
+    config: createConfig(readOnly),
+    connections: {} as never,
+    imapService: {} as never,
+    mailReadService: {} as never,
+    smtpService: {} as never,
+    templateService: {} as never,
+    calendarService: {} as never,
+    localCalendarService: {} as never,
+    remindersService: {} as never,
+    schedulerService: {} as never,
+    watcherService: {} as never,
+    hooksService: {} as never,
+    clipboardService: {} as never,
+    dialogService: {} as never,
+    verificationCatcher: {} as never,
+  };
+}
+
+describe('registerAllTools', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers all tools when readOnly is false', () => {
+    registerAllTools({} as never, createServices(false));
+    // Read tools should always be registered
+    expect(registerAccountsTools).toHaveBeenCalled();
+    expect(registerEmailsTools).toHaveBeenCalled();
+    expect(registerVerificationTools).toHaveBeenCalled();
+    // Write tools should be registered when NOT read-only
+    expect(registerSendTools).toHaveBeenCalled();
+    expect(registerManageTools).toHaveBeenCalled();
+    expect(registerLabelTools).toHaveBeenCalled();
+    expect(registerBulkTools).toHaveBeenCalled();
+    expect(registerDraftTools).toHaveBeenCalled();
+    expect(registerFolderTools).toHaveBeenCalled();
+    expect(registerTemplateWriteTools).toHaveBeenCalled();
+    expect(registerSchedulerTools).toHaveBeenCalled();
+  });
+
+  it('skips write tools when readOnly is true', () => {
+    registerAllTools({} as never, createServices(true));
+    // Read tools should still be registered
+    expect(registerAccountsTools).toHaveBeenCalled();
+    expect(registerEmailsTools).toHaveBeenCalled();
+    // Clipboard copy is a local convenience, not a mailbox write
+    expect(registerVerificationTools).toHaveBeenCalled();
+    // Write tools should NOT be registered
+    expect(registerSendTools).not.toHaveBeenCalled();
+    expect(registerManageTools).not.toHaveBeenCalled();
+    expect(registerLabelTools).not.toHaveBeenCalled();
+    expect(registerBulkTools).not.toHaveBeenCalled();
+    expect(registerDraftTools).not.toHaveBeenCalled();
+    expect(registerFolderTools).not.toHaveBeenCalled();
+    expect(registerTemplateWriteTools).not.toHaveBeenCalled();
+    expect(registerSchedulerTools).not.toHaveBeenCalled();
+  });
+});

@@ -1,0 +1,39 @@
+# sudo-mail-mcp config.toml — TEMPLATE (no secrets). Generate the real file with
+#   kube-scripts/gen-config.py <ortie-token-dir> config.toml
+# The real config.toml (with refresh tokens) lives in the k8s Secret
+# `sudo-mail-mcp-config` and is NEVER committed to git.
+
+[settings]
+rate_limit = 30
+
+[[accounts]]
+name = "aidan"
+email = "aidanmcohen@gmail.com"
+full_name = "Aidan"
+
+[accounts.oauth2]
+provider = "google"
+client_id = "406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com"
+client_secret = "kSmqreRr0qwBWJgbf5Y-PjSU"
+refresh_token = "REPLACE_ME"
+
+[accounts.imap]
+host = "imap.gmail.com"
+port = 993
+tls = true
+
+[accounts.smtp]
+host = "smtp.gmail.com"
+port = 587
+tls = false
+starttls = true
+verify_ssl = true
+
+[accounts.smtp.pool]
+enabled = true
+max_connections = 1
+max_messages = 100
+
+# ... repeat for aidan77223, aidansteam77223, sbaco (all google), and:
+# [[accounts]] name = "neu" (microsoft, client_id 9e5f94bc-... , NO client_secret,
+#   imap outlook.office365.com:993, smtp smtp.office365.com:587 starttls)

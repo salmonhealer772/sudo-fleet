@@ -1,0 +1,724 @@
+/**
+ * Configuration loader.
+ *
+ * Precedence: environment variables → TOML config file → defaults.
+ */
+
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+import { parse as parseTOML, stringify as stringifyTOML } from 'smol-toml';
+import {
+  DEFAULT_ATTACHMENT_DOWNLOAD_MAX_BYTES,
+  parseExtensionAllowlist,
+} from '../safety/attachment-download.js';
+import type { AccountConfig, AppConfig, HookRule, OAuth2Config } from '../types/index.js';
+import type { RawAccountConfig, RawAppConfig } from './schema.js';
+import { AppConfigFileSchema } from './schema.js';
+import { resolveSecret } from './secret-resolver.js';
+import { CONFIG_FILE, xdg } from './xdg.js';
+
+// ---------------------------------------------------------------------------
+// Environment variable loader (single-account quick setup)
+// ---------------------------------------------------------------------------
+
+function loadFromEnv(): RawAppConfig | null {
+  const email = process.env.MCP_EMAIL_ADDRESS;
+  const password = process.env.MCP_EMAIL_PASSWORD;
+  const imapHost = process.env.MCP_EMAIL_IMAP_HOST;
+  const smtpHost = process.env.MCP_EMAIL_SMTP_HOST;
+
+  if (!email || !imapHost || !smtpHost) {
+    return null;
+  }
+
+  // Need either password or OAuth2 env vars
+  const oauth2Provider = process.env.MCP_EMAIL_OAUTH2_PROVIDER;
+  if (!password && !oauth2Provider) {
+    return null;
+  }
+
+  const oauth2 = oauth2Provider
+    ? {
+        provider: oauth2Provider as 'google' | 'microsoft' | 'custom',
+        client_id: process.env.MCP_EMAIL_OAUTH2_CLIENT_ID ?? '',
+        client_secret: process.env.MCP_EMAIL_OAUTH2_CLIENT_SECRET ?? '',
+        refresh_token: process.env.MCP_EMAIL_OAUTH2_REFRESH_TOKEN ?? '',
+      }
+    : undefined;
+
+  return {
+    settings: {
+      rate_limit: parseInt(process.env.MCP_EMAIL_RATE_LIMIT ?? '10', 10),
+      read_only: process.env.MCP_EMAIL_READ_ONLY === 'true',
+      server: {
+        host: process.env.EMAIL_MCP_HTTP_HOST ?? '127.0.0.1',
+        port: parseInt(process.env.EMAIL_MCP_HTTP_PORT ?? '8080', 10),
+        path: process.env.EMAIL_MCP_HTTP_PATH ?? '/mcp',
+        token: process.env.EMAIL_MCP_HTTP_TOKEN ?? '',
+        allowed_hosts: (process.env.EMAIL_MCP_HTTP_ALLOWED_HOSTS ?? '')
+          .split(',')
+          .map((h) => h.trim())
+          .filter(Boolean),
+      },
+      verification: {
+        // Opt-out like cache: the feature is inert until the watcher runs,
+        // and the on-demand tool is read-only unless asked to copy.
+        enabled: process.env.MCP_EMAIL_VERIFICATION_ENABLED !== 'false',
+        auto_copy: process.env.MCP_EMAIL_VERIFICATION_AUTO_COPY !== 'false',
+        confirm_copy: process.env.MCP_EMAIL_VERIFICATION_CONFIRM_COPY === 'true',
+        notify: process.env.MCP_EMAIL_VERIFICATION_NOTIFY !== 'false',
+        copy_links: process.env.MCP_EMAIL_VERIFICATION_COPY_LINKS !== 'false',
+        link_action: (process.env.MCP_EMAIL_VERIFICATION_LINK_ACTION as 'open' | 'copy') ?? 'open',
+        clear_after_seconds: parseInt(
+          process.env.MCP_EMAIL_VERIFICATION_CLEAR_AFTER_SECONDS ?? '60',
+          10,
+        ),
+        max_age_minutes: parseInt(process.env.MCP_EMAIL_VERIFICATION_MAX_AGE_MINUTES ?? '10', 10),
+        accounts: (process.env.MCP_EMAIL_VERIFICATION_ACCOUNTS ?? '')
+          .split(',')
+          .map((a) => a.trim())
+          .filter(Boolean),
+        sender_allowlist: (process.env.MCP_EMAIL_VERIFICATION_SENDER_ALLOWLIST ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+        sender_denylist: (process.env.MCP_EMAIL_VERIFICATION_SENDER_DENYLIST ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      },
+      send: {
+        max_attachment_mb: parseInt(process.env.MCP_EMAIL_SEND_MAX_ATTACHMENT_MB ?? '25', 10),
+        save_to_sent: process.env.MCP_EMAIL_SEND_SAVE_TO_SENT === 'true',
+      },
+      attachments: {
+        auto_download: process.env.MCP_EMAIL_ATTACHMENTS_AUTO_DOWNLOAD !== 'false',
+      },
+      attachment_download: {
+        dir: process.env.MCP_EMAIL_ATTACHMENT_DOWNLOAD_DIR,
+        allowed_extensions: parseExtensionAllowlist(
+          process.env.MCP_EMAIL_ATTACHMENT_DOWNLOAD_ALLOWED_EXTENSIONS,
+        ),
+        max_bytes: parseInt(
+          process.env.MCP_EMAIL_ATTACHMENT_DOWNLOAD_MAX_BYTES ??
+            String(DEFAULT_ATTACHMENT_DOWNLOAD_MAX_BYTES),
+          10,
+        ),
+      },
+      scheduler: {
+        sent_retention_days: parseInt(
+          process.env.MCP_EMAIL_SCHEDULER_SENT_RETENTION_DAYS ?? '90',
+          10,
+        ),
+      },
+      cache: {
+        // Opt-out rather than opt-in: the mirror is a pure win for reads and
+        // degrades to live behaviour if anything goes wrong.
+        enabled: process.env.MCP_EMAIL_CACHE_ENABLED !== 'false',
+        mailboxes: (process.env.MCP_EMAIL_CACHE_MAILBOXES ?? 'INBOX')
+          .split(',')
+          .map((m) => m.trim())
+          .filter(Boolean),
+        window_days: parseInt(process.env.MCP_EMAIL_CACHE_WINDOW_DAYS ?? '0', 10),
+        body_messages: parseInt(process.env.MCP_EMAIL_CACHE_BODY_MESSAGES ?? '500', 10),
+        max_size_mb: parseInt(process.env.MCP_EMAIL_CACHE_MAX_SIZE_MB ?? '500', 10),
+        sync_interval: parseInt(process.env.MCP_EMAIL_CACHE_SYNC_INTERVAL ?? '300', 10),
+      },
+      watcher: {
+        enabled: process.env.MCP_EMAIL_WATCHER_ENABLED === 'true',
+        folders: (process.env.MCP_EMAIL_WATCHER_FOLDERS ?? 'INBOX')
+          .split(',')
+          .map((f) => f.trim())
+          .filter(Boolean),
+        idle_timeout: parseInt(process.env.MCP_EMAIL_WATCHER_IDLE_TIMEOUT ?? '1740', 10),
+      },
+      hooks: {
+        on_new_email:
+          (process.env.MCP_EMAIL_HOOK_ON_NEW_EMAIL as 'triage' | 'notify' | 'none') ?? 'notify',
+        preset:
+          (process.env.MCP_EMAIL_HOOK_PRESET as
+            | 'inbox-zero'
+            | 'gtd'
+            | 'priority-focus'
+            | 'notification-only'
+            | 'custom') ?? 'priority-focus',
+        auto_label: process.env.MCP_EMAIL_HOOK_AUTO_LABEL === 'true',
+        auto_flag: process.env.MCP_EMAIL_HOOK_AUTO_FLAG === 'true',
+        batch_delay: parseInt(process.env.MCP_EMAIL_HOOK_BATCH_DELAY ?? '5', 10),
+        custom_instructions: process.env.MCP_EMAIL_HOOK_CUSTOM_INSTRUCTIONS,
+        rules: [],
+        alerts: {
+          desktop: process.env.MCP_EMAIL_ALERT_DESKTOP === 'true',
+          sound: process.env.MCP_EMAIL_ALERT_SOUND === 'true',
+          urgency_threshold:
+            (process.env.MCP_EMAIL_ALERT_URGENCY_THRESHOLD as
+              | 'urgent'
+              | 'high'
+              | 'normal'
+              | 'low') ?? 'high',
+          webhook_url: process.env.MCP_EMAIL_ALERT_WEBHOOK_URL ?? '',
+          webhook_events: ['urgent', 'high'],
+        },
+        auto_calendar: process.env.MCP_EMAIL_HOOK_AUTO_CALENDAR === 'true',
+        calendar_name: process.env.MCP_EMAIL_HOOK_CALENDAR_NAME ?? '',
+        calendar_alarm_minutes: parseInt(
+          process.env.MCP_EMAIL_HOOK_CALENDAR_ALARM_MINUTES ?? '15',
+          10,
+        ),
+        calendar_confirm: process.env.MCP_EMAIL_HOOK_CALENDAR_CONFIRM !== 'false',
+      },
+    },
+    accounts: [
+      {
+        name: process.env.MCP_EMAIL_ACCOUNT_NAME ?? 'default',
+        email,
+        full_name: process.env.MCP_EMAIL_FULL_NAME,
+        username: process.env.MCP_EMAIL_USERNAME,
+        password,
+        oauth2,
+        imap: {
+          host: imapHost,
+          port: parseInt(process.env.MCP_EMAIL_IMAP_PORT ?? '993', 10),
+          tls: process.env.MCP_EMAIL_IMAP_TLS !== 'false',
+          starttls: process.env.MCP_EMAIL_IMAP_STARTTLS === 'true',
+          verify_ssl: process.env.MCP_EMAIL_IMAP_VERIFY_SSL !== 'false',
+        },
+        smtp: {
+          host: smtpHost,
+          port: parseInt(process.env.MCP_EMAIL_SMTP_PORT ?? '465', 10),
+          tls: process.env.MCP_EMAIL_SMTP_TLS !== 'false',
+          starttls: process.env.MCP_EMAIL_SMTP_STARTTLS === 'true',
+          verify_ssl: process.env.MCP_EMAIL_SMTP_VERIFY_SSL !== 'false',
+          pool: {
+            enabled: process.env.MCP_EMAIL_SMTP_POOL_ENABLED !== 'false',
+            max_connections: parseInt(process.env.MCP_EMAIL_SMTP_POOL_MAX_CONNECTIONS ?? '1', 10),
+            max_messages: parseInt(process.env.MCP_EMAIL_SMTP_POOL_MAX_MESSAGES ?? '100', 10),
+          },
+        },
+      },
+    ],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// TOML file loader
+// ---------------------------------------------------------------------------
+
+/**
+ * Read and parse the TOML config.
+ *
+ * Returns null only when the file genuinely isn't there — that is the
+ * "not configured yet" signal callers turn into setup instructions. Every
+ * other failure throws: a syntax error or an unreadable file used to be
+ * swallowed into the same null, so a one-character typo was reported as
+ * "No configuration found" and sent the user to create a file they already
+ * had.
+ */
+async function loadFromFile(filePath: string = CONFIG_FILE): Promise<RawAppConfig | null> {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Cannot read config file at ${filePath}: ${detail}`);
+  }
+
+  try {
+    return parseTOML(content) as unknown as RawAppConfig;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `TOML syntax error in ${filePath}:\n  ${detail}\n\n` +
+        `Run 'email-mcp config validate' for the full report.`,
+    );
+  }
+}
+
+/**
+ * Validate a raw config, reporting field paths the way `config validate`
+ * does. A bare `.parse()` would surface a raw ZodError blob as the process's
+ * fatal error.
+ */
+function validateRawConfig(raw: unknown, source: string): RawAppConfig {
+  const result = AppConfigFileSchema.safeParse(raw);
+  if (result.success) return result.data;
+
+  const lines = result.error.issues.map((issue) => {
+    const where = issue.path.length > 0 ? issue.path.join('.') : '(root)';
+    return `  - ${where}: ${issue.message}`;
+  });
+  throw new Error(
+    `Invalid configuration in ${source}:\n${lines.join('\n')}\n\n` +
+      `Run 'email-mcp config validate' for the full report.`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Normalize raw config → typed AppConfig
+// ---------------------------------------------------------------------------
+
+function normalizeOAuth2(raw: NonNullable<RawAccountConfig['oauth2']>): OAuth2Config {
+  return {
+    provider: raw.provider,
+    clientId: raw.client_id,
+    clientSecret: raw.client_secret,
+    refreshToken: raw.refresh_token,
+    tokenUrl: raw.token_url,
+    authUrl: raw.auth_url,
+    scopes: raw.scopes,
+  };
+}
+
+function normalizeAccount(raw: RawAccountConfig): AccountConfig {
+  return {
+    name: raw.name,
+    email: raw.email,
+    fullName: raw.full_name,
+    username: raw.username ?? raw.email,
+    password: raw.password,
+    oauth2: raw.oauth2 ? normalizeOAuth2(raw.oauth2) : undefined,
+    maxAttachmentMb: raw.max_attachment_mb,
+    sentMailbox: raw.sent_mailbox,
+    saveToSent: raw.save_to_sent,
+    imap: {
+      host: raw.imap.host,
+      port: raw.imap.port,
+      tls: raw.imap.tls,
+      starttls: raw.imap.starttls,
+      verifySsl: raw.imap.verify_ssl,
+    },
+    smtp: {
+      host: raw.smtp.host,
+      port: raw.smtp.port,
+      tls: raw.smtp.tls,
+      starttls: raw.smtp.starttls,
+      verifySsl: raw.smtp.verify_ssl,
+      pool: {
+        enabled: raw.smtp.pool.enabled,
+        maxConnections: raw.smtp.pool.max_connections,
+        maxMessages: raw.smtp.pool.max_messages,
+      },
+    },
+  };
+}
+
+function normalizeHookRule(raw: {
+  name: string;
+  match: Record<string, string | undefined>;
+  actions: Record<string, unknown>;
+}): HookRule {
+  return {
+    name: raw.name,
+    match: {
+      from: raw.match.from,
+      to: raw.match.to,
+      subject: raw.match.subject,
+    },
+    actions: {
+      labels: Array.isArray(raw.actions.labels) ? (raw.actions.labels as string[]) : undefined,
+      flag: typeof raw.actions.flag === 'boolean' ? raw.actions.flag : undefined,
+      markRead: typeof raw.actions.mark_read === 'boolean' ? raw.actions.mark_read : undefined,
+      alert: typeof raw.actions.alert === 'boolean' ? raw.actions.alert : undefined,
+      addToCalendar:
+        typeof raw.actions.add_to_calendar === 'boolean' ? raw.actions.add_to_calendar : undefined,
+    },
+  };
+}
+
+function normalizeConfig(raw: RawAppConfig): AppConfig {
+  return {
+    settings: {
+      rateLimit: raw.settings.rate_limit,
+      readOnly: raw.settings.read_only,
+      server: {
+        host: raw.settings.server.host,
+        port: raw.settings.server.port,
+        path: raw.settings.server.path,
+        token: raw.settings.server.token,
+        allowedHosts: raw.settings.server.allowed_hosts,
+      },
+      verification: {
+        enabled: raw.settings.verification.enabled,
+        autoCopy: raw.settings.verification.auto_copy,
+        confirmCopy: raw.settings.verification.confirm_copy,
+        notify: raw.settings.verification.notify,
+        copyLinks: raw.settings.verification.copy_links,
+        linkAction: raw.settings.verification.link_action,
+        clearAfterSeconds: raw.settings.verification.clear_after_seconds,
+        maxAgeMinutes: raw.settings.verification.max_age_minutes,
+        accounts: raw.settings.verification.accounts,
+        senderAllowlist: raw.settings.verification.sender_allowlist,
+        senderDenylist: raw.settings.verification.sender_denylist,
+      },
+      send: {
+        maxAttachmentMb: raw.settings.send.max_attachment_mb,
+        saveToSent: raw.settings.send.save_to_sent,
+      },
+      attachments: {
+        autoDownload: raw.settings.attachments.auto_download,
+      },
+      attachmentDownload: {
+        dir: raw.settings.attachment_download.dir,
+        allowedExtensions: raw.settings.attachment_download.allowed_extensions,
+        maxBytes: raw.settings.attachment_download.max_bytes,
+      },
+      scheduler: {
+        sentRetentionDays: raw.settings.scheduler.sent_retention_days,
+      },
+      cache: {
+        enabled: raw.settings.cache.enabled,
+        mailboxes: raw.settings.cache.mailboxes,
+        windowDays: raw.settings.cache.window_days,
+        bodyMessages: raw.settings.cache.body_messages,
+        maxSizeMb: raw.settings.cache.max_size_mb,
+        syncInterval: raw.settings.cache.sync_interval,
+      },
+      watcher: {
+        enabled: raw.settings.watcher.enabled,
+        folders: raw.settings.watcher.folders,
+        idleTimeout: raw.settings.watcher.idle_timeout,
+      },
+      hooks: {
+        onNewEmail: raw.settings.hooks.on_new_email,
+        preset: raw.settings.hooks.preset,
+        autoLabel: raw.settings.hooks.auto_label,
+        autoFlag: raw.settings.hooks.auto_flag,
+        batchDelay: raw.settings.hooks.batch_delay,
+        customInstructions: raw.settings.hooks.custom_instructions,
+        systemPrompt: raw.settings.hooks.system_prompt,
+        rules: (raw.settings.hooks.rules ?? []).map(normalizeHookRule),
+        alerts: {
+          desktop: raw.settings.hooks.alerts?.desktop ?? false,
+          sound: raw.settings.hooks.alerts?.sound ?? false,
+          urgencyThreshold: raw.settings.hooks.alerts?.urgency_threshold ?? 'high',
+          webhookUrl: raw.settings.hooks.alerts?.webhook_url ?? '',
+          webhookEvents: raw.settings.hooks.alerts?.webhook_events ?? ['urgent', 'high'],
+        },
+        autoCalendar: raw.settings.hooks.auto_calendar ?? false,
+        calendarName: raw.settings.hooks.calendar_name ?? '',
+        calendarAlarmMinutes: raw.settings.hooks.calendar_alarm_minutes ?? 15,
+        calendarConfirm: raw.settings.hooks.calendar_confirm ?? true,
+      },
+    },
+    accounts: raw.accounts.map(normalizeAccount),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Load raw (snake_case) config from TOML file without normalization.
+ * Useful for read-modify-write operations in CLI commands.
+ * Throws if no config file exists or validation fails.
+ */
+export async function loadRawConfig(configPath?: string): Promise<RawAppConfig> {
+  const filePath = configPath ?? CONFIG_FILE;
+  const fileConfig = await loadFromFile(filePath);
+  if (!fileConfig) {
+    throw new Error(`No config file found at: ${filePath}`);
+  }
+  return validateRawConfig(fileConfig, filePath);
+}
+
+/**
+ * Load and validate configuration from env vars or TOML file.
+ * Throws on validation errors.
+ */
+
+/**
+ * Resolve indirect secret references (keychain:/env:) on every account after
+ * normalization. Plaintext values pass through unchanged, so this is a no-op
+ * for existing configs. Kept out of normalizeAccount (which stays pure/sync)
+ * and applied as one awaited pass.
+ */
+async function resolveAccountSecrets(accounts: AccountConfig[]): Promise<AccountConfig[]> {
+  return Promise.all(
+    accounts.map(async (account) => {
+      const resolved: AccountConfig = { ...account };
+      if (account.password !== undefined) {
+        resolved.password = await resolveSecret(account.password);
+      }
+      if (account.oauth2) {
+        resolved.oauth2 = {
+          ...account.oauth2,
+          clientSecret: await resolveSecret(account.oauth2.clientSecret),
+          refreshToken: await resolveSecret(account.oauth2.refreshToken),
+        };
+      }
+      return resolved;
+    }),
+  );
+}
+
+export async function loadConfig(configPath?: string): Promise<AppConfig> {
+  // 1. Try environment variables first
+  const envConfig = loadFromEnv();
+  if (envConfig) {
+    const validated = validateRawConfig(envConfig, 'MCP_EMAIL_* environment variables');
+    const normalized = normalizeConfig(validated);
+    return { ...normalized, accounts: await resolveAccountSecrets(normalized.accounts) };
+  }
+
+  // 2. Fall back to TOML config file
+  const fileConfig = await loadFromFile(configPath);
+  if (fileConfig) {
+    const validated = validateRawConfig(fileConfig, configPath ?? CONFIG_FILE);
+    const normalized = normalizeConfig(validated);
+    return { ...normalized, accounts: await resolveAccountSecrets(normalized.accounts) };
+  }
+
+  throw new Error(
+    `No configuration found.\n\n` +
+      `Set environment variables (MCP_EMAIL_ADDRESS, MCP_EMAIL_PASSWORD, etc.)\n` +
+      `or create a config file at: ${configPath ?? CONFIG_FILE}\n\n` +
+      `Run 'email-mcp setup' for interactive configuration.`,
+  );
+}
+
+/**
+ * Save configuration to a TOML file.
+ */
+/**
+ * Write the commented starter config.
+ *
+ * Not expressible through saveConfig: that serialises a config object, which
+ * would drop every explanatory comment the template exists for. The
+ * permissions matter as much as the content — the command's own next
+ * instruction is to edit this file and add an account password, so it must not
+ * be born world-readable.
+ */
+export async function writeConfigTemplate(filePath: string = CONFIG_FILE): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  await fs.writeFile(filePath, generateTemplate(), { encoding: 'utf-8', mode: 0o600 });
+  // writeFile leaves the mode of an existing file alone, so tighten it.
+  await fs.chmod(filePath, 0o600);
+}
+
+export async function saveConfig(
+  config: RawAppConfig,
+  filePath: string = CONFIG_FILE,
+): Promise<void> {
+  const dir = path.dirname(filePath);
+  await fs.mkdir(dir, { recursive: true });
+  const toml = stringifyTOML(config as Record<string, unknown>);
+  // The config holds account credentials — write owner-only and tighten any
+  // pre-existing loose file (writeFile does not change the mode of a file that
+  // already exists, so chmod explicitly after).
+  await fs.writeFile(filePath, toml, { encoding: 'utf-8', mode: 0o600 });
+  await fs.chmod(filePath, 0o600);
+}
+
+export interface SaveResult {
+  /** Set when a previous file existed and was backed up. */
+  backupPath?: string;
+  /**
+   * True when this save overwrote a file that still carried `#` comments and
+   * no `.bak` existed yet — callers should surface a one-time notice, since
+   * smol-toml stringify cannot preserve comments.
+   */
+  commentsLost: boolean;
+}
+
+/**
+ * Validate, back up, then save.
+ *
+ * Zod-parses BEFORE any disk write (an invalid object never clobbers a valid
+ * file), then best-effort copies the previous file bytes to `<path>.bak` so a
+ * bad save (or the inevitable comment loss) is recoverable.
+ *
+ * Note: raw configs are fully materialized by the schema defaults, so every
+ * save writes every key explicitly — future default changes will not reach a
+ * file once it has been saved. That has always been true of every save path.
+ */
+export async function saveConfigValidated(
+  config: RawAppConfig,
+  filePath: string = CONFIG_FILE,
+): Promise<SaveResult> {
+  AppConfigFileSchema.parse(config);
+
+  let backupPath: string | undefined;
+  let commentsLost = false;
+  try {
+    const previous = await fs.readFile(filePath, 'utf-8');
+    const bak = `${filePath}.bak`;
+    const bakExisted = await configExists(bak);
+    await fs.writeFile(bak, previous, { encoding: 'utf-8', mode: 0o600 });
+    await fs.chmod(bak, 0o600);
+    backupPath = bak;
+    commentsLost = !bakExisted && /^\s*#/m.test(previous);
+  } catch {
+    // First save or unreadable previous file — the backup is best-effort.
+  }
+
+  await saveConfig(config, filePath);
+  return { backupPath, commentsLost };
+}
+
+/**
+ * Generate a template TOML config string.
+ */
+export function generateTemplate(): string {
+  return `# Email MCP Server Configuration
+# Location: ${CONFIG_FILE}
+
+[settings]
+rate_limit = 10  # max emails per minute per account
+read_only = false  # set to true to disable the mailbox-write tools
+
+# Outbound. save_to_sent APPENDs a copy of each sent message to the IMAP Sent
+# folder. Off by default: Gmail and Outlook file sent mail themselves, so
+# enabling it there means two copies of everything. The filed copy omits Bcc.
+# [settings.send]
+# max_attachment_mb = 25
+# save_to_sent = false
+
+# download_attachment's save_to_download_dir writes into this directory and
+# returns only metadata (path/size/mime), skipping base64 — useful for large
+# files or handing a document to another MCP server by path. Unset (the
+# default) disables the option. Also settable via MCP_EMAIL_ATTACHMENT_DOWNLOAD_DIR.
+# [settings.attachment_download]
+# dir = "/data/attachments"
+# allowed_extensions = ["pdf", "png", "jpg", "jpeg", "webp", "tiff", "txt", "md", "doc", "docx", "odt", "xls", "xlsx", "csv"]
+# max_bytes = 26214400
+
+# Scheduled sends. The queue keeps one JSON file per sent email under
+# $XDG_STATE_HOME/email-mcp/scheduled/sent/; retention bounds how far back
+# that history reaches, pruned by age when the queue is next checked.
+# [settings.scheduler]
+# sent_retention_days = 90  # 0 keeps every sent entry forever
+
+# Local mirror — keeps a SQLite copy of mail under $XDG_CACHE_HOME/email-mcp
+# so reads are fast and still work while offline. On by default; the mirror is
+# regenerable, so deleting it is always safe.
+# Inspect or reclaim it with: email-mcp cache status / email-mcp cache clear
+# [settings.cache]
+# enabled = true          # set false to always read live from IMAP
+# mailboxes = ["INBOX"]   # synced in the background; others mirror lazily once read
+# window_days = 0         # how far back the first sync reaches (0 = everything)
+# body_messages = 500     # bodies kept per mailbox (0 = metadata only)
+# max_size_mb = 500       # budget for index + attachments; oldest evicted first
+# sync_interval = 300     # seconds between background reconciles
+
+# Streamable HTTP server ('email-mcp http' / 'email-mcp server start').
+# Precedence: CLI flags > EMAIL_MCP_HTTP_* env > this section > defaults.
+# [settings.server]
+# host = "127.0.0.1"
+# port = 8080
+# path = "/mcp"
+# token = ""             # bearer token; empty = no auth (loopback only)
+# allowed_hosts = []     # Host-header allowlist for reverse proxies
+
+# Outbound sends. Caps the base64-encoded total of all attachments on one
+# message; oversized sends fail locally with a per-file listing instead of a
+# provider-side 552. Known providers (Gmail, Outlook, Proton, …) are capped
+# at their documented limit when it is stricter; set max_attachment_mb on an
+# individual [[accounts]] entry to override both for that account.
+# [settings.send]
+# max_attachment_mb = 25
+
+# Inbound attachment handling. auto_download controls whether attachments are
+# saved locally as a side effect of calendar events created from emails
+# (add_to_calendar and watcher hooks). Explicit download_attachment calls are
+# never affected.
+# [settings.attachments]
+# auto_download = true
+
+# [settings.watcher]
+# enabled = false        # enable IMAP IDLE real-time monitoring
+# folders = ["INBOX"]    # folders to watch per account
+# idle_timeout = 1740    # seconds (29 min, IMAP max is 30)
+
+# Verification codes — when a mail carrying an OTP/2FA code or sign-in link
+# arrives, copy it to the clipboard (concealed from clipboard managers) and
+# show a notification. Ambient catching needs [settings.watcher] enabled;
+# the get_verification_code tool works either way.
+# [settings.verification]
+# enabled = true
+# auto_copy = true           # copy caught codes/links to the clipboard
+# confirm_copy = false       # ask (native dialog) before touching the clipboard
+# notify = true              # desktop notification when something is caught
+# copy_links = true          # also catch magic links (when no code found)
+# link_action = "open"       # "open" = offer to open links in the browser, "copy" = clipboard
+# clear_after_seconds = 60   # auto-clear clipboard if unchanged (0 = never)
+# max_age_minutes = 10       # ignore messages older than this
+# accounts = []              # watch these accounts only (empty = all)
+# sender_allowlist = []      # e.g. ["*@github.com", "*@google.com"]
+# sender_denylist = []
+
+# [settings.hooks]
+# on_new_email = "notify"  # "triage" (AI) | "notify" (log) | "none"
+# preset = "priority-focus" # "inbox-zero" | "gtd" | "priority-focus" | "notification-only" | "custom"
+# auto_label = false       # auto-apply AI-suggested labels
+# auto_flag = false        # auto-flag urgent emails
+# batch_delay = 5          # seconds to batch before processing
+# custom_instructions = "I'm a software engineer. Emails from @company.com are high priority."
+# system_prompt = ""       # full override (only when preset = "custom")
+
+# Static rules — run BEFORE AI triage, skip AI if matched
+# [[settings.hooks.rules]]
+# name = "GitHub Notifications"
+# match = { from = "*@github.com" }
+# actions = { labels = ["Dev"], mark_read = true }
+#
+# [[settings.hooks.rules]]
+# name = "VIP Contacts"
+# match = { from = "ceo@company.com" }
+# actions = { flag = true, alert = true, labels = ["VIP"] }
+
+# [settings.hooks.alerts]
+# desktop = false         # enable OS-level desktop notifications
+# sound = false           # play sound for urgent emails
+# urgency_threshold = "high" # minimum priority: "urgent" | "high" | "normal" | "low"
+# webhook_url = ""        # HTTP POST to Slack/Discord/ntfy.sh/etc.
+# webhook_events = ["urgent", "high"]  # which priorities trigger webhook
+
+[[accounts]]
+name = "personal"
+email = "you@example.com"
+full_name = "Your Name"
+# username defaults to email if omitted
+# username = "you@example.com"
+password = "your-app-password"
+# Per-account attachment cap (MB, base64-encoded total). Overrides the global
+# [settings.send] cap and the provider's documented limit for this account.
+# max_attachment_mb = 25
+
+[accounts.imap]
+host = "imap.example.com"
+port = 993
+tls = true
+starttls = false
+verify_ssl = true
+
+[accounts.smtp]
+host = "smtp.example.com"
+port = 465
+tls = true
+starttls = false
+verify_ssl = true
+
+[accounts.smtp.pool]
+enabled = true
+max_connections = 1
+max_messages = 100
+`;
+}
+
+/**
+ * Check if a config file exists at the default XDG path.
+ */
+export async function configExists(filePath: string = CONFIG_FILE): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Re-export for convenience */
+export { CONFIG_FILE, xdg };
