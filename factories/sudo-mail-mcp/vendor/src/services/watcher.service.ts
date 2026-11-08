@@ -12,6 +12,7 @@
 
 import type { ImapFlow } from 'imapflow';
 import { mcpLog } from '../logging.js';
+import { logError } from '../error-log.js';
 import type { AccountConfig, EmailMeta, WatcherConfig } from '../types/index.js';
 import { createImapClient } from '../utils/imap-client.js';
 import { readWatermark, resolveBaselineUid, writeWatermark } from '../utils/watcher-state.js';
@@ -271,6 +272,13 @@ export default class WatcherService {
         'watcher',
         `IDLE connect failed for ${state.account.name}/${state.folder}: ${errMsg}`,
       );
+      logError(err, {
+        location: 'services/watcher.service.ts:connectIdle',
+        operation: 'imap.idle.connect',
+        account: state.account.name,
+        mailbox: state.folder,
+        handled: 'reconnect (scheduled with backoff)',
+      });
       this.scheduleReconnect(key);
     }
   }
@@ -354,6 +362,13 @@ export default class WatcherService {
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       await mcpLog('warning', 'watcher', `Failed to fetch new emails: ${errMsg}`);
+      logError(err, {
+        location: 'services/watcher.service.ts:handleNewEmails',
+        operation: 'imap.fetch.new',
+        account: state.account.name,
+        mailbox: state.folder,
+        handled: 'skipped (next IDLE event or reconnect retries)',
+      });
     }
   }
 }

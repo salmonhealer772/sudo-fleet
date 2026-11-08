@@ -84,10 +84,28 @@ MCP_PORT=$(( 8000 + $(printf '%s' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
 # as MCP_PORT, but hashed from a DIFFERENT string ("$NAME-watch") so it never
 # collides with the MCP port. Guard bumps by 1 in the (astronomically rare) case
 # the two hashes land on the same port.
+# Collision guard: the NODE reserves 10248..10259 for k3s itself —
+# ss -ltnp on lima-ubuntu shows k3s-server holding 127.0.0.1:10248, 10249 and
+# 10256..10259, plus the kubelet on *:10250. A sudo-agent binds
+# 0.0.0.0:$MCP_PORT under hostNetwork, so any hash landing in that window dies
+# with EADDRINUSE before the probe can ever pass (found live on fa-glm-h4,
+# whose name hashes to 10256; the first fix bumped it to 10257, which is also
+# k3s-held, so it crash-looped again). +12 moves 10248..10259 to
+# 10260..10271, which nothing on the node holds.
+_dodge_k3s_ports() {
+  local p=$1
+  if (( p >= 10248 && p <= 10259 )); then
+    p=$(( p + 12 ))
+  fi
+  printf '%s' "$p"
+}
+MCP_PORT=$(_dodge_k3s_ports "$MCP_PORT")
 WATCH_PORT=$(( 8000 + $(printf '%s-watch' "$NAME" | cksum | cut -d' ' -f1) % 22000 ))
+WATCH_PORT=$(_dodge_k3s_ports "$WATCH_PORT")
 if [[ "$WATCH_PORT" == "$MCP_PORT" ]]; then
-  WATCH_PORT=$(( MCP_PORT + 1 ))
+  WATCH_PORT=$(( WATCH_PORT + 1 ))
 fi
+WATCH_PORT=$(_dodge_k3s_ports "$WATCH_PORT")
 
 # Per-agent Hermes API server port (platforms.api_server) is NOT derived here.
 # It comes from bin/api_server_ports.py — a dedicated, collision-proof 61000..65535

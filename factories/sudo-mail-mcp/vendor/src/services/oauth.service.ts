@@ -6,6 +6,7 @@
  */
 
 import type { OAuth2Config } from '../types/index.js';
+import { logError } from '../error-log.js';
 
 // ---------------------------------------------------------------------------
 // Provider endpoint configs
@@ -64,16 +65,25 @@ export default class OAuthService {
     if (inFlight) return inFlight;
 
     const refresh = (async () => {
-      const result = await OAuthService.refreshAccessToken(oauth2);
+      try {
+        const result = await OAuthService.refreshAccessToken(oauth2);
 
-      // Cache on the config object (in-memory only). Callers share the object,
-      // so one refresh serves every holder of this account.
-      Object.assign(oauth2, {
-        accessToken: result.accessToken,
-        tokenExpiry: Date.now() + result.expiresIn * 1000,
-      });
+        // Cache on the config object (in-memory only). Callers share the object,
+        // so one refresh serves every holder of this account.
+        Object.assign(oauth2, {
+          accessToken: result.accessToken,
+          tokenExpiry: Date.now() + result.expiresIn * 1000,
+        });
 
-      return result.accessToken;
+        return result.accessToken;
+      } catch (err) {
+        logError(err, {
+          location: 'services/oauth.service.ts:getAccessToken',
+          operation: 'oauth.refresh',
+          handled: 'returned error (token refresh failed)',
+        });
+        throw err;
+      }
     })();
 
     this.pendingRefreshes.set(oauth2, refresh);

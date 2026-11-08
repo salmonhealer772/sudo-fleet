@@ -28,6 +28,7 @@
 import type { ImapFlow } from 'imapflow';
 import type { IConnectionManager } from '../connections/types.js';
 import { mcpLog } from '../logging.js';
+import { logError } from '../error-log.js';
 import type {
   ExpungeEvent,
   FlagsEvent,
@@ -455,6 +456,13 @@ export default class SyncEngine {
     } catch (err) {
       result.error = err instanceof Error ? err.message : String(err);
       await mcpLog('warning', 'cache', `Sync failed for ${account}/${mailbox}: ${result.error}`);
+      logError(err, {
+        location: 'cache/sync-engine.ts:runSync',
+        operation: 'imap.cache.sync',
+        account,
+        mailbox,
+        handled: 'returned error (mirror left unchanged; next cycle retries)',
+      });
     }
 
     return result;

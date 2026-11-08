@@ -98,6 +98,7 @@ function createServices(readOnly: boolean): AppServices {
     imapService: {} as never,
     mailReadService: {} as never,
     smtpService: {} as never,
+    health: {} as never,
     templateService: {} as never,
     calendarService: {} as never,
     localCalendarService: {} as never,

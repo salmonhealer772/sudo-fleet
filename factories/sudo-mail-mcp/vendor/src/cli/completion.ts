@@ -203,6 +203,7 @@ export const COMMANDS: CommandSpec[] = [
   },
   { name: 'setup', description: "Alias for 'account add'" },
   { name: 'test', description: 'Test IMAP/SMTP connections', arg: 'accounts' },
+  { name: 'selftest', description: 'Run the reliability self-test (token + connectivity + canary)' },
   {
     name: 'open',
     description: 'Open an email in the native mail client (macOS)',

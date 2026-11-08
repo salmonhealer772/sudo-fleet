@@ -32,6 +32,7 @@ Commands:
   account     Account management (list, add, edit, delete)
   setup       Alias for 'account add'
   test        Test connections for all or a specific account
+  selftest    Run the reliability self-test (token + connectivity + canary)
   open        Open an email in the native mail client via its message: link (macOS)
   install     Register/unregister with MCP clients (Claude, Cursor, …)
   config      Config management (show, edit, path, init)
@@ -202,6 +203,12 @@ async function main(): Promise<void> {
     case 'test': {
       const { default: runTest } = await import('./cli/test.js');
       await runTest(process.argv[3]);
+      break;
+    }
+
+    case 'selftest': {
+      const { default: runSelfTest } = await import('./cli/selftest.js');
+      await runSelfTest();
       break;
     }
 

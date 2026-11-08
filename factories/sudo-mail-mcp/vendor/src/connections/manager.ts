@@ -11,6 +11,7 @@ import type { ImapFlow } from 'imapflow';
 import type { TransportConfig, Transporter } from 'nodemailer';
 import nodemailer from 'nodemailer';
 import { mcpLog } from '../logging.js';
+import { logError } from '../error-log.js';
 
 import eventBus from '../services/event-bus.js';
 import type OAuthService from '../services/oauth.service.js';
@@ -116,9 +117,22 @@ export default class ConnectionManager implements IConnectionManager {
     client.on('close', invalidateIfCurrent);
   }
 
+  /**
+   * Detect an IMAP client whose socket has already been destroyed but whose
+   * `usable` flag has not flipped yet. imapflow sets `usable=false` only once
+   * the close/error event is processed; in the gap a pooled client can still
+   * report usable while its socket is dead, and the next fetch surfaces
+   * "Connection not available" instead of reconnecting. Checking the socket
+   * directly closes that gap for the common (already-torn-down) case.
+   */
+  private static isImapSocketDead(client: ImapFlow): boolean {
+    const socket = (client as unknown as { socket?: { destroyed?: boolean } }).socket;
+    return socket?.destroyed === true;
+  }
+
   async getImapClient(accountName: string): Promise<ImapFlow> {
     const existing = this.imapClients.get(accountName);
-    if (existing?.usable) {
+    if (existing?.usable && !ConnectionManager.isImapSocketDead(existing)) {
       return existing;
     }
 
@@ -205,6 +219,33 @@ export default class ConnectionManager implements IConnectionManager {
     } as TransportConfig;
   }
 
+  /**
+   * Drop any idle pooled SMTP connection on a transport.
+   *
+   * Gmail/Outlook close idle SMTP connections, but nodemailer's pool keeps
+   * them marked "available" until a write fails — which is exactly the
+   * "Connection closed unexpectedly" a send then surfaces. Dropping the idle
+   * connection forces the pool to open a fresh one on the next send, so a
+   * message is never handed to a dead socket. This re-establishes the
+   * transport only: it never touches, and never re-submits, the message.
+   */
+  private static dropIdleSmtpConnections(transport: Transporter): void {
+    const pool = (transport as { transporter?: unknown }).transporter as
+      | { _connections?: Array<{ available?: boolean; close?: () => void }> }
+      | undefined;
+    const connections = pool?._connections;
+    if (!Array.isArray(connections)) return;
+    for (const connection of [...connections]) {
+      if (connection.available && typeof connection.close === 'function') {
+        try {
+          connection.close();
+        } catch {
+          /* a dead socket just closes */
+        }
+      }
+    }
+  }
+
   async getSmtpTransport(
     accountName: string,
     options?: { verify?: boolean },
@@ -213,12 +254,21 @@ export default class ConnectionManager implements IConnectionManager {
     const existing = this.smtpTransports.get(accountName);
     if (existing) {
       if (!verify) {
+        // Drop any idle pooled connection before handing the transport to a
+        // send, so the send always starts from a fresh connection.
+        ConnectionManager.dropIdleSmtpConnections(existing);
         return existing;
       }
       try {
         await existing.verify();
         return existing;
-      } catch {
+      } catch (err) {
+        logError(err, {
+          location: 'connections/manager.ts:getSmtpTransport',
+          operation: 'smtp.verify',
+          account: accountName,
+          handled: 'reconnect (discard stale transport, rebuild)',
+        });
         this.smtpTransports.delete(accountName);
         try {
           existing.close();
@@ -255,6 +305,39 @@ export default class ConnectionManager implements IConnectionManager {
 
   async verifySmtpTransport(accountName: string): Promise<void> {
     await this.getSmtpTransport(accountName, { verify: true });
+  }
+
+  /**
+   * Discard a cached SMTP transport so the next send builds a fresh one.
+   * Called after a failed send: the message was NOT re-submitted, and the next
+   * attempt starts from a clean (fresh) connection.
+   */
+  async invalidateSmtpTransport(accountName: string): Promise<void> {
+    const transport = this.smtpTransports.get(accountName);
+    if (!transport) return;
+    this.smtpTransports.delete(accountName);
+    try {
+      transport.close();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * Discard a cached IMAP client so the next operation reconnects. Called
+   * when an on-demand operation hits a stale connection; a fresh client is
+   * built on the next `getImapClient`.
+   */
+  invalidateImapClient(accountName: string): void {
+    const client = this.imapClients.get(accountName);
+    if (!client) return;
+    this.imapClients.delete(accountName);
+    try {
+      client.close();
+    } catch {
+      /* ignore */
+    }
+    eventBus.emit('imap:reconnect', { account: accountName });
   }
 
   // -------------------------------------------------------------------------

@@ -44,6 +44,8 @@ import { buildPreview, findPreviewPart, PREVIEW_PART_BYTES } from '../utils/body
 import { BULK_HEADER_FIELDS, classifyBulk } from '../utils/bulk-headers.js';
 import { stripHtml } from '../utils/html.js';
 import { imapCommand } from '../utils/imap-error.js';
+import { isImapConnectionError } from '../utils/connection-error.js';
+import { logError } from '../error-log.js';
 import type { ReconnectEvent } from './event-bus.js';
 import eventBus from './event-bus.js';
 import type { LabelStrategy } from './label-strategy.js';
@@ -486,6 +488,48 @@ export default class ImapService {
     return imapCommand(`Opening mailbox "${path}"`, () => client.getMailboxLock(path));
   }
 
+  /**
+   * Run an IMAP operation, transparently reconnecting and retrying once when
+   * the failure is a lost connection.
+   *
+   * Reads and searches are idempotent, so re-running them on a fresh
+   * connection is safe. On a connection error the stale client is discarded
+   * and the operation is retried once; on any other error (a server rejection
+   * or "not found") the error is logged and re-thrown unchanged.
+   */
+  private async withImapRetry<T>(
+    accountName: string,
+    operation: string,
+    run: (client: ImapFlow) => Promise<T>,
+    context?: { mailbox?: string },
+  ): Promise<T> {
+    try {
+      const client = await this.connections.getImapClient(accountName);
+      return await run(client);
+    } catch (err) {
+      if (isImapConnectionError(err)) {
+        logError(err, {
+          location: 'services/imap.service.ts:withImapRetry',
+          operation,
+          account: accountName,
+          mailbox: context?.mailbox,
+          handled: 'reconnect (discard stale client) + retry once',
+        });
+        this.connections.invalidateImapClient(accountName);
+        const client = await this.connections.getImapClient(accountName);
+        return await run(client);
+      }
+      logError(err, {
+        location: 'services/imap.service.ts:withImapRetry',
+        operation,
+        account: accountName,
+        mailbox: context?.mailbox,
+        handled: 'returned error (not a connection failure)',
+      });
+      throw err;
+    }
+  }
+
   private async getLabelStrategy(accountName: string): Promise<LabelStrategy> {
     const cached = this.labelStrategies.get(accountName);
     if (cached) return cached;
@@ -731,35 +775,41 @@ export default class ImapService {
   // -------------------------------------------------------------------------
 
   async getEmail(accountName: string, emailId: string, mailbox = 'INBOX'): Promise<Email> {
-    const client = await this.connections.getImapClient(accountName);
-    const uid = parseInt(emailId, 10);
     const safeMailbox = sanitizeMailboxName(mailbox);
+    return this.withImapRetry(
+      accountName,
+      'getEmail',
+      async (client) => {
+        const uid = parseInt(emailId, 10);
 
-    const lock = await client.getMailboxLock(safeMailbox);
-    try {
-      const msg = await client.fetchOne(
-        String(uid),
-        {
-          uid: true,
-          envelope: true,
-          flags: true,
-          bodyStructure: true,
-          // Headers only. `source: true` would transfer the whole message,
-          // attachments included, to read a few hundred bytes of header —
-          // the body arrives separately as a decoded MIME part.
-          headers: true,
-        },
-        { uid: true },
-      );
+        const lock = await client.getMailboxLock(safeMailbox);
+        try {
+          const msg = await client.fetchOne(
+            String(uid),
+            {
+              uid: true,
+              envelope: true,
+              flags: true,
+              bodyStructure: true,
+              // Headers only. `source: true` would transfer the whole message,
+              // attachments included, to read a few hundred bytes of header —
+              // the body arrives separately as a decoded MIME part.
+              headers: true,
+            },
+            { uid: true },
+          );
 
-      if (!msg) {
-        throw new Error(`Email ${emailId} not found in ${mailbox}`);
-      }
+          if (!msg) {
+            throw new Error(`Email ${emailId} not found in ${mailbox}`);
+          }
 
-      return await messageToEmail(msg as unknown as Record<string, unknown>, client, uid);
-    } finally {
-      lock.release();
-    }
+          return await messageToEmail(msg as unknown as Record<string, unknown>, client, uid);
+        } finally {
+          lock.release();
+        }
+      },
+      { mailbox: safeMailbox },
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1690,6 +1740,12 @@ export default class ImapService {
       );
       return { kind: 'filed', path: target };
     } catch (err) {
+      logError(err, {
+        location: 'services/imap.service.ts:appendToSent',
+        operation: 'imap.append.sent',
+        account: accountName,
+        handled: 'returned failed result (send already delivered, not retried)',
+      });
       return { kind: 'failed', error: err instanceof Error ? err.message : String(err) };
     }
   }

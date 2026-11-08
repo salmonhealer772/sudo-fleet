@@ -15,6 +15,7 @@ import SyncEngine from './cache/sync-engine.js';
 import { loadConfig } from './config/loader.js';
 import { CACHE_BLOBS_DIR, CACHE_DB } from './config/xdg.js';
 import ConnectionManager from './connections/manager.js';
+import MercuryHealthService from './health/service.js';
 import { mcpLog } from './logging.js';
 import registerAllPrompts from './prompts/register.js';
 import registerAllResources from './resources/register.js';
@@ -45,6 +46,7 @@ export interface AppServices {
   /** Read-model facade — every read tool goes through this, never ImapService. */
   mailReadService: MailReadService;
   smtpService: SmtpService;
+  health: MercuryHealthService;
   templateService: TemplateService;
   calendarService: CalendarService;
   localCalendarService: LocalCalendarService;
@@ -104,6 +106,12 @@ export async function buildServices(): Promise<AppServices> {
   const smtpService = new SmtpService(connections, rateLimiter, imapService, {
     saveToSent: config.settings.send.saveToSent,
   });
+  const health = new MercuryHealthService({
+    connections,
+    imapService,
+    smtpService,
+    accounts: config.accounts,
+  });
   const templateService = new TemplateService();
   const calendarService = new CalendarService();
   const localCalendarService = new LocalCalendarService();
@@ -133,6 +141,7 @@ export async function buildServices(): Promise<AppServices> {
     imapService,
     mailReadService,
     smtpService,
+    health,
     templateService,
     calendarService,
     localCalendarService,
@@ -191,6 +200,7 @@ export function startBackgroundServices(
     cacheStore,
     blobStore,
     verificationCatcher,
+    health,
     config,
   } = services;
   let schedulerInterval: ReturnType<typeof setInterval> | undefined;
@@ -199,6 +209,7 @@ export function startBackgroundServices(
   hooksService.start(lowLevelServer);
   verificationCatcher.start();
   syncEngine?.start();
+  health.start();
 
   if (config.settings.verification.enabled && !config.settings.watcher.enabled) {
     mcpLog(
@@ -289,6 +300,7 @@ export function startBackgroundServices(
     stop: async () => {
       if (schedulerInterval) clearInterval(schedulerInterval);
       if (cacheInterval) clearInterval(cacheInterval);
+      health.stop();
       // Before hooksService.stop() — hooks owns the shared notifier interval.
       verificationCatcher.stop();
       hooksService.stop();

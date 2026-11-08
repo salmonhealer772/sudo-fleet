@@ -7,6 +7,7 @@
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 
 import type { IConnectionManager } from '../connections/types.js';
+import { logError } from '../error-log.js';
 import { mcpLog } from '../logging.js';
 import type RateLimiter from '../safety/rate-limiter.js';
 import { sanitizeTemplateVariable } from '../safety/validation.js';
@@ -99,6 +100,37 @@ export default class SmtpService {
     return result;
   }
 
+  /**
+   * Send one message through a freshly-validated SMTP transport.
+   *
+   * On any send failure the full error is logged, the cached transport is
+   * discarded (so the NEXT send starts from a fresh connection), and the error
+   * is re-thrown. The message is deliberately NOT re-submitted: re-sending
+   * after an ambiguous failure (the connection may have dropped after the
+   * server accepted the message) would duplicate the email.
+   */
+  private async sendViaTransport(
+    accountName: string,
+    mail: Record<string, unknown>,
+    operation: string,
+  ): Promise<{ messageId: string }> {
+    const transport = await this.connections.getSmtpTransport(accountName);
+    try {
+      const result = await transport.sendMail(mail);
+      return { messageId: result.messageId ?? '' };
+    } catch (err) {
+      logError(err, {
+        location: 'services/smtp.service.ts:sendViaTransport',
+        operation,
+        account: accountName,
+        recipient: (mail.to as string | undefined) ?? undefined,
+        handled: 'returned error; discarded transport (no re-send)',
+      });
+      await this.connections.invalidateSmtpTransport(accountName);
+      throw err;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Send email
   // -------------------------------------------------------------------------
@@ -121,7 +153,6 @@ export default class SmtpService {
     this.checkRateLimit(accountName);
 
     const account = this.connections.getAccount(accountName);
-    const transport = await this.connections.getSmtpTransport(accountName);
 
     const mail = {
       from: account.fullName ? `"${account.fullName}" <${account.email}>` : account.email,
@@ -141,11 +172,11 @@ export default class SmtpService {
         : {}),
     };
 
-    const result = await transport.sendMail(mail);
-    const sentCopy = await this.fileCopyInSent(accountName, mail, result.messageId);
+    const { messageId } = await this.sendViaTransport(accountName, mail, 'send_email');
+    const sentCopy = await this.fileCopyInSent(accountName, mail, messageId);
 
     return {
-      messageId: result.messageId ?? '',
+      messageId,
       status: 'sent',
       sentCopy,
     };
@@ -217,8 +248,6 @@ export default class SmtpService {
       ? undefined
       : options.body + (includeQuote ? quoteOriginalAsText(original) : '');
 
-    const transport = await this.connections.getSmtpTransport(accountName);
-
     const mail = {
       from: account.fullName ? `"${account.fullName}" <${account.email}>` : account.email,
       to: to.join(', '),
@@ -234,11 +263,11 @@ export default class SmtpService {
         : {}),
     };
 
-    const result = await transport.sendMail(mail);
-    const sentCopy = await this.fileCopyInSent(accountName, mail, result.messageId);
+    const { messageId } = await this.sendViaTransport(accountName, mail, 'reply_email');
+    const sentCopy = await this.fileCopyInSent(accountName, mail, messageId);
 
     return {
-      messageId: result.messageId ?? '',
+      messageId,
       status: 'sent',
       sentCopy,
     };
@@ -353,8 +382,6 @@ export default class SmtpService {
         `<blockquote style="border-left:2px solid #ccc;margin:0 0 0 8px;padding-left:8px">${originalHtml}</blockquote>`;
     }
 
-    const transport = await this.connections.getSmtpTransport(accountName);
-
     const mail = {
       from: account.fullName ? `"${account.fullName}" <${account.email}>` : account.email,
       to: options.to.join(', '),
@@ -365,11 +392,11 @@ export default class SmtpService {
       ...(attachments.length ? { attachments } : {}),
     };
 
-    const result = await transport.sendMail(mail);
-    const sentCopy = await this.fileCopyInSent(accountName, mail, result.messageId);
+    const { messageId } = await this.sendViaTransport(accountName, mail, 'forward_email');
+    const sentCopy = await this.fileCopyInSent(accountName, mail, messageId);
 
     return {
-      messageId: result.messageId ?? '',
+      messageId,
       status: 'sent',
       sentCopy,
     };
@@ -403,7 +430,6 @@ export default class SmtpService {
     );
 
     const account = this.connections.getAccount(accountName);
-    const transport = await this.connections.getSmtpTransport(accountName);
 
     const to = draft.to.map((a) => a.address).join(', ');
     const cc = draft.cc?.map((a) => a.address).join(', ');
@@ -420,8 +446,8 @@ export default class SmtpService {
         : { text: draft.bodyText ?? '' }),
     };
 
-    const result = await transport.sendMail(mail);
-    const sentCopy = await this.fileCopyInSent(accountName, mail, result.messageId);
+    const { messageId } = await this.sendViaTransport(accountName, mail, 'send_draft');
+    const sentCopy = await this.fileCopyInSent(accountName, mail, messageId);
 
     // Delete the draft after a successful send — unless the Sent-copy APPEND
     // failed. The copy would otherwise disappear entirely: the draft gone,
@@ -432,7 +458,7 @@ export default class SmtpService {
     }
 
     return {
-      messageId: result.messageId ?? '',
+      messageId,
       status: 'sent',
       sentCopy,
     };

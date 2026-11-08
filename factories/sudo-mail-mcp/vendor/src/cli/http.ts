@@ -42,6 +42,9 @@ function isLoopback(host: string): boolean {
   return LOOPBACK.has(host);
 }
 
+/** How fresh the last successful full check must be for /readyz to pass. */
+const READINESS_FRESHNESS_MS = 5 * 60 * 1000;
+
 /**
  * Resolve `http` options with the layered precedence:
  * CLI flags → EMAIL_MCP_HTTP_* env → [settings.server] → built-in defaults.
@@ -200,10 +203,28 @@ export default async function runHttp(argv: string[]): Promise<void> {
     void (async () => {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? opts.host}`);
 
-      // Unauthenticated, unrestricted health probe (for load balancers).
+      // Unauthenticated liveness probe: proves the HTTP server + event loop
+      // are alive. Deliberately NOT real mail capability (that is /readyz).
       if (req.method === 'GET' && url.pathname === '/healthz') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok' }));
+        return;
+      }
+
+      // Readiness: 200 only when a real full (IMAP+SMTP) check has succeeded
+      // within the freshness window. Cheap — it reads the cached status the
+      // background health loop maintains, never a mail server.
+      if (req.method === 'GET' && url.pathname === '/readyz') {
+        const ready = services.health.getStatus().isReady(READINESS_FRESHNESS_MS);
+        res.writeHead(ready ? 200 : 503, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ready }));
+        return;
+      }
+
+      // Status: compact per-account summary (no secrets, no stacks).
+      if (req.method === 'GET' && url.pathname === '/health') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(services.health.getStatus().toPublic()));
         return;
       }
 
