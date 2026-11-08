@@ -1,6 +1,33 @@
 model:
   default: deepseek-v4-pro
   provider: deepseek
+
+# ── NO DELIBERATION (Mercury's core contract) ──────────────────────────────
+# DeepSeek V4 defaults to thinking ON when `extra_body.thinking` is unset, and
+# the deepseek provider profile always emits the thinking toggle to avoid the
+# reasoning_content echo trap. Two knobs together turn the reasoning phase OFF:
+#
+#   1. agent.reasoning_effort: none  — the DEFINITIVE switch. resolve_reasoning_config
+#      parses "none" -> {"enabled": false}, and the deepseek profile maps that to
+#      extra_body.thinking = {"type": "disabled"} on the wire, so the model answers
+#      directly instead of reasoning first. This is the knob that actually stops the
+#      reasoning phase, not just its display.
+#
+#   2. model_overrides.deepseek.deepseek-v4-pro.supports_reasoning: false  — marks the
+#      model non-reasoning in Hermes' capability metadata, so the unset-reasoning-default
+#      path (agent/reasoning_params.py unset_reasoning_default) returns None and never
+#      synthesizes a reasoning config for this model.
+#
+# plugins.stream_reasoning_deltas is set false below so the watch/stream plugins never
+# surface reasoning deltas either (there are none once thinking is disabled).
+agent:
+  reasoning_effort: none
+
+model_overrides:
+  deepseek:
+    deepseek-v4-pro:
+      supports_reasoning: false
+
 terminal:
   backend: local
   sudo_password_env: SUDO_PASSWORD
@@ -22,7 +49,7 @@ plugins:
   enabled:
     - sudo-comm-gate
     - sudo-watch-stream
-  stream_reasoning_deltas: true
+  stream_reasoning_deltas: false
 _config_version: 51
 
 platforms:
@@ -41,3 +68,8 @@ mcp_servers:
     url: "http://statutes-mcp.dockets.svc.cluster.local:8080/mcp"
   spicy-regs:
     url: "http://spicy-regs-mcp.dockets.svc.cluster.local:8080/mcp"
+telemetry:
+  shared_metrics:
+    enabled: true
+    send: true
+    offer_version: 2
