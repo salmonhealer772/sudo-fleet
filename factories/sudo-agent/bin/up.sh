@@ -388,7 +388,14 @@ _read_key() {
   grep '^DEEPSEEK_API_KEY=' "$1" 2>/dev/null | cut -d'=' -f2- | head -1
 }
 
+# Precedence: exported DEEPSEEK_API_KEY, then the FLEET .env (single source of
+# truth — rotating the key means editing one file), then this factory's .env
+# as a fallback for a checkout with no fleet .env.
+FLEET_ENV="$(cd "$REPO_DIR/../.." && pwd)/.env"
 KEY="${DEEPSEEK_API_KEY:-}"
+if [[ -z "$KEY" ]] && [[ -f "$FLEET_ENV" ]] && [[ -r "$FLEET_ENV" ]]; then
+  KEY=$(_read_key "$FLEET_ENV" | tr -d '[:space:]')
+fi
 if [[ -z "$KEY" ]] && [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
   KEY=$(_read_key "$ENV_FILE")
 fi
@@ -413,8 +420,8 @@ fi
 # on every deploy so a key rotation in the fleet .env is picked up by the next
 # up.sh run (a rollout restart then hands the new value to the pod). The key
 # is never echoed; a missing key is a loud warning, not an abort (OpenRouter is
-# optional — DeepSeek is the required key).
-FLEET_ENV="$(cd "$REPO_DIR/../.." && pwd)/.env"
+# optional — DeepSeek is the required key). FLEET_ENV is set in the API Key
+# block above.
 if [[ -f "$FLEET_ENV" ]] && [[ -r "$FLEET_ENV" ]]; then
   _OR_KEY="$(grep '^OPENROUTER_API_KEY=' "$FLEET_ENV" 2>/dev/null | cut -d= -f2- | head -1 | tr -d '[:space:]')"
   if [[ -n "$_OR_KEY" ]]; then

@@ -148,6 +148,17 @@ if [[ -f "$ENV_FILE" ]] && [[ -r "$ENV_FILE" ]]; then
   fi
 fi
 
+# ── DeepSeek key: fleet .env is the single source of truth ──
+# A DeepSeek agent takes its key from DEEPSEEK_API_KEY in the FLEET .env, not
+# the API_KEY copy in .sudo-letta/.env — rotating the key means editing ONE
+# file, then re-running up.sh. The local API_KEY is only a fallback for a
+# checkout with no fleet .env. Never echoed.
+if [[ "${LLM_PROVIDER:-}" == "deepseek" ]]; then
+  _FLEET_DS_KEY=$(grep '^DEEPSEEK_API_KEY=' "$FLEET_DIR/.env" 2>/dev/null | cut -d'=' -f2- | head -1 | tr -d '[:space:]' || true)
+  [[ -n "$_FLEET_DS_KEY" ]] && API_KEY="$_FLEET_DS_KEY"
+  unset _FLEET_DS_KEY
+fi
+
 # Prompt for credentials if missing
 if [[ -z "${LLM_PROVIDER:-}" || -z "${API_KEY:-}" ]]; then
   echo "No credentials found. Run setup.sh first." >&2
