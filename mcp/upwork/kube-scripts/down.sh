@@ -4,7 +4,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFESTS="$(dirname "$(dirname "$SCRIPT_DIR")")/k8s"
+MANIFESTS="$(dirname "$SCRIPT_DIR")/k8s"
 
 if [[ -z "${KUBECONFIG:-}" ]]; then
   for cfg in /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"; do

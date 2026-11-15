@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GATEWAY_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"   # mcp/upwork/
+GATEWAY_DIR="$(dirname "$SCRIPT_DIR")"                # mcp/upwork/
 MANIFESTS="$GATEWAY_DIR/k8s"
 
 NAME="upwork"
