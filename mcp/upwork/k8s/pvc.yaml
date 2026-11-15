@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sudo-upwork-mcp-data
+  namespace: default
+  labels:
+    app: sudo-upwork-mcp
+    kind: upwork-mcp
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

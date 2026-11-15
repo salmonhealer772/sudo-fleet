@@ -1,0 +1,13 @@
+{
+  "client_id": "https://cdn.jsdelivr.net/gh/salmonhealer772/sudo-fleet@main/mcp/upwork/oauth/client-metadata.json",
+  "client_name": "sudo-upwork-mcp (fleet gateway)",
+  "client_uri": "https://github.com/salmonhealer772/sudo-fleet",
+  "application_type": "native",
+  "redirect_uris": [
+    "http://127.0.0.1:8747/callback",
+    "http://localhost:8747/callback"
+  ],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none"
+}
