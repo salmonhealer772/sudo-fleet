@@ -6,12 +6,14 @@ set -uo pipefail
 
 NAME=""
 GLIMOR_DIR=""
+WORKSPACE_HOST=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from-glimor) GLIMOR_DIR="$2"; shift 2 ;;
+    --workspace)    WORKSPACE_HOST="$2"; shift 2 ;;
     --name|--*)    NAME="${1#--}"; shift ;;
-    *)             echo "Usage: bash bin/up.sh --name [--from-glimor <dir>]" >&2; exit 1 ;;
+    *)             echo "Usage: bash bin/up.sh --name [--from-glimor <dir>] [--workspace <hostpath>]" >&2; exit 1 ;;
   esac
 done
 
@@ -327,6 +329,21 @@ if [[ -n "${GLIMOR_DIR:-}" ]]; then
           type: Directory"
 fi
 
+# Optional hostPath workspace (prompt bank + artifacts dir), mounted
+# read-write into the pod. Used by computer-bot: the agent reads prompts from
+# <workspace>/prompts and writes dated artifacts to <workspace>/artifacts on
+# the HOST filesystem (survives pod restarts, operator-visible).
+WORKSPACE_MOUNT=""
+WORKSPACE_VOLUME=""
+if [[ -n "${WORKSPACE_HOST:-}" ]]; then
+  WORKSPACE_MOUNT="        - name: workspace
+          mountPath: /opt/computer-bot"
+  WORKSPACE_VOLUME="      - name: workspace
+        hostPath:
+          path: ${WORKSPACE_HOST}
+          type: DirectoryOrCreate"
+fi
+
 cat > "$YAML" <<YAMLEOF
 # Per-deployment API key Secret — created before the Deployment so
 # kubectl apply succeeds on the first run. The Secret is owned by
@@ -404,6 +421,7 @@ $ENV_YAML
           mountPath: /home/node/.letta
         - name: docker-sock
           mountPath: /var/run/docker.sock
+$WORKSPACE_MOUNT
         # ── Self-repair probes: restart on crash/hang ───────────────────────
         # The agent's MCP server (mcp_server.py) listens on MCP_PORT (0.0.0.0).
         # startupProbe gives it a generous boot window; livenessProbe restarts a
@@ -476,6 +494,7 @@ $SEED_VOLUME
         hostPath:
           path: /var/run/docker.sock
           type: Socket
+$WORKSPACE_VOLUME
       - name: watch-config
         configMap:
           name: $DEPLOY-watch-config
